@@ -1,0 +1,63 @@
+use axum::{
+    body::Body,
+    extract::Request,
+    http::{Response, StatusCode},
+    middleware::Next,
+    routing::any,
+};
+use utoipa_axum::router::OpenApiRouter;
+
+use super::{ApiError, GetState, State};
+
+mod servers;
+mod system;
+mod update;
+
+async fn auth(state: GetState, req: Request, next: Next) -> Result<Response<Body>, StatusCode> {
+    let key = req
+        .headers()
+        .get("Authorization")
+        .map(|v| v.to_str().unwrap())
+        .unwrap_or("")
+        .to_string();
+    let mut parts = key.splitn(2, " ");
+    let r#type = parts.next().unwrap();
+    let token = parts.next();
+
+    if r#type != "Bearer" || token != Some(&state.config.token) {
+        return Ok(Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .header("WWW-Authenticate", "Bearer")
+            .header("Content-Type", "application/json")
+            .body(Body::from(
+                serde_json::to_string(&ApiError::new("invalid authorization token")).unwrap(),
+            ))
+            .unwrap());
+    }
+
+    Ok(next.run(req).await)
+}
+
+pub fn router(state: &State) -> OpenApiRouter<State> {
+    OpenApiRouter::new()
+        .nest(
+            "/system",
+            system::router(state)
+                .route_layer(axum::middleware::from_fn_with_state(state.clone(), auth)),
+        )
+        .nest(
+            "/update",
+            update::router(state)
+                .route_layer(axum::middleware::from_fn_with_state(state.clone(), auth)),
+        )
+        .nest(
+            "/servers",
+            servers::router(state)
+                .route_layer(axum::middleware::from_fn_with_state(state.clone(), auth)),
+        )
+        .route(
+            "/servers/{server}/ws",
+            any(crate::server::websocket::handler::handle_ws),
+        )
+        .with_state(state.clone())
+}
