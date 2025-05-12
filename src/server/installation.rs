@@ -6,7 +6,7 @@ use std::{
 };
 use tokio::sync::Mutex;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct InstallationScript {
     pub container_image: String,
     pub entrypoint: String,
@@ -111,6 +111,76 @@ async fn container_config(
     })
 }
 
+async fn cleanup_container(
+    server: &super::Server,
+    client: &bollard::Docker,
+    container_id: &str,
+    container_script: &InstallationScript,
+    container_env: Vec<String>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let mut logs_stream = client.logs::<String>(
+        container_id,
+        Some(bollard::container::LogsOptions {
+            follow: false,
+            stdout: true,
+            stderr: true,
+            timestamps: false,
+            ..Default::default()
+        }),
+    );
+
+    let mut logs = String::new();
+    while let Some(Ok(log)) = logs_stream.next().await {
+        logs.push_str(String::from_utf8_lossy(&log.into_bytes()).as_ref());
+    }
+
+    let mut env = String::new();
+    for var in container_env {
+        env.push_str(&format!("  {}\n", var));
+    }
+
+    let log_path = Path::new(&server.config.system.log_directory)
+        .join("install")
+        .join(format!("{}.log", server.uuid));
+    tokio::fs::create_dir_all(log_path.parent().unwrap()).await?;
+    tokio::fs::write(
+        &log_path,
+        format!(
+            r"Pterodactyl Server Installation Log
+
+|
+| Details
+| ------------------------------
+  Server UUID:          {}
+  Container Image:      {}
+  Container Entrypoint: {}
+
+|
+| Environment Variables
+| ------------------------------
+{env}
+
+|
+| Script Output
+| ------------------------------
+{logs}
+",
+            server.uuid, container_script.container_image, container_script.entrypoint,
+        ),
+    )
+    .await?;
+
+    Ok(client
+        .remove_container(
+            &container_id,
+            Some(bollard::container::RemoveContainerOptions {
+                force: true,
+                ..Default::default()
+            }),
+        )
+        .await?)
+}
+
 pub async fn install_server(
     server: &Arc<super::Server>,
     client: &Arc<bollard::Docker>,
@@ -139,25 +209,39 @@ pub async fn install_server(
         .await;
 
     let container_id: Mutex<Option<String>> = Mutex::new(None);
+    let container_script: Mutex<Option<InstallationScript>> = Mutex::new(None);
     let unset_installing = async |successful: bool| {
         server
             .installing
             .store(false, std::sync::atomic::Ordering::SeqCst);
 
+        let environment = server.configuration.read().await.environment();
         if let Some(container_id) = container_id.lock().await.take() {
-            if let Err(err) = client
-                .remove_container(
-                    &container_id,
-                    Some(bollard::container::RemoveContainerOptions {
-                        force: true,
-                        ..Default::default()
-                    }),
-                )
-                .await
+            if let Some(script) = container_script.lock().await.take() {
+                if let Err(err) =
+                    cleanup_container(server, client, &container_id, &script, environment).await
+                {
+                    crate::logger::log(
+                        crate::logger::LoggerLevel::Error,
+                        format!("Failed to clean up container: {}", err),
+                    );
+                }
+            } else if let Err(err) = cleanup_container(
+                server,
+                client,
+                &container_id,
+                &InstallationScript {
+                    container_image: String::new(),
+                    entrypoint: String::new(),
+                    script: String::new(),
+                },
+                environment,
+            )
+            .await
             {
                 crate::logger::log(
                     crate::logger::LoggerLevel::Error,
-                    format!("Failed to remove installer container: {}", err),
+                    format!("Failed to clean up container: {}", err),
                 );
             }
         }
@@ -199,6 +283,8 @@ pub async fn install_server(
             return Err(err.into());
         }
     };
+
+    *container_script.lock().await = Some(script.clone());
 
     match server
         .pull_image(client, script.container_image.clone())

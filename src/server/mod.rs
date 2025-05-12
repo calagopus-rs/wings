@@ -447,7 +447,7 @@ impl Server {
             }
         };
 
-        let mut stream = client.logs(
+        let mut logs_stream = client.logs(
             &container,
             Some(bollard::container::LogsOptions {
                 follow: false,
@@ -458,12 +458,10 @@ impl Server {
                 ..Default::default()
             }),
         );
-        let mut logs = String::new();
 
-        while let Some(log) = stream.next().await {
-            if let Ok(log) = log {
-                logs.push_str(String::from_utf8_lossy(&log.into_bytes()).as_ref());
-            }
+        let mut logs = String::new();
+        while let Some(Ok(log)) = logs_stream.next().await {
+            logs.push_str(String::from_utf8_lossy(&log.into_bytes()).as_ref());
         }
 
         Ok(logs)
