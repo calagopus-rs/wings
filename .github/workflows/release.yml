@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        build: [x86_64-linux, x86_64-macos, x86_64-windows]
+        build: [x86_64-linux, x86_64-macos]
         include:
         - build: x86_64-linux
           os: ubuntu-22.04
@@ -32,11 +32,6 @@ jobs:
           os: macos-latest
           rust: stable
           target: x86_64-apple-darwin
-          cross: false
-        - build: x86_64-windows
-          os: windows-2019
-          rust: stable
-          target: x86_64-pc-windows-msvc
           cross: false
         - build: aarch64-macos
           os: macos-latest
@@ -83,11 +78,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist/lib
-          if [ "${{ matrix.os }}" = "windows-2019" ]; then
-            cp "target/${{ matrix.target }}/release/$BIN_NAME.exe" "dist/"
-          else
-            cp "target/${{ matrix.target }}/release/$BIN_NAME" "dist/"
-          fi
+          cp "target/${{ matrix.target }}/release/$BIN_NAME" "dist/"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -127,21 +118,14 @@ jobs:
 
           for dir in bins-* ; do
               platform=${dir#"bins-"}
-              unset exe
-              if [[ $platform =~ "windows" ]]; then
-                  exe=".exe"
-              fi
+
               pkgname=$PROJECT_NAME-$platform
               mkdir -p tmp/$pkgname
               # cp LICENSE README.md tmp/$pkgname
               cp -r bins-$platform/* tmp/$pkgname/
-              chmod +x tmp/$pkgname/$BIN_NAME$exe
+              chmod +x tmp/$pkgname/$BIN_NAME
 
-              if [ "$exe" = "" ]; then
-                  tar cJf dist/$pkgname.tar.xz -C tmp $pkgname
-              else
-                  (cd tmp && 7z a -r ../dist/$pkgname.zip $pkgname)
-              fi
+              tar cJf dist/$pkgname.tar.xz -C tmp $pkgname
           done
 
       - name: Get cli version from Cargo.toml
