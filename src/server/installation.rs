@@ -4,7 +4,7 @@ use serde::Deserialize;
 use std::{
     collections::HashMap, fs::Permissions, os::unix::fs::PermissionsExt, path::Path, sync::Arc,
 };
-use tokio::sync::Mutex;
+use tokio::{io::AsyncWriteExt, sync::Mutex};
 
 #[derive(Deserialize, Clone)]
 pub struct InstallationScript {
@@ -129,11 +129,6 @@ async fn cleanup_container(
         }),
     );
 
-    let mut logs = String::new();
-    while let Some(Ok(log)) = logs_stream.next().await {
-        logs.push_str(String::from_utf8_lossy(&log.into_bytes()).as_ref());
-    }
-
     let mut env = String::new();
     for var in container_env {
         env.push_str(&format!("  {}\n", var));
@@ -143,8 +138,9 @@ async fn cleanup_container(
         .join("install")
         .join(format!("{}.log", server.uuid));
     tokio::fs::create_dir_all(log_path.parent().unwrap()).await?;
-    tokio::fs::write(
-        &log_path,
+
+    let mut file = tokio::io::BufWriter::new(tokio::fs::File::create(&log_path).await?);
+    file.write_all(
         format!(
             r"Pterodactyl Server Installation Log
 
@@ -163,12 +159,18 @@ async fn cleanup_container(
 |
 | Script Output
 | ------------------------------
-{logs}
 ",
             server.uuid, container_script.container_image, container_script.entrypoint,
-        ),
+        )
+        .as_bytes(),
     )
     .await?;
+
+    while let Some(Ok(log)) = logs_stream.next().await {
+        file.write_all(&log.into_bytes()).await?;
+    }
+
+    file.flush().await?;
 
     Ok(client
         .remove_container(

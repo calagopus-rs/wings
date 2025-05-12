@@ -29,7 +29,15 @@ pub async fn create_backup(
 
     let mut overrides = OverrideBuilder::new(&server.filesystem.base_path);
     for line in ignore.lines() {
-        overrides.add(line).ok();
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        if let Some(line) = line.trim().strip_prefix('!') {
+            overrides.add(line).ok();
+        } else {
+            overrides.add(&format!("!{}", line.trim())).ok();
+        }
     }
 
     let filesystem = Arc::clone(&server.filesystem);
@@ -44,6 +52,8 @@ pub async fn create_backup(
             for entry in WalkBuilder::new(&filesystem.base_path)
                 .overrides(overrides.build()?)
                 .add_custom_ignore_filename(".pteroignore")
+                .follow_links(false)
+                .git_global(false)
                 .build()
                 .flatten()
             {
@@ -52,9 +62,9 @@ pub async fn create_backup(
 
                 if let Ok(relative) = path.strip_prefix(&filesystem.base_path) {
                     if metadata.is_dir() {
-                        archive.append_dir_all(relative, &path)?;
+                        archive.append_dir(relative, &path).ok();
                     } else {
-                        archive.append_path_with_name(&path, relative)?;
+                        archive.append_path_with_name(&path, relative).ok();
                     }
                 }
             }
