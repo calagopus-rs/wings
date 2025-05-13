@@ -3,10 +3,12 @@ use axum::{
     body::Body,
     http::{HeaderMap, StatusCode},
 };
+use ignore::overrides::OverrideBuilder;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::ToSchema;
 
+mod s3;
 mod wings;
 
 #[derive(ToSchema, Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
@@ -22,16 +24,39 @@ pub async fn create_backup(
     adapter: BackupAdapter,
     server: &Arc<crate::server::Server>,
     uuid: uuid::Uuid,
-    mut ignore: String,
+    ignore: String,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let mut override_builder = OverrideBuilder::new(&server.filesystem.base_path);
+
+    for line in ignore.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        if let Some(line) = line.trim().strip_prefix('!') {
+            override_builder.add(line).ok();
+        } else {
+            override_builder.add(&format!("!{}", line.trim())).ok();
+        }
+    }
+
     if let Some(pteroignore) = server.filesystem.get_pteroignore().await {
-        ignore.push('\n');
-        ignore.push_str(&pteroignore);
+        for line in pteroignore.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+
+            if let Some(line) = line.trim().strip_prefix('!') {
+                override_builder.add(line).ok();
+            } else {
+                override_builder.add(&format!("!{}", line.trim())).ok();
+            }
+        }
     }
 
     let backup = match match adapter {
-        BackupAdapter::Wings => wings::create_backup(server, uuid, ignore).await,
-        BackupAdapter::S3 => todo!(),
+        BackupAdapter::Wings => wings::create_backup(server, uuid, override_builder.build()?).await,
+        BackupAdapter::S3 => s3::create_backup(server, uuid, override_builder.build()?).await,
         BackupAdapter::DdupBak => todo!(),
     } {
         Ok(backup) => backup,
@@ -50,6 +75,8 @@ pub async fn create_backup(
                     },
                 )
                 .await?;
+            delete_backup(adapter, server, uuid).await.ok();
+
             return Err(e);
         }
     };
@@ -86,7 +113,7 @@ pub async fn restore_backup(
 
     match match adapter {
         BackupAdapter::Wings => wings::restore_backup(server, uuid, truncate_directory).await,
-        BackupAdapter::S3 => todo!(),
+        BackupAdapter::S3 => s3::restore_backup(server, truncate_directory, download_url).await,
         BackupAdapter::DdupBak => todo!(),
     } {
         Ok(_) => {
@@ -147,7 +174,7 @@ pub async fn delete_backup(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     match adapter {
         BackupAdapter::Wings => wings::delete_backup(server, uuid).await,
-        BackupAdapter::S3 => unimplemented!(),
+        BackupAdapter::S3 => s3::delete_backup(server, uuid).await,
         BackupAdapter::DdupBak => todo!(),
     }
 }
@@ -158,7 +185,7 @@ pub async fn list_backups(
 ) -> Result<Vec<uuid::Uuid>, Box<dyn std::error::Error + Send + Sync>> {
     match adapter {
         BackupAdapter::Wings => wings::list_backups(server).await,
-        BackupAdapter::S3 => unimplemented!(),
+        BackupAdapter::S3 => s3::list_backups(server).await,
         BackupAdapter::DdupBak => todo!(),
     }
 }

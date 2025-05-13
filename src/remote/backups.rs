@@ -1,5 +1,5 @@
 use super::client::Client;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use utoipa::ToSchema;
 
@@ -48,4 +48,26 @@ pub async fn set_backup_restore_status(
         .await?;
 
     Ok(())
+}
+
+pub async fn backup_upload_urls(
+    client: &Client,
+    uuid: uuid::Uuid,
+    size: u64,
+) -> Result<(u64, Vec<String>), reqwest::Error> {
+    let response: Response = client
+        .client
+        .get(format!("{}/backups/{}?size={}", client.url, uuid, size))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    #[derive(Deserialize)]
+    struct Response {
+        parts: Vec<String>,
+        part_size: u64,
+    }
+
+    Ok((response.part_size, response.parts))
 }

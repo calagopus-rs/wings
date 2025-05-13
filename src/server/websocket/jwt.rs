@@ -51,6 +51,19 @@ pub async fn handle_jwt(
                                     ),
                                 );
 
+                                if jwt.has_permission(WebsocketPermission::WebsocketConnect) {
+                                    super::send_message(
+                                        sender,
+                                        WebsocketMessage::new(WebsocketEvent::TokenExpired, &[]),
+                                    )
+                                    .await;
+
+                                    return Err(JwtError::Misc(Box::new(std::io::Error::new(
+                                        std::io::ErrorKind::PermissionDenied,
+                                        "JWT expired",
+                                    ))));
+                                }
+
                                 return Err(JwtError::CloseSocket);
                             }
 

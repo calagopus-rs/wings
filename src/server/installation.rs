@@ -174,7 +174,7 @@ async fn cleanup_container(
 
     Ok(client
         .remove_container(
-            &container_id,
+            container_id,
             Some(bollard::container::RemoveContainerOptions {
                 force: true,
                 ..Default::default()

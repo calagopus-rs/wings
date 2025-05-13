@@ -1,8 +1,5 @@
 use crate::remote::backups::RawServerBackup;
-use axum::{
-    body::Body,
-    http::{HeaderMap, StatusCode},
-};
+use futures::TryStreamExt;
 use ignore::WalkBuilder;
 use sha1::Digest;
 use std::{
@@ -10,13 +7,75 @@ use std::{
     io::Write,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
-    sync::Arc,
+    pin::Pin,
+    sync::{Arc, LazyLock},
+    task::{Context, Poll},
 };
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, BufReader, ReadBuf};
+use tokio_util::io::SyncIoBridge;
+
+static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+    reqwest::ClientBuilder::new()
+        .timeout(std::time::Duration::from_secs(15))
+        .danger_accept_invalid_certs(true)
+        .build()
+        .unwrap()
+});
+
+struct BoundedReader {
+    file: tokio::fs::File,
+    size: u64,
+    position: u64,
+}
+
+impl BoundedReader {
+    async fn new(file: &mut tokio::fs::File, offset: u64, size: u64) -> Self {
+        file.seek(std::io::SeekFrom::Start(offset)).await.unwrap();
+
+        Self {
+            file: file.try_clone().await.unwrap(),
+            size,
+            position: 0,
+        }
+    }
+}
+
+impl AsyncRead for BoundedReader {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let this = self.get_mut();
+
+        if this.position >= this.size {
+            return Poll::Ready(Ok(()));
+        }
+
+        let remaining = this.size - this.position;
+        let buffer_space = buf.remaining();
+        let to_read = std::cmp::min(buffer_space, remaining as usize);
+
+        let mut temp_buf = vec![0u8; to_read];
+
+        let read_future = this.file.read(&mut temp_buf);
+
+        match Pin::new(&mut Box::pin(read_future)).poll(cx) {
+            Poll::Ready(Ok(bytes_read)) => {
+                this.position += bytes_read as u64;
+                buf.put_slice(&temp_buf[..bytes_read]);
+
+                Poll::Ready(Ok(()))
+            }
+            Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
 
 #[inline]
 fn get_file_name(server: &crate::server::Server, uuid: uuid::Uuid) -> PathBuf {
-    Path::new(&server.config.system.backup_directory).join(format!("{}.tar.gz", uuid))
+    Path::new(&server.config.system.backup_directory).join(format!("{}.s3.tar.gz", uuid))
 }
 
 pub async fn create_backup(
@@ -76,22 +135,97 @@ pub async fn create_backup(
         sha1.update(&buffer[..bytes_read]);
     }
 
+    let size = file.metadata().await?.len();
+    let (part_size, part_urls) = server.config.client.backup_upload_urls(uuid, size).await?;
+
+    let mut remaining_size = size;
+    let mut parts = Vec::with_capacity(part_urls.len());
+    for (i, url) in part_urls.into_iter().enumerate() {
+        let offset = size - remaining_size;
+        let part_size = std::cmp::min(remaining_size, part_size);
+
+        let etag;
+        let mut attempts = 0;
+        loop {
+            attempts += 1;
+            if attempts > 3 {
+                return Err("Failed to upload part after 3 attempts".into());
+            }
+
+            crate::logger::log(
+                crate::logger::LoggerLevel::Debug,
+                format!("Uploading s3 backup part {} of size {}", i + 1, part_size),
+            );
+
+            match CLIENT
+                .put(&url)
+                .header("Content-Length", part_size)
+                .header("Content-Type", "application/x-gzip")
+                .body(reqwest::Body::wrap_stream(
+                    tokio_util::io::ReaderStream::new(Box::pin(
+                        BoundedReader::new(&mut file, offset, part_size).await,
+                    )),
+                ))
+                .send()
+                .await
+            {
+                Ok(response) => {
+                    if response.status().is_success() {
+                        etag = response
+                            .headers()
+                            .get("ETag")
+                            .and_then(|v| v.to_str().ok())
+                            .unwrap_or_default()
+                            .to_string();
+
+                        break;
+                    }
+                }
+                Err(err) => {
+                    crate::logger::log(
+                        crate::logger::LoggerLevel::Error,
+                        format!("Failed to upload s3 backup part({}): {}", i + 1, err),
+                    );
+                }
+            }
+        }
+
+        parts.push(crate::remote::backups::RawServerBackupPart {
+            etag,
+            part_number: i + 1,
+        });
+        remaining_size -= part_size;
+    }
+
+    if remaining_size > 0 {
+        return Err("Failed to upload all parts".into());
+    }
+
+    tokio::fs::remove_file(&file_name).await?;
+
     Ok(RawServerBackup {
         checksum: format!("{:x}", sha1.finalize()),
         checksum_type: "sha1".to_string(),
-        size: file.metadata().await?.len(),
+        size,
         successful: true,
-        parts: vec![],
+        parts,
     })
 }
 
 pub async fn restore_backup(
     server: &Arc<crate::server::Server>,
-    uuid: uuid::Uuid,
     truncate_directory: bool,
+    download_url: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let file_name = get_file_name(server, uuid);
-    let file = std::fs::File::open(&file_name)?;
+    let response = CLIENT
+        .get(download_url.unwrap())
+        .send()
+        .await?
+        .bytes_stream();
+    let reader = tokio_util::io::StreamReader::new(Box::pin(
+        response.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)),
+    ));
+    let reader = BufReader::with_capacity(1024 * 1024, reader);
 
     if truncate_directory {
         server.filesystem.truncate_root().await;
@@ -101,7 +235,8 @@ pub async fn restore_backup(
     let server = Arc::clone(server);
     tokio::task::spawn_blocking(
         move || -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-            let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(file));
+            let reader = SyncIoBridge::new(reader);
+            let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(reader));
 
             for entry in archive.entries().unwrap() {
                 let mut entry = entry.unwrap();
@@ -161,32 +296,6 @@ pub async fn restore_backup(
     Ok(())
 }
 
-pub async fn download_backup(
-    server: &Arc<crate::server::Server>,
-    uuid: uuid::Uuid,
-) -> Result<(StatusCode, HeaderMap, Body), Box<dyn std::error::Error + Send + Sync>> {
-    let file_name = get_file_name(server, uuid);
-    let file = tokio::fs::File::open(&file_name).await?;
-
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        "Content-Disposition",
-        format!("attachment; filename={}.tar.gz", uuid)
-            .parse()
-            .unwrap(),
-    );
-    headers.insert("Content-Type", "application/gzip".parse().unwrap());
-    headers.insert("Content-Length", file.metadata().await?.len().into());
-
-    Ok((
-        StatusCode::OK,
-        headers,
-        Body::from_stream(tokio_util::io::ReaderStream::new(
-            tokio::io::BufReader::new(file),
-        )),
-    ))
-}
-
 pub async fn delete_backup(
     server: &Arc<crate::server::Server>,
     uuid: uuid::Uuid,
@@ -213,7 +322,7 @@ pub async fn list_backups(
             file_name
                 .to_str()
                 .unwrap_or_default()
-                .trim_end_matches(".tar.gz"),
+                .trim_end_matches(".s3.tar.gz"),
         ) {
             backups.push(uuid);
         }

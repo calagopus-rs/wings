@@ -35,12 +35,13 @@ mod post {
             );
         }
 
-        if !crate::server::backup::list_backups(data.adapter, &server)
-            .await
-            .unwrap()
-            .iter()
-            .copied()
-            .any(|b| b == backup_id)
+        if data.adapter != crate::server::backup::BackupAdapter::S3
+            && !crate::server::backup::list_backups(data.adapter, &server)
+                .await
+                .unwrap()
+                .iter()
+                .copied()
+                .any(|b| b == backup_id)
         {
             return (
                 StatusCode::NOT_FOUND,

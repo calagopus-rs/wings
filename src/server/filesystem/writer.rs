@@ -30,6 +30,12 @@ impl FileSystemWriter {
             std::fs::set_permissions(&destination, permissions)?;
         }
 
+        std::os::unix::fs::chown(
+            destination,
+            Some(filesystem.owner_uid),
+            Some(filesystem.owner_gid),
+        )?;
+
         Ok(Self {
             filesystem,
             parent,
@@ -110,6 +116,8 @@ impl AsyncFileSystemWriter {
         if let Some(permissions) = permissions {
             tokio::fs::set_permissions(&destination, permissions).await?;
         }
+
+        filesystem.chown_path(&destination).await;
 
         Ok(Self {
             filesystem,

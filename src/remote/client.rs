@@ -102,4 +102,12 @@ impl Client {
     ) -> Result<(), reqwest::Error> {
         super::backups::set_backup_restore_status(self, uuid, successful).await
     }
+
+    pub async fn backup_upload_urls(
+        &self,
+        uuid: uuid::Uuid,
+        size: u64,
+    ) -> Result<(u64, Vec<String>), reqwest::Error> {
+        super::backups::backup_upload_urls(self, uuid, size).await
+    }
 }

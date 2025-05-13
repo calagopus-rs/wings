@@ -357,12 +357,13 @@ impl Filesystem {
                 for entry in path.read_dir().unwrap() {
                     let entry = entry.unwrap();
                     let path = entry.path();
+
                     recursive_chown(&path, owner_uid, owner_gid);
                 }
 
-                std::os::unix::fs::chown(path, Some(owner_uid), Some(owner_gid)).unwrap();
+                std::os::unix::fs::chown(path, Some(owner_uid), Some(owner_gid)).ok();
             } else {
-                std::os::unix::fs::chown(path, Some(owner_uid), Some(owner_gid)).unwrap();
+                std::os::unix::fs::chown(path, Some(owner_uid), Some(owner_gid)).ok();
             }
         }
 

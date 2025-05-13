@@ -61,6 +61,8 @@ impl Container {
 
                 async move {
                     loop {
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
                         let container_state = client
                             .inspect_container(&docker_id, None)
                             .await
@@ -85,8 +87,6 @@ impl Container {
                         } else {
                             resource_usage.write().await.uptime = 0;
                         }
-
-                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                     }
                 }
             }),
