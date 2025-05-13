@@ -88,14 +88,9 @@ pub async fn create_backup(
 pub async fn restore_backup(
     server: &Arc<crate::server::Server>,
     uuid: uuid::Uuid,
-    truncate_directory: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let file_name = get_file_name(server, uuid);
     let file = std::fs::File::open(&file_name)?;
-
-    if truncate_directory {
-        server.filesystem.truncate_root().await;
-    }
 
     let filesystem = Arc::clone(&server.filesystem);
     let server = Arc::clone(server);

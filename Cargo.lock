@@ -708,9 +708,9 @@ checksum = "2a2330da5de22e8a3cb63252ce2abb30116bf5265e89c0e01bc17015ce30a476"
 
 [[package]]
 name = "ddup-bak"
-version = "0.5.9"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c9df1f95b24f552cebd21d495774abc18da3cd0ea0f170e4c92d92304b533a3a"
+checksum = "7421ef3b633c46e8637430a9c6d333d4add306c8b6f9503525d6c6141edc0713"
 dependencies = [
  "atomicwrites",
  "blake2",
@@ -720,6 +720,7 @@ dependencies = [
  "colored",
  "dashmap",
  "flate2",
+ "ignore",
  "libc",
  "positioned-io",
  "rayon",
@@ -2430,9 +2431,9 @@ dependencies = [
 
 [[package]]
 name = "tempfile"
-version = "3.19.1"
+version = "3.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7437ac7763b9b123ccf33c338a5cc1bac6f69b45a136c19bdd8a65e3916435bf"
+checksum = "e8a64e3985349f2441a1a9ef0b853f869006c3855f2cda6862a94d26ebb9d6a1"
 dependencies = [
  "fastrand",
  "getrandom 0.3.3",
@@ -3211,7 +3212,7 @@ checksum = "271414315aff87387382ec3d271b52d7ae78726f5d44ac98b4f4030c91880486"
 
 [[package]]
 name = "wings-rs"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "async-compression",
  "axum",

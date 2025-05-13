@@ -1,6 +1,6 @@
 [package]
 name = "wings-rs"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 
 [dependencies]
@@ -31,7 +31,7 @@ async-compression = { version = "0.4.23", features = ["tokio", "bzip2", "gzip", 
 jwt = "0.16.0"
 hmac = { version = "0.12.1", features = ["std"] }
 sha2 = "0.10.9"
-ddup-bak = "0.5.9"
+ddup-bak = "0.6.0"
 infer = "0.19.0"
 rustls = { version = "0.23.27", features = ["ring"] }
 rand = "0.9.1"

@@ -148,8 +148,8 @@ pub async fn create_backup(
         let mut attempts = 0;
         loop {
             attempts += 1;
-            if attempts > 3 {
-                return Err("Failed to upload part after 3 attempts".into());
+            if attempts > 50 {
+                return Err("Failed to upload part after 50 attempts".into());
             }
 
             crate::logger::log(
@@ -186,6 +186,8 @@ pub async fn create_backup(
                         crate::logger::LoggerLevel::Error,
                         format!("Failed to upload s3 backup part({}): {}", i + 1, err),
                     );
+
+                    tokio::time::sleep(std::time::Duration::from_secs(attempts * 2)).await;
                 }
             }
         }
@@ -214,7 +216,6 @@ pub async fn create_backup(
 
 pub async fn restore_backup(
     server: &Arc<crate::server::Server>,
-    truncate_directory: bool,
     download_url: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let response = CLIENT
@@ -226,10 +227,6 @@ pub async fn restore_backup(
         response.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)),
     ));
     let reader = BufReader::with_capacity(1024 * 1024, reader);
-
-    if truncate_directory {
-        server.filesystem.truncate_root().await;
-    }
 
     let filesystem = Arc::clone(&server.filesystem);
     let server = Arc::clone(server);

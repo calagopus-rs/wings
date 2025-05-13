@@ -1,0 +1,387 @@
+use crate::remote::backups::RawServerBackup;
+use axum::{
+    body::Body,
+    http::{HeaderMap, StatusCode},
+};
+use ddup_bak::archive::entries::Entry;
+use ignore::WalkBuilder;
+use sha1::Digest;
+use std::{io::Write, path::Path, sync::Arc};
+use tokio::{io::AsyncReadExt, sync::RwLock};
+
+static REPOSITORY: RwLock<Option<Arc<ddup_bak::repository::Repository>>> = RwLock::const_new(None);
+
+#[inline]
+async fn get_repository(server: &crate::server::Server) -> Arc<ddup_bak::repository::Repository> {
+    if let Some(repository) = REPOSITORY.read().await.as_ref() {
+        return Arc::clone(repository);
+    }
+
+    let path = Path::new(&server.config.system.backup_directory);
+    if path.join(".ddup-bak").exists() {
+        let repository =
+            Arc::new(ddup_bak::repository::Repository::open(&path, None, None).unwrap());
+        *REPOSITORY.write().await = Some(Arc::clone(&repository));
+
+        repository
+    } else {
+        let repository = Arc::new(ddup_bak::repository::Repository::new(
+            &path,
+            1024 * 1024,
+            0,
+            None,
+        ));
+        *REPOSITORY.write().await = Some(Arc::clone(&repository));
+
+        repository
+    }
+}
+
+pub async fn create_backup(
+    server: &Arc<crate::server::Server>,
+    uuid: uuid::Uuid,
+    overrides: ignore::overrides::Override,
+) -> Result<RawServerBackup, Box<dyn std::error::Error + Send + Sync>> {
+    let repository = get_repository(server).await;
+    let path = repository.archive_path(&uuid.to_string());
+
+    let filesystem = Arc::clone(&server.filesystem);
+    let size = tokio::task::spawn_blocking(
+        move || -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
+            let archive = repository.create_archive(
+                &uuid.to_string(),
+                Some(
+                    WalkBuilder::new(&filesystem.base_path)
+                        .overrides(overrides)
+                        .add_custom_ignore_filename(".pteroignore")
+                        .follow_links(false)
+                        .git_global(false)
+                        .build(),
+                ),
+                Some(&filesystem.base_path),
+                None,
+                None,
+                None,
+                4,
+            )?;
+
+            repository.save()?;
+
+            fn recursive_size(entry: Entry) -> u64 {
+                match entry {
+                    Entry::File(file) => file.size_real,
+                    Entry::Directory(directory) => {
+                        directory.entries.into_iter().map(recursive_size).sum()
+                    }
+                    Entry::Symlink(_) => 0,
+                }
+            }
+
+            Ok(archive.into_entries().into_iter().map(recursive_size).sum())
+        },
+    )
+    .await??;
+
+    let mut sha1 = sha1::Sha1::new();
+    let mut file = tokio::fs::File::open(path).await?;
+
+    let mut buffer = [0; 8192];
+    loop {
+        let bytes_read = file.read(&mut buffer).await?;
+        if bytes_read == 0 {
+            break;
+        }
+
+        sha1.update(&buffer[..bytes_read]);
+    }
+
+    Ok(RawServerBackup {
+        checksum: format!("{}-{:x}", file.metadata().await?.len(), sha1.finalize()),
+        checksum_type: "ddup-sha1".to_string(),
+        size,
+        successful: true,
+        parts: vec![],
+    })
+}
+
+pub async fn restore_backup(
+    server: &Arc<crate::server::Server>,
+    uuid: uuid::Uuid,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let repository = get_repository(server).await;
+
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(
+        move || -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            let archive = repository.get_archive(&uuid.to_string())?;
+
+            fn recursive_restore(
+                repository: &Arc<ddup_bak::repository::Repository>,
+                entry: Entry,
+                path: &Path,
+                server: &Arc<crate::server::Server>,
+            ) {
+                let path = path.join(entry.name());
+
+                let destination_path = server.filesystem.base_path.join(&path);
+                if !server.filesystem.is_safe_path(&destination_path) {
+                    return;
+                }
+
+                match entry {
+                    Entry::File(file) => {
+                        futures::executor::block_on(
+                            server.log_daemon(format!("(restoring): {}", path.display())),
+                        );
+
+                        if let Some(parent) = destination_path.parent() {
+                            if !parent.exists() {
+                                std::fs::create_dir_all(parent).unwrap();
+                            }
+                        }
+
+                        let mut writer = crate::server::filesystem::writer::FileSystemWriter::new(
+                            Arc::clone(&server.filesystem),
+                            destination_path,
+                            Some(file.mode.into()),
+                        )
+                        .unwrap();
+
+                        repository
+                            .read_entry_content(Entry::File(file), &mut writer)
+                            .unwrap();
+                        writer.flush().unwrap();
+                    }
+                    Entry::Directory(directory) => {
+                        std::fs::create_dir_all(&destination_path).unwrap();
+                        std::fs::set_permissions(&destination_path, directory.mode.into()).unwrap();
+                        std::os::unix::fs::chown(
+                            &destination_path,
+                            Some(directory.owner.0),
+                            Some(directory.owner.1),
+                        )
+                        .unwrap();
+
+                        for entry in directory.entries {
+                            recursive_restore(
+                                repository,
+                                entry,
+                                &path.join(&directory.name),
+                                server,
+                            );
+                        }
+                    }
+                    Entry::Symlink(_) => {}
+                }
+            }
+
+            for entry in archive.into_entries() {
+                recursive_restore(&repository, entry, Path::new("."), &server);
+            }
+
+            Ok(())
+        },
+    )
+    .await??;
+
+    Ok(())
+}
+
+pub async fn download_backup(
+    server: &Arc<crate::server::Server>,
+    uuid: uuid::Uuid,
+) -> Result<(StatusCode, HeaderMap, Body), Box<dyn std::error::Error + Send + Sync>> {
+    let repository = get_repository(server).await;
+    let archive = repository.get_archive(&uuid.to_string())?;
+
+    let (writer, reader) = tokio::io::duplex(65536);
+
+    tokio::task::spawn_blocking(move || {
+        let writer = tokio_util::io::SyncIoBridge::new(writer);
+        let writer = flate2::write::GzEncoder::new(writer, flate2::Compression::default());
+
+        let mut tar = tar::Builder::new(writer);
+        tar.mode(tar::HeaderMode::Complete);
+
+        let exit_early = &mut false;
+        for entry in archive.into_entries() {
+            if *exit_early {
+                break;
+            }
+
+            tar_recursive_convert_entries(entry, exit_early, &repository, &mut tar, "");
+        }
+
+        if !*exit_early {
+            tar.finish().unwrap();
+        }
+    });
+
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        "Content-Disposition",
+        format!("attachment; filename={}.tar.gz", uuid)
+            .parse()
+            .unwrap(),
+    );
+    headers.insert("Content-Type", "application/gzip".parse().unwrap());
+
+    Ok((
+        StatusCode::OK,
+        headers,
+        Body::from_stream(tokio_util::io::ReaderStream::new(
+            tokio::io::BufReader::new(reader),
+        )),
+    ))
+}
+
+fn tar_recursive_convert_entries(
+    entry: Entry,
+    exit_early: &mut bool,
+    repository: &ddup_bak::repository::Repository,
+    archive: &mut tar::Builder<
+        flate2::write::GzEncoder<tokio_util::io::SyncIoBridge<tokio::io::DuplexStream>>,
+    >,
+    parent_path: &str,
+) {
+    if *exit_early {
+        return;
+    }
+
+    match entry {
+        Entry::Directory(entries) => {
+            let path = if parent_path.is_empty() {
+                entries.name.clone()
+            } else {
+                format!("{}/{}", parent_path, entries.name)
+            };
+
+            let mut entry_header = tar::Header::new_gnu();
+            entry_header.set_uid(entries.owner.0 as u64);
+            entry_header.set_gid(entries.owner.1 as u64);
+            entry_header.set_mode(entries.mode.bits());
+
+            entry_header.set_mtime(
+                entries
+                    .mtime
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+            );
+            entry_header.set_entry_type(tar::EntryType::Directory);
+
+            let dir_path = if path.ends_with('/') {
+                path.clone()
+            } else {
+                format!("{}/", path)
+            };
+
+            if archive
+                .append_data(&mut entry_header, &dir_path, std::io::empty())
+                .is_err()
+            {
+                *exit_early = true;
+
+                return;
+            }
+
+            for entry in entries.entries {
+                tar_recursive_convert_entries(entry, exit_early, repository, archive, &path);
+            }
+        }
+        Entry::File(file) => {
+            let path = if parent_path.is_empty() {
+                file.name.clone()
+            } else {
+                format!("{}/{}", parent_path, file.name)
+            };
+
+            let mut entry_header = tar::Header::new_gnu();
+            entry_header.set_uid(file.owner.0 as u64);
+            entry_header.set_gid(file.owner.1 as u64);
+            entry_header.set_mode(file.mode.bits());
+
+            entry_header.set_mtime(
+                file.mtime
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+            );
+            entry_header.set_entry_type(tar::EntryType::Regular);
+            entry_header.set_size(file.size_real);
+
+            let reader = repository.entry_reader(Entry::File(file.clone())).unwrap();
+
+            if archive
+                .append_data(&mut entry_header, &path, reader)
+                .is_err()
+            {
+                *exit_early = true;
+
+                return;
+            }
+        }
+        Entry::Symlink(link) => {
+            let path = if parent_path.is_empty() {
+                link.name.clone()
+            } else {
+                format!("{}/{}", parent_path, link.name)
+            };
+
+            let mut entry_header = tar::Header::new_gnu();
+            entry_header.set_uid(link.owner.0 as u64);
+            entry_header.set_gid(link.owner.1 as u64);
+            entry_header.set_mode(link.mode.bits());
+
+            entry_header.set_mtime(
+                link.mtime
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+            );
+            entry_header.set_entry_type(tar::EntryType::Symlink);
+
+            if archive
+                .append_link(&mut entry_header, &path, &link.target)
+                .is_err()
+            {
+                *exit_early = true;
+
+                return;
+            }
+        }
+    }
+}
+
+pub async fn delete_backup(
+    server: &Arc<crate::server::Server>,
+    uuid: uuid::Uuid,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let repository = get_repository(server).await;
+
+    tokio::task::spawn_blocking(
+        move || -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            repository.delete_archive(&uuid.to_string(), None)?;
+            repository.save()?;
+
+            Ok(())
+        },
+    );
+
+    Ok(())
+}
+
+pub async fn list_backups(
+    server: &Arc<crate::server::Server>,
+) -> Result<Vec<uuid::Uuid>, Box<dyn std::error::Error + Send + Sync>> {
+    let repository = get_repository(server).await;
+    let mut backups = Vec::new();
+
+    for archive in repository.list_archives()? {
+        if let Ok(uuid) = uuid::Uuid::parse_str(&archive) {
+            backups.push(uuid);
+        }
+    }
+
+    Ok(backups)
+}

@@ -8,12 +8,13 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::ToSchema;
 
+mod ddup_bak;
 mod s3;
 mod wings;
 
 #[derive(ToSchema, Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(rename_all = "lowercase")]
-#[schema(rename_all = "lowercase")]
+#[serde(rename_all = "kebab-case")]
+#[schema(rename_all = "kebab-case")]
 pub enum BackupAdapter {
     Wings,
     S3,
@@ -57,7 +58,9 @@ pub async fn create_backup(
     let backup = match match adapter {
         BackupAdapter::Wings => wings::create_backup(server, uuid, override_builder.build()?).await,
         BackupAdapter::S3 => s3::create_backup(server, uuid, override_builder.build()?).await,
-        BackupAdapter::DdupBak => todo!(),
+        BackupAdapter::DdupBak => {
+            ddup_bak::create_backup(server, uuid, override_builder.build()?).await
+        }
     } {
         Ok(backup) => backup,
         Err(e) => {
@@ -111,10 +114,14 @@ pub async fn restore_backup(
         .restoring
         .store(true, std::sync::atomic::Ordering::SeqCst);
 
+    if truncate_directory {
+        server.filesystem.truncate_root().await;
+    }
+
     match match adapter {
-        BackupAdapter::Wings => wings::restore_backup(server, uuid, truncate_directory).await,
-        BackupAdapter::S3 => s3::restore_backup(server, truncate_directory, download_url).await,
-        BackupAdapter::DdupBak => todo!(),
+        BackupAdapter::Wings => wings::restore_backup(server, uuid).await,
+        BackupAdapter::S3 => s3::restore_backup(server, download_url).await,
+        BackupAdapter::DdupBak => ddup_bak::restore_backup(server, uuid).await,
     } {
         Ok(_) => {
             server
@@ -163,7 +170,7 @@ pub async fn download_backup(
     match adapter {
         BackupAdapter::Wings => wings::download_backup(server, uuid).await,
         BackupAdapter::S3 => unimplemented!(),
-        BackupAdapter::DdupBak => todo!(),
+        BackupAdapter::DdupBak => ddup_bak::download_backup(server, uuid).await,
     }
 }
 
@@ -175,7 +182,7 @@ pub async fn delete_backup(
     match adapter {
         BackupAdapter::Wings => wings::delete_backup(server, uuid).await,
         BackupAdapter::S3 => s3::delete_backup(server, uuid).await,
-        BackupAdapter::DdupBak => todo!(),
+        BackupAdapter::DdupBak => ddup_bak::delete_backup(server, uuid).await,
     }
 }
 
@@ -186,6 +193,6 @@ pub async fn list_backups(
     match adapter {
         BackupAdapter::Wings => wings::list_backups(server).await,
         BackupAdapter::S3 => s3::list_backups(server).await,
-        BackupAdapter::DdupBak => todo!(),
+        BackupAdapter::DdupBak => ddup_bak::list_backups(server).await,
     }
 }
