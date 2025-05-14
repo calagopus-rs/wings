@@ -4,7 +4,6 @@ wings, but in rust, very innovative.
 
 ## todo
 
-- SFTP server
 - Transfer system
 - Rerewrite power/stats stuff
 - Server configuration updates

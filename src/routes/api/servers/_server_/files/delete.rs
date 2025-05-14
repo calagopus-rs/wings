@@ -51,7 +51,7 @@ mod post {
         for file in data.files {
             let destination = root.join(file);
 
-            if !server.filesystem.is_safe_path(&destination) {
+            if !server.filesystem.is_safe_path(&destination) || destination == root {
                 continue;
             }
 

@@ -1,6 +1,6 @@
 [package]
 name = "wings-rs"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2024"
 
 [dependencies]
@@ -38,3 +38,5 @@ rand = "0.9.1"
 ignore = { version = "0.4.23", features = ["simd-accel"] }
 sha1 = "0.10.6"
 futures = "0.3.31"
+russh = "0.52.1"
+russh-sftp = "2.1.1"

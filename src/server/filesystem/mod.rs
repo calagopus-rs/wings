@@ -165,7 +165,7 @@ impl Filesystem {
     }
 
     #[inline]
-    fn path_to_components(&self, path: &Path) -> Vec<String> {
+    pub fn path_to_components(&self, path: &Path) -> Vec<String> {
         if let Some(rel_path) = self.relative_path(path) {
             rel_path
                 .components()
@@ -179,9 +179,14 @@ impl Filesystem {
     pub fn safe_path(&self, path: &str) -> Option<PathBuf> {
         let safe_path = self.base_path.join(path.trim_start_matches('/'));
 
-        let safe_parent = safe_path.parent()?;
-        let safe_parent = safe_parent.canonicalize().ok()?;
-        let safe_path = safe_parent.join(safe_path.file_name()?);
+        let safe_path = if let Some(file_name) = safe_path.file_name() {
+            let safe_parent = safe_path.parent()?;
+            let safe_parent = safe_parent.canonicalize().ok()?;
+
+            safe_parent.join(file_name)
+        } else {
+            safe_path.canonicalize().ok()?
+        };
 
         if !safe_path.starts_with(&self.base_path) {
             return None;

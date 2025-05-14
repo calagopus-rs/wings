@@ -7,7 +7,8 @@ use axum::{
 use bollard::Docker;
 use colored::Colorize;
 use routes::ApiError;
-use std::{net::SocketAddr, sync::Arc, time::Instant};
+use russh::{keys::ssh_key::rand_core::OsRng, server::Server};
+use std::{net::SocketAddr, path::Path, sync::Arc, time::Instant};
 use tower_http::catch_panic::CatchPanicLayer;
 use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityScheme};
 use utoipa_axum::router::OpenApiRouter;
@@ -18,6 +19,7 @@ mod models;
 mod remote;
 mod routes;
 mod server;
+mod sftp;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const GIT_COMMIT: &str = env!("CARGO_GIT_COMMIT");
@@ -170,6 +172,85 @@ async fn main() {
     rustls::crypto::ring::default_provider()
         .install_default()
         .expect("Failed to install rustls crypto provider");
+
+    tokio::spawn({
+        let state = Arc::clone(&state);
+
+        async move {
+            let mut server = sftp::Server {
+                state: Arc::clone(&state),
+            };
+
+            let key_file = Path::new(&state.config.system.data_directory)
+                .join(".sftp")
+                .join("id_ed25519");
+            let key = match tokio::fs::read(&key_file)
+                .await
+                .map(russh::keys::PrivateKey::from_openssh)
+            {
+                Ok(Ok(key)) => key,
+                _ => {
+                    let key = russh::keys::PrivateKey::random(
+                        &mut OsRng,
+                        russh::keys::Algorithm::Ed25519,
+                    )
+                    .unwrap();
+
+                    tokio::fs::create_dir_all(key_file.parent().unwrap())
+                        .await
+                        .unwrap();
+                    tokio::fs::write(
+                        key_file,
+                        key.to_openssh(russh::keys::ssh_key::LineEnding::LF)
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+
+                    key
+                }
+            };
+
+            let config = russh::server::Config {
+                auth_rejection_time: std::time::Duration::from_secs(3),
+                auth_rejection_time_initial: Some(std::time::Duration::from_secs(0)),
+                max_auth_attempts: 6,
+                keys: vec![key],
+                ..Default::default()
+            };
+
+            let address = SocketAddr::from((
+                state
+                    .config
+                    .system
+                    .sftp
+                    .address
+                    .parse::<std::net::IpAddr>()
+                    .unwrap(),
+                state.config.system.sftp.port,
+            ));
+
+            logger::log(
+                logger::LoggerLevel::Info,
+                format!(
+                    "{} listening on {} {}",
+                    "sftp server".yellow(),
+                    address.to_string().cyan(),
+                    format!(
+                        "(app@{}, {}ms)",
+                        VERSION,
+                        state.start_time.elapsed().as_millis()
+                    )
+                    .bright_black()
+                ),
+            );
+
+            server
+                .run_on_address(Arc::new(config), address)
+                .await
+                .unwrap();
+        }
+    });
 
     let address = SocketAddr::from((
         state.config.api.host.parse::<std::net::IpAddr>().unwrap(),

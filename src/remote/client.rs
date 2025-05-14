@@ -1,4 +1,4 @@
-use crate::server::installation::InstallationScript;
+use crate::server::{installation::InstallationScript, websocket::WebsocketPermission};
 use axum::http::HeaderMap;
 
 pub struct Client {
@@ -44,6 +44,15 @@ impl Client {
             client,
             url: format!("{}/api/remote", config.remote.trim_end_matches('/')),
         }
+    }
+
+    pub async fn get_sftp_auth(
+        &self,
+        r#type: super::AuthenticationType,
+        username: &str,
+        password: &str,
+    ) -> Result<(uuid::Uuid, uuid::Uuid, Vec<WebsocketPermission>), reqwest::Error> {
+        super::get_sftp_auth(self, r#type, username, password).await
     }
 
     pub async fn servers(&self) -> Result<Vec<super::servers::RawServer>, reqwest::Error> {

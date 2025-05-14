@@ -1,4 +1,8 @@
+use client::Client;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
+
+use crate::server::websocket::WebsocketPermission;
 
 pub mod backups;
 pub mod client;
@@ -13,4 +17,41 @@ pub struct Pagination {
     per_page: usize,
     to: usize,
     total: usize,
+}
+
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthenticationType {
+    Password,
+    PublicKey,
+}
+
+pub async fn get_sftp_auth(
+    client: &Client,
+    r#type: AuthenticationType,
+    username: &str,
+    password: &str,
+) -> Result<(uuid::Uuid, uuid::Uuid, Vec<WebsocketPermission>), reqwest::Error> {
+    let response: Response = client
+        .client
+        .post(format!("{}/sftp/auth", client.url))
+        .json(&json!({
+            "type": r#type,
+            "username": username,
+            "password": password,
+        }))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    #[derive(Deserialize)]
+    pub struct Response {
+        user: uuid::Uuid,
+        server: uuid::Uuid,
+
+        permissions: Vec<WebsocketPermission>,
+    }
+
+    Ok((response.user, response.server, response.permissions))
 }

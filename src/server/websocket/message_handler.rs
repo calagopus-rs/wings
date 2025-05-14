@@ -54,6 +54,18 @@ pub async fn handle_message(
 
             match power_state {
                 crate::models::ServerPowerAction::Start => {
+                    if !socket_jwt.has_permission(WebsocketPermission::ControlStart) {
+                        crate::logger::log(
+                            crate::logger::LoggerLevel::Debug,
+                            format!(
+                                "JWT does not have permission to start server: {:?}",
+                                socket_jwt.permissions
+                            ),
+                        );
+
+                        return Ok(());
+                    }
+
                     if let Err(err) = server.start(&state.docker, None).await {
                         crate::logger::log(
                             crate::logger::LoggerLevel::Error,
@@ -62,6 +74,18 @@ pub async fn handle_message(
                     }
                 }
                 crate::models::ServerPowerAction::Kill => {
+                    if !socket_jwt.has_permission(WebsocketPermission::ControlStop) {
+                        crate::logger::log(
+                            crate::logger::LoggerLevel::Debug,
+                            format!(
+                                "JWT does not have permission to start server: {:?}",
+                                socket_jwt.permissions
+                            ),
+                        );
+
+                        return Ok(());
+                    }
+
                     if let Err(err) = server.kill(&state.docker).await {
                         crate::logger::log(
                             crate::logger::LoggerLevel::Error,
@@ -70,6 +94,18 @@ pub async fn handle_message(
                     }
                 }
                 crate::models::ServerPowerAction::Stop => {
+                    if !socket_jwt.has_permission(WebsocketPermission::ControlStop) {
+                        crate::logger::log(
+                            crate::logger::LoggerLevel::Debug,
+                            format!(
+                                "JWT does not have permission to start server: {:?}",
+                                socket_jwt.permissions
+                            ),
+                        );
+
+                        return Ok(());
+                    }
+
                     if let Err(err) = server.stop(&state.docker, None).await {
                         crate::logger::log(
                             crate::logger::LoggerLevel::Error,
@@ -78,6 +114,18 @@ pub async fn handle_message(
                     }
                 }
                 crate::models::ServerPowerAction::Restart => {
+                    if !socket_jwt.has_permission(WebsocketPermission::ControlRestart) {
+                        crate::logger::log(
+                            crate::logger::LoggerLevel::Debug,
+                            format!(
+                                "JWT does not have permission to start server: {:?}",
+                                socket_jwt.permissions
+                            ),
+                        );
+
+                        return Ok(());
+                    }
+
                     if let Err(err) = server.restart(&state.docker, None).await {
                         crate::logger::log(
                             crate::logger::LoggerLevel::Error,

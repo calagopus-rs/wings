@@ -25,7 +25,7 @@ impl WebsocketJwtPayload {
     #[inline]
     pub fn has_permission(&self, permission: WebsocketPermission) -> bool {
         for p in self.permissions.iter().copied() {
-            if p == permission || (p == WebsocketPermission::All && !permission.is_admin()) {
+            if permission.matches(p) {
                 return true;
             }
         }
@@ -104,6 +104,17 @@ pub enum WebsocketPermission {
     AdminWebsocketTransfer,
     #[serde(rename = "backup.read")]
     BackupRead,
+
+    #[serde(rename = "file.read")]
+    FileRead,
+    #[serde(rename = "file.read-content")]
+    FileReadContent,
+    #[serde(rename = "file.create")]
+    FileCreate,
+    #[serde(rename = "file.update")]
+    FileUpdate,
+    #[serde(rename = "file.delete")]
+    FileDelete,
 }
 
 impl WebsocketPermission {
@@ -114,6 +125,10 @@ impl WebsocketPermission {
                 | WebsocketPermission::AdminWebsocketInstall
                 | WebsocketPermission::AdminWebsocketTransfer
         )
+    }
+
+    pub fn matches(&self, other: WebsocketPermission) -> bool {
+        *self == other || (other == WebsocketPermission::All && !other.is_admin())
     }
 }
 
