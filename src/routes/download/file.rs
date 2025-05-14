@@ -131,7 +131,6 @@ mod get {
         };
 
         let mut headers = HeaderMap::new();
-
         headers.insert("Content-Length", size.into());
         headers.insert(
             "Content-Disposition",

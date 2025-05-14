@@ -20,13 +20,13 @@ async fn get_repository(server: &crate::server::Server) -> Arc<ddup_bak::reposit
     let path = Path::new(&server.config.system.backup_directory);
     if path.join(".ddup-bak").exists() {
         let repository =
-            Arc::new(ddup_bak::repository::Repository::open(&path, None, None).unwrap());
+            Arc::new(ddup_bak::repository::Repository::open(path, None, None).unwrap());
         *REPOSITORY.write().await = Some(Arc::clone(&repository));
 
         repository
     } else {
         let repository = Arc::new(ddup_bak::repository::Repository::new(
-            &path,
+            path,
             1024 * 1024,
             0,
             None,
@@ -317,8 +317,6 @@ fn tar_recursive_convert_entries(
                 .is_err()
             {
                 *exit_early = true;
-
-                return;
             }
         }
         Entry::Symlink(link) => {
@@ -346,8 +344,6 @@ fn tar_recursive_convert_entries(
                 .is_err()
             {
                 *exit_early = true;
-
-                return;
             }
         }
     }
