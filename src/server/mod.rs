@@ -856,7 +856,10 @@ impl Server {
         if let Ok(containers) = client
             .list_containers(Some(bollard::container::ListContainersOptions {
                 all: true,
-                filters: HashMap::from([("name".to_string(), vec![self.uuid.to_string()])]),
+                filters: HashMap::from([(
+                    "name".to_string(),
+                    vec![self.uuid.to_string(), format!("{}_installer", self.uuid)],
+                )]),
                 ..Default::default()
             }))
             .await

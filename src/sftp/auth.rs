@@ -11,9 +11,9 @@ pub struct SshSession {
     pub state: State,
     pub server: Option<Arc<crate::server::Server>>,
 
-    pub client_ip: Option<SocketAddr>,
-    pub client_uuid: Option<uuid::Uuid>,
-    pub client_permissions: Permissions,
+    pub user_ip: Option<SocketAddr>,
+    pub user_uuid: Option<uuid::Uuid>,
+    pub user_permissions: Permissions,
 
     pub clients: Arc<Mutex<HashMap<ChannelId, Channel<Msg>>>>,
 }
@@ -51,8 +51,8 @@ impl russh::server::Handler for SshSession {
             }
         };
 
-        self.client_uuid = Some(user);
-        self.client_permissions = permissions;
+        self.user_uuid = Some(user);
+        self.user_permissions = permissions;
 
         let server = match self
             .state
@@ -98,8 +98,8 @@ impl russh::server::Handler for SshSession {
             }
         };
 
-        self.client_uuid = Some(user);
-        self.client_permissions = permissions;
+        self.user_uuid = Some(user);
+        self.user_permissions = permissions;
 
         let server = match self
             .state
@@ -158,9 +158,9 @@ impl russh::server::Handler for SshSession {
                 state: Arc::clone(&self.state),
                 server,
 
-                client_ip: self.client_ip,
-                client_uuid: self.client_uuid,
-                client_permissions: self.client_permissions.clone(),
+                user_ip: self.user_ip,
+                user_uuid: self.user_uuid,
+                user_permissions: self.user_permissions.clone(),
 
                 handle_id: 0,
                 handles: HashMap::new(),

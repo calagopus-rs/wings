@@ -25,9 +25,9 @@ impl russh::server::Server for Server {
             state: Arc::clone(&self.state),
             server: None,
 
-            client_ip: client,
-            client_uuid: None,
-            client_permissions: Default::default(),
+            user_ip: client,
+            user_uuid: None,
+            user_permissions: Default::default(),
 
             clients: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -48,9 +48,9 @@ struct SftpSession {
     state: State,
     server: Arc<crate::server::Server>,
 
-    client_ip: Option<SocketAddr>,
-    client_uuid: Option<uuid::Uuid>,
-    client_permissions: Permissions,
+    user_ip: Option<SocketAddr>,
+    user_uuid: Option<uuid::Uuid>,
+    user_permissions: Permissions,
 
     handle_id: u64,
     handles: HashMap<String, FileHandle>,
@@ -94,7 +94,7 @@ impl SftpSession {
 
     #[inline]
     fn has_permission(&self, permission: Permission) -> bool {
-        for p in self.client_permissions.iter().copied() {
+        for p in self.user_permissions.iter().copied() {
             if permission.matches(p) {
                 return true;
             }
@@ -465,15 +465,15 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::Failure);
         }
 
-        if pflags.contains(OpenFlags::WRITE)
-            || pflags.contains(OpenFlags::APPEND) && !self.has_permission(Permission::FileUpdate)
+        if (pflags.contains(OpenFlags::WRITE) || pflags.contains(OpenFlags::APPEND))
+            && !self.has_permission(Permission::FileUpdate)
         {
             return Err(StatusCode::PermissionDenied);
         }
         if pflags.contains(OpenFlags::CREATE) && !self.has_permission(Permission::FileCreate) {
             return Err(StatusCode::PermissionDenied);
         }
-        if pflags.contains(OpenFlags::TRUNCATE) && !self.has_permission(Permission::FileUpdate) {
+        if pflags.contains(OpenFlags::TRUNCATE) && !self.has_permission(Permission::FileDelete) {
             return Err(StatusCode::PermissionDenied);
         }
         if pflags.contains(OpenFlags::READ) && !self.has_permission(Permission::FileReadContent) {
