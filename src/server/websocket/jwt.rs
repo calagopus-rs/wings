@@ -1,8 +1,9 @@
-use std::sync::Arc;
+use crate::server::permissions::Permission;
 
-use super::{WebsocketEvent, WebsocketJwtPayload, WebsocketMessage, WebsocketPermission};
+use super::{WebsocketEvent, WebsocketJwtPayload, WebsocketMessage};
 use axum::extract::ws::{Message, WebSocket};
 use futures_util::stream::SplitSink;
+use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 
 pub enum JwtError {
@@ -40,7 +41,7 @@ pub async fn handle_jwt(
                     ) {
                         Ok(jwt) => {
                             if !jwt.base.validate(&state.config.jwt)
-                                || !jwt.has_permission(WebsocketPermission::WebsocketConnect)
+                                || !jwt.permissions.has_permission(Permission::WebsocketConnect)
                                 || jwt.server_uuid != server.uuid
                             {
                                 crate::logger::log(
@@ -51,7 +52,7 @@ pub async fn handle_jwt(
                                     ),
                                 );
 
-                                if jwt.has_permission(WebsocketPermission::WebsocketConnect) {
+                                if jwt.permissions.has_permission(Permission::WebsocketConnect) {
                                     super::send_message(
                                         sender,
                                         WebsocketMessage::new(WebsocketEvent::TokenExpired, &[]),
@@ -68,7 +69,7 @@ pub async fn handle_jwt(
                             }
 
                             let mut permissions = Vec::new();
-                            for permission in &jwt.permissions {
+                            for permission in jwt.permissions.iter() {
                                 permissions.push(
                                     serde_json::to_value(permission)
                                         .unwrap()
@@ -104,7 +105,7 @@ pub async fn handle_jwt(
                 _ => {
                     if let Some(jwt) = socket_jwt.read().await.as_ref() {
                         if !jwt.base.validate(&state.config.jwt)
-                            || !jwt.has_permission(WebsocketPermission::WebsocketConnect)
+                            || !jwt.permissions.has_permission(Permission::WebsocketConnect)
                         {
                             crate::logger::log(
                                 crate::logger::LoggerLevel::Debug,

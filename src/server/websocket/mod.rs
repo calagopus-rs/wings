@@ -7,6 +7,8 @@ use serde::{
 use std::marker::PhantomData;
 use tokio::sync::Mutex;
 
+use super::permissions::Permissions;
+
 pub mod handler;
 mod jwt;
 mod message_handler;
@@ -18,20 +20,7 @@ pub struct WebsocketJwtPayload {
 
     pub user_uuid: uuid::Uuid,
     pub server_uuid: uuid::Uuid,
-    pub permissions: Vec<WebsocketPermission>,
-}
-
-impl WebsocketJwtPayload {
-    #[inline]
-    pub fn has_permission(&self, permission: WebsocketPermission) -> bool {
-        for p in self.permissions.iter().copied() {
-            if permission.matches(p) {
-                return true;
-            }
-        }
-
-        false
-    }
+    pub permissions: Permissions,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
@@ -79,57 +68,6 @@ pub enum WebsocketEvent {
     ServerTransferLogs,
     #[serde(rename = "transfer status")]
     ServerTransferStatus,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Hash)]
-pub enum WebsocketPermission {
-    #[serde(rename = "*")]
-    All,
-
-    #[serde(rename = "websocket.connect")]
-    WebsocketConnect,
-    #[serde(rename = "control.console")]
-    ControlConsole,
-    #[serde(rename = "control.start")]
-    ControlStart,
-    #[serde(rename = "control.stop")]
-    ControlStop,
-    #[serde(rename = "control.restart")]
-    ControlRestart,
-    #[serde(rename = "admin.websocket.errors")]
-    AdminWebsocketErrors,
-    #[serde(rename = "admin.websocket.install")]
-    AdminWebsocketInstall,
-    #[serde(rename = "admin.websocket.transfer")]
-    AdminWebsocketTransfer,
-    #[serde(rename = "backup.read")]
-    BackupRead,
-
-    #[serde(rename = "file.read")]
-    FileRead,
-    #[serde(rename = "file.read-content")]
-    FileReadContent,
-    #[serde(rename = "file.create")]
-    FileCreate,
-    #[serde(rename = "file.update")]
-    FileUpdate,
-    #[serde(rename = "file.delete")]
-    FileDelete,
-}
-
-impl WebsocketPermission {
-    pub fn is_admin(&self) -> bool {
-        matches!(
-            self,
-            WebsocketPermission::AdminWebsocketErrors
-                | WebsocketPermission::AdminWebsocketInstall
-                | WebsocketPermission::AdminWebsocketTransfer
-        )
-    }
-
-    pub fn matches(&self, other: WebsocketPermission) -> bool {
-        *self == other || (other == WebsocketPermission::All && !other.is_admin())
-    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

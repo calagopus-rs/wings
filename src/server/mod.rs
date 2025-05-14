@@ -15,6 +15,7 @@ pub mod container;
 pub mod filesystem;
 pub mod installation;
 pub mod manager;
+pub mod permissions;
 pub mod resources;
 pub mod state;
 pub mod websocket;

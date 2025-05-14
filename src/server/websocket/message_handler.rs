@@ -1,4 +1,5 @@
-use super::{WebsocketEvent, WebsocketJwtPayload, WebsocketMessage, WebsocketPermission};
+use super::{WebsocketEvent, WebsocketJwtPayload, WebsocketMessage};
+use crate::server::permissions::Permission;
 use axum::extract::ws::{Message, WebSocket};
 use futures_util::stream::SplitSink;
 use tokio::sync::Mutex;
@@ -54,7 +55,10 @@ pub async fn handle_message(
 
             match power_state {
                 crate::models::ServerPowerAction::Start => {
-                    if !socket_jwt.has_permission(WebsocketPermission::ControlStart) {
+                    if !socket_jwt
+                        .permissions
+                        .has_permission(Permission::ControlStart)
+                    {
                         crate::logger::log(
                             crate::logger::LoggerLevel::Debug,
                             format!(
@@ -74,7 +78,10 @@ pub async fn handle_message(
                     }
                 }
                 crate::models::ServerPowerAction::Kill => {
-                    if !socket_jwt.has_permission(WebsocketPermission::ControlStop) {
+                    if !socket_jwt
+                        .permissions
+                        .has_permission(Permission::ControlStop)
+                    {
                         crate::logger::log(
                             crate::logger::LoggerLevel::Debug,
                             format!(
@@ -94,7 +101,10 @@ pub async fn handle_message(
                     }
                 }
                 crate::models::ServerPowerAction::Stop => {
-                    if !socket_jwt.has_permission(WebsocketPermission::ControlStop) {
+                    if !socket_jwt
+                        .permissions
+                        .has_permission(Permission::ControlStop)
+                    {
                         crate::logger::log(
                             crate::logger::LoggerLevel::Debug,
                             format!(
@@ -114,7 +124,10 @@ pub async fn handle_message(
                     }
                 }
                 crate::models::ServerPowerAction::Restart => {
-                    if !socket_jwt.has_permission(WebsocketPermission::ControlRestart) {
+                    if !socket_jwt
+                        .permissions
+                        .has_permission(Permission::ControlRestart)
+                    {
                         crate::logger::log(
                             crate::logger::LoggerLevel::Debug,
                             format!(
@@ -136,7 +149,10 @@ pub async fn handle_message(
             }
         }
         WebsocketEvent::SendCommand => {
-            if !socket_jwt.has_permission(WebsocketPermission::ControlConsole) {
+            if !socket_jwt
+                .permissions
+                .has_permission(Permission::ControlConsole)
+            {
                 crate::logger::log(
                     crate::logger::LoggerLevel::Debug,
                     format!(

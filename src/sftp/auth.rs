@@ -1,4 +1,4 @@
-use crate::{remote::AuthenticationType, routes::State, server::websocket::WebsocketPermission};
+use crate::{remote::AuthenticationType, routes::State, server::permissions::Permissions};
 use russh::{
     Channel, ChannelId,
     server::{Auth, Msg, Session},
@@ -13,7 +13,7 @@ pub struct SshSession {
 
     pub client_ip: Option<SocketAddr>,
     pub client_uuid: Option<uuid::Uuid>,
-    pub client_permissions: Vec<WebsocketPermission>,
+    pub client_permissions: Permissions,
 
     pub clients: Arc<Mutex<HashMap<ChannelId, Channel<Msg>>>>,
 }
@@ -52,8 +52,7 @@ impl russh::server::Handler for SshSession {
         };
 
         self.client_uuid = Some(user);
-        self.client_permissions.clear();
-        self.client_permissions.extend(permissions);
+        self.client_permissions = permissions;
 
         let server = match self
             .state
@@ -100,8 +99,7 @@ impl russh::server::Handler for SshSession {
         };
 
         self.client_uuid = Some(user);
-        self.client_permissions.clear();
-        self.client_permissions.extend(permissions);
+        self.client_permissions = permissions;
 
         let server = match self
             .state

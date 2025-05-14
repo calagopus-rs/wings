@@ -1,5 +1,5 @@
 use crate::routes::State;
-use crate::server::websocket::WebsocketPermission;
+use crate::server::permissions::{Permission, Permissions};
 use russh_sftp::protocol::{
     Data, File, FileAttributes, Handle, Name, OpenFlags, Status, StatusCode,
 };
@@ -27,7 +27,7 @@ impl russh::server::Server for Server {
 
             client_ip: client,
             client_uuid: None,
-            client_permissions: Vec::new(),
+            client_permissions: Default::default(),
 
             clients: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -50,7 +50,7 @@ struct SftpSession {
 
     client_ip: Option<SocketAddr>,
     client_uuid: Option<uuid::Uuid>,
-    client_permissions: Vec<WebsocketPermission>,
+    client_permissions: Permissions,
 
     handle_id: u64,
     handles: HashMap<String, FileHandle>,
@@ -93,7 +93,7 @@ impl SftpSession {
     }
 
     #[inline]
-    fn has_permission(&self, permission: WebsocketPermission) -> bool {
+    fn has_permission(&self, permission: Permission) -> bool {
         for p in self.client_permissions.iter().copied() {
             if permission.matches(p) {
                 return true;
@@ -144,7 +144,7 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::Failure);
         }
 
-        if !self.has_permission(WebsocketPermission::FileRead) {
+        if !self.has_permission(Permission::FileRead) {
             return Err(StatusCode::PermissionDenied);
         }
 
@@ -205,7 +205,7 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
-        if !self.has_permission(WebsocketPermission::FileDelete) {
+        if !self.has_permission(Permission::FileDelete) {
             return Err(StatusCode::PermissionDenied);
         }
 
@@ -241,12 +241,15 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
-        if !self.has_permission(WebsocketPermission::FileDelete) {
+        if !self.has_permission(Permission::FileDelete) {
             return Err(StatusCode::PermissionDenied);
         }
 
         if let Some(path) = self.server.filesystem.safe_path(&path) {
-            if path.exists() && tokio::fs::remove_dir(&path).await.is_err() {
+            if path.exists()
+                && path != self.server.filesystem.base_path
+                && tokio::fs::remove_dir(&path).await.is_err()
+            {
                 return Err(StatusCode::NoSuchFile);
             }
 
@@ -271,7 +274,7 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
-        if !self.has_permission(WebsocketPermission::FileCreate) {
+        if !self.has_permission(Permission::FileCreate) {
             return Err(StatusCode::PermissionDenied);
         }
 
@@ -315,7 +318,7 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
-        if !self.has_permission(WebsocketPermission::FileUpdate) {
+        if !self.has_permission(Permission::FileUpdate) {
             return Err(StatusCode::PermissionDenied);
         }
 
@@ -359,7 +362,7 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
-        if !self.has_permission(WebsocketPermission::FileUpdate) {
+        if !self.has_permission(Permission::FileUpdate) {
             return Err(StatusCode::PermissionDenied);
         }
 
@@ -408,7 +411,7 @@ impl russh_sftp::server::Handler for SftpSession {
         id: u32,
         path: String,
     ) -> Result<russh_sftp::protocol::Attrs, Self::Error> {
-        if !self.has_permission(WebsocketPermission::FileRead) {
+        if !self.has_permission(Permission::FileRead) {
             return Err(StatusCode::PermissionDenied);
         }
 
@@ -463,24 +466,17 @@ impl russh_sftp::server::Handler for SftpSession {
         }
 
         if pflags.contains(OpenFlags::WRITE)
-            || pflags.contains(OpenFlags::APPEND)
-                && !self.has_permission(WebsocketPermission::FileUpdate)
+            || pflags.contains(OpenFlags::APPEND) && !self.has_permission(Permission::FileUpdate)
         {
             return Err(StatusCode::PermissionDenied);
         }
-        if pflags.contains(OpenFlags::CREATE)
-            && !self.has_permission(WebsocketPermission::FileCreate)
-        {
+        if pflags.contains(OpenFlags::CREATE) && !self.has_permission(Permission::FileCreate) {
             return Err(StatusCode::PermissionDenied);
         }
-        if pflags.contains(OpenFlags::TRUNCATE)
-            && !self.has_permission(WebsocketPermission::FileUpdate)
-        {
+        if pflags.contains(OpenFlags::TRUNCATE) && !self.has_permission(Permission::FileUpdate) {
             return Err(StatusCode::PermissionDenied);
         }
-        if pflags.contains(OpenFlags::READ)
-            && !self.has_permission(WebsocketPermission::FileReadContent)
-        {
+        if pflags.contains(OpenFlags::READ) && !self.has_permission(Permission::FileReadContent) {
             return Err(StatusCode::PermissionDenied);
         }
 

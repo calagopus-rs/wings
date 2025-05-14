@@ -1,4 +1,7 @@
-use crate::{routes::GetState, server::websocket};
+use crate::{
+    routes::GetState,
+    server::{permissions::Permission, websocket},
+};
 use axum::{
     body::Bytes,
     extract::{Path, WebSocketUpgrade, ws::Message},
@@ -148,23 +151,26 @@ pub async fn handle_ws(
 
                         match message.event {
                             websocket::WebsocketEvent::ServerInstallOutput => {
-                                if !socket_jwt.has_permission(
-                                    websocket::WebsocketPermission::AdminWebsocketInstall,
-                                ) {
+                                if !socket_jwt
+                                    .permissions
+                                    .has_permission(Permission::AdminWebsocketInstall)
+                                {
                                     continue;
                                 }
                             }
                             websocket::WebsocketEvent::ServerBackupCompleted => {
                                 if !socket_jwt
-                                    .has_permission(websocket::WebsocketPermission::BackupRead)
+                                    .permissions
+                                    .has_permission(Permission::BackupRead)
                                 {
                                     continue;
                                 }
                             }
                             websocket::WebsocketEvent::ServerTransferLogs => {
-                                if !socket_jwt.has_permission(
-                                    websocket::WebsocketPermission::AdminWebsocketTransfer,
-                                ) {
+                                if !socket_jwt
+                                    .permissions
+                                    .has_permission(Permission::AdminWebsocketTransfer)
+                                {
                                     continue;
                                 }
                             }

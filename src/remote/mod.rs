@@ -1,8 +1,7 @@
+use crate::server::permissions::Permissions;
 use client::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-
-use crate::server::websocket::WebsocketPermission;
 
 pub mod backups;
 pub mod client;
@@ -31,7 +30,7 @@ pub async fn get_sftp_auth(
     r#type: AuthenticationType,
     username: &str,
     password: &str,
-) -> Result<(uuid::Uuid, uuid::Uuid, Vec<WebsocketPermission>), reqwest::Error> {
+) -> Result<(uuid::Uuid, uuid::Uuid, Permissions), reqwest::Error> {
     let response: Response = client
         .client
         .post(format!("{}/sftp/auth", client.url))
@@ -50,7 +49,7 @@ pub async fn get_sftp_auth(
         user: uuid::Uuid,
         server: uuid::Uuid,
 
-        permissions: Vec<WebsocketPermission>,
+        permissions: Permissions,
     }
 
     Ok((response.user, response.server, response.permissions))
