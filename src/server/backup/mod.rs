@@ -101,6 +101,7 @@ pub async fn create_backup(
 
 pub async fn restore_backup(
     adapter: BackupAdapter,
+    client: &Arc<bollard::Docker>,
     server: &Arc<crate::server::Server>,
     uuid: uuid::Uuid,
     truncate_directory: bool,
@@ -113,6 +114,9 @@ pub async fn restore_backup(
     server
         .restoring
         .store(true, std::sync::atomic::Ordering::SeqCst);
+    server
+        .stop_with_kill_timeout(client, std::time::Duration::from_secs(30))
+        .await;
 
     if truncate_directory {
         server.filesystem.truncate_root().await;

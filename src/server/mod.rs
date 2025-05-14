@@ -141,28 +141,9 @@ impl Server {
                         let server = Arc::clone(&server);
 
                         async move {
-                            if let Err(err) = server
-                                .stop(&client, Some(std::time::Duration::from_secs(60)))
-                                .await
-                            {
-                                crate::logger::log(
-                                    crate::logger::LoggerLevel::Debug,
-                                    format!(
-                                        "Failed to stop server after disk usage was exceeded, killing: {}",
-                                        err
-                                    ),
-                                );
-
-                                if let Err(err) = server.kill(&client).await {
-                                    crate::logger::log(
-                                        crate::logger::LoggerLevel::Error,
-                                        format!(
-                                            "Failed to kill server after disk usage was exceeded: {}",
-                                            err
-                                        ),
-                                    );
-                                }
-                            }
+                            server
+                                .stop_with_kill_timeout(&client, std::time::Duration::from_secs(30))
+                                .await;
                         }
                     });
                 }
@@ -850,6 +831,27 @@ impl Server {
         }
 
         Ok(())
+    }
+
+    pub async fn stop_with_kill_timeout(
+        &self,
+        client: &Arc<bollard::Docker>,
+        timeout: std::time::Duration,
+    ) {
+        if self.state.get_state() == state::ServerState::Offline {
+            return;
+        }
+
+        let mut stream = client.wait_container::<String>(
+            &self.container.read().await.as_ref().unwrap().docker_id,
+            None,
+        );
+
+        self.stop(client, None).await.ok();
+
+        if tokio::time::timeout(timeout, stream.next()).await.is_err() {
+            self.kill(client).await.ok();
+        }
     }
 
     pub async fn destroy_container(&self, client: &bollard::Docker) {

@@ -163,12 +163,7 @@ pub async fn restore_backup(
                         .unwrap();
 
                         for entry in directory.entries {
-                            recursive_restore(
-                                repository,
-                                entry,
-                                &path.join(&directory.name),
-                                server,
-                            );
+                            recursive_restore(repository, entry, &path, server);
                         }
                     }
                     Entry::Symlink(_) => {}

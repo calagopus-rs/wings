@@ -2,7 +2,7 @@ use super::State;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod post {
-    use crate::routes::{ApiError, api::servers::_server_::GetServer};
+    use crate::routes::{ApiError, GetState, api::servers::_server_::GetServer};
     use axum::{extract::Path, http::StatusCode};
     use serde::{Deserialize, Serialize};
     use utoipa::ToSchema;
@@ -22,6 +22,7 @@ mod post {
         (status = NOT_FOUND, body = inline(ApiError)),
     ), request_body = inline(Payload))]
     pub async fn route(
+        state: GetState,
         server: GetServer,
         Path((_server, backup_id)): Path<(uuid::Uuid, uuid::Uuid)>,
         axum::Json(data): axum::Json<Payload>,
@@ -52,6 +53,7 @@ mod post {
         tokio::spawn(async move {
             if let Err(err) = crate::server::backup::restore_backup(
                 data.adapter,
+                &state.docker,
                 &server,
                 backup_id,
                 data.truncate_directory,
