@@ -320,8 +320,7 @@ impl Filesystem {
             }
         }
 
-        let mut disk_usage = self.disk_usage.write().unwrap();
-        disk_usage.update_size(path, delta);
+        self.disk_usage.write().unwrap().update_size(path, delta);
 
         true
     }

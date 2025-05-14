@@ -210,19 +210,19 @@ impl russh_sftp::server::Handler for SftpSession {
         }
 
         if let Some(path) = self.server.filesystem.safe_path(&filename) {
+            let parent = match path.parent() {
+                Some(parent) => parent,
+                None => return Err(StatusCode::NoSuchFile),
+            };
+
             if let Ok(metadata) = tokio::fs::symlink_metadata(&path).await {
                 if tokio::fs::remove_file(&path).await.is_err() {
-                    let parent = match path.parent() {
-                        Some(parent) => parent,
-                        None => return Err(StatusCode::NoSuchFile),
-                    };
-
-                    self.server
-                        .filesystem
-                        .allocate_in_path(parent, -(metadata.len() as i64));
-
                     return Err(StatusCode::NoSuchFile);
                 }
+
+                self.server
+                    .filesystem
+                    .allocate_in_path(parent, -(metadata.len() as i64));
             }
 
             Ok(Status {
