@@ -55,39 +55,48 @@ mod post {
             None,
         )
         .unwrap();
-        let mut archive = tar::Builder::new(flate2::write::GzEncoder::new(
-            writer,
-            flate2::Compression::new(state.config.system.backups.compression_level.into()),
-        ));
 
-        for file in data.files {
-            let source = match root.join(file).canonicalize() {
-                Ok(path) => path,
-                Err(_) => {
-                    continue;
+        tokio::task::spawn_blocking({
+            let server = Arc::clone(&server);
+
+            move || {
+                let mut archive = tar::Builder::new(flate2::write::GzEncoder::new(
+                    writer,
+                    flate2::Compression::new(state.config.system.backups.compression_level.into()),
+                ));
+
+                for file in data.files {
+                    let source = match root.join(file).canonicalize() {
+                        Ok(path) => path,
+                        Err(_) => {
+                            continue;
+                        }
+                    };
+
+                    if !server.filesystem.is_safe_path(&source) {
+                        continue;
+                    }
+
+                    let relative = match source.strip_prefix(&root) {
+                        Ok(path) => path,
+                        Err(_) => {
+                            continue;
+                        }
+                    };
+
+                    let source_metadata = source.symlink_metadata().unwrap();
+                    if source_metadata.is_dir() {
+                        archive.append_dir_all(relative, &source).unwrap();
+                    } else {
+                        archive.append_path_with_name(&source, relative).unwrap();
+                    }
                 }
-            };
 
-            if !server.filesystem.is_safe_path(&source) {
-                continue;
+                archive.finish().unwrap();
             }
-
-            let relative = match source.strip_prefix(&root) {
-                Ok(path) => path,
-                Err(_) => {
-                    continue;
-                }
-            };
-
-            let source_metadata = source.symlink_metadata().unwrap();
-            if source_metadata.is_dir() {
-                archive.append_dir_all(relative, &source).unwrap();
-            } else {
-                archive.append_path_with_name(&source, relative).unwrap();
-            }
-        }
-
-        archive.finish().unwrap();
+        })
+        .await
+        .unwrap();
 
         let dir_entry = file_name.symlink_metadata().unwrap();
 
