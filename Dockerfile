@@ -10,4 +10,4 @@ WORKDIR /app
 
 RUN chmod +x /app/server/bin
 
-CMD [ "/bin/ash", "/entrypoint.sh" ]
+CMD [ "/bin/bash", "/entrypoint.sh" ]
