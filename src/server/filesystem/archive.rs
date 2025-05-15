@@ -33,7 +33,8 @@ pub struct Archive {
     pub archive: ArchiveType,
 
     pub filesystem: Arc<super::Filesystem>,
-    pub header: [u8; 128],
+    pub header: [u8; 16],
+
     pub file: File,
 }
 
@@ -41,7 +42,7 @@ impl Archive {
     pub async fn open(filesystem: Arc<super::Filesystem>, path: PathBuf) -> Option<Self> {
         let mut file = File::open(&path).await.ok()?;
 
-        let mut header = [0; 128];
+        let mut header = [0; 16];
         #[allow(clippy::unused_io_amount)]
         file.read(&mut header).await.ok()?;
 
@@ -191,15 +192,13 @@ impl Archive {
     }
 
     pub async fn extract(
-        &self,
+        self,
         destination: PathBuf,
         reader: Option<Box<dyn AsyncRead + Send + Unpin>>,
     ) -> std::io::Result<()> {
-        match self.archive {
-            ArchiveType::Tar => {
-                let filesystem = Arc::clone(&self.filesystem);
-
-                let thread = tokio::task::spawn_blocking(move || {
+        tokio::task::spawn_blocking(move || -> std::io::Result<()> {
+            match self.archive {
+                ArchiveType::Tar => {
                     let sync_reader = SyncIoBridge::new(reader.unwrap());
                     let mut archive = tar::Archive::new(sync_reader);
 
@@ -212,7 +211,7 @@ impl Archive {
                         }
 
                         let destination_path = destination.join(path);
-                        if !filesystem.is_safe_path(&destination_path) {
+                        if !self.filesystem.is_safe_path(&destination_path) {
                             continue;
                         }
 
@@ -226,7 +225,7 @@ impl Archive {
                                     .unwrap();
 
                                 let mut writer = super::writer::FileSystemWriter::new(
-                                    Arc::clone(&filesystem),
+                                    Arc::clone(&self.filesystem),
                                     destination_path,
                                     Some(Permissions::from_mode(header.mode().unwrap_or(0o644))),
                                 )
@@ -238,49 +237,48 @@ impl Archive {
                             _ => {}
                         }
                     }
-                });
+                }
+                ArchiveType::Zip => {
+                    let file = self.file.try_into_std().unwrap();
+                    let file = std::io::BufReader::new(file);
 
-                thread.await.unwrap();
-            }
-            ArchiveType::Zip => {
-                let file = self.file.try_clone().await?.into_std().await;
-                let file = std::io::BufReader::new(file);
+                    let mut archive = zip::ZipArchive::new(file)?;
 
-                let mut archive = zip::ZipArchive::new(file)?;
+                    for i in 0..archive.len() {
+                        let mut entry = archive.by_index(i)?;
+                        let path = match entry.enclosed_name() {
+                            Some(path) => path,
+                            None => continue,
+                        };
 
-                for i in 0..archive.len() {
-                    let mut entry = archive.by_index(i)?;
-                    let path = match entry.enclosed_name() {
-                        Some(path) => path,
-                        None => continue,
-                    };
+                        if path.is_absolute() {
+                            continue;
+                        }
 
-                    if path.is_absolute() {
-                        continue;
-                    }
+                        let destination_path = destination.join(path);
+                        if !self.filesystem.is_safe_path(&destination_path) {
+                            continue;
+                        }
 
-                    let destination_path = destination.join(path);
-                    if !self.filesystem.is_safe_path(&destination_path) {
-                        continue;
-                    }
+                        if entry.is_dir() {
+                            std::fs::create_dir_all(&destination_path)?;
+                        } else {
+                            let mut writer = super::writer::FileSystemWriter::new(
+                                Arc::clone(&self.filesystem),
+                                destination_path,
+                                Some(Permissions::from_mode(entry.unix_mode().unwrap_or(0o644))),
+                            )?;
 
-                    if entry.is_dir() {
-                        std::fs::create_dir_all(&destination_path)?;
-                    } else {
-                        let mut writer = super::writer::FileSystemWriter::new(
-                            Arc::clone(&self.filesystem),
-                            destination_path,
-                            Some(Permissions::from_mode(entry.unix_mode().unwrap_or(0o644))),
-                        )?;
-
-                        std::io::copy(&mut entry, &mut writer)?;
-                        writer.flush()?;
+                            std::io::copy(&mut entry, &mut writer)?;
+                            writer.flush()?;
+                        }
                     }
                 }
+                ArchiveType::None => {}
             }
-            ArchiveType::None => {}
-        }
 
-        Ok(())
+            Ok(())
+        })
+        .await?
     }
 }

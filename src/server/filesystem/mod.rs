@@ -151,8 +151,31 @@ impl Filesystem {
         self.disk_limit() != 0 && self.cached_usage() >= self.disk_limit() as u64
     }
 
+    #[inline]
     pub fn base(&self) -> String {
         self.base_path.to_string_lossy().to_string()
+    }
+
+    #[inline]
+    pub fn resolve_path(path: &Path) -> PathBuf {
+        let mut result = PathBuf::new();
+
+        for component in path.components() {
+            match component {
+                std::path::Component::ParentDir => {
+                    if !result.as_os_str().is_empty()
+                        && result.components().last() != Some(std::path::Component::RootDir)
+                    {
+                        result.pop();
+                    }
+                }
+                _ => {
+                    result.push(component);
+                }
+            }
+        }
+
+        result
     }
 
     #[inline]
@@ -182,16 +205,7 @@ impl Filesystem {
     }
 
     pub fn safe_path(&self, path: &str) -> Option<PathBuf> {
-        let safe_path = self.base_path.join(path.trim_start_matches('/'));
-
-        let safe_path = if let Some(file_name) = safe_path.file_name() {
-            let safe_parent = safe_path.parent()?;
-            let safe_parent = safe_parent.canonicalize().ok()?;
-
-            safe_parent.join(file_name)
-        } else {
-            safe_path.canonicalize().ok()?
-        };
+        let safe_path = Self::resolve_path(&self.base_path.join(path.trim_start_matches('/')));
 
         if !safe_path.starts_with(&self.base_path) {
             return None;
@@ -330,14 +344,16 @@ impl Filesystem {
         true
     }
 
+    #[inline]
     pub fn allocate_in_path(&self, path: &Path, delta: i64) -> bool {
         let components = self.path_to_components(path);
 
         self.allocate_in_path_raw(&components, delta)
     }
 
+    #[inline]
     pub fn is_safe_path(&self, path: &Path) -> bool {
-        path.starts_with(&self.base_path)
+        Self::resolve_path(path).starts_with(&self.base_path)
     }
 
     pub async fn truncate_root(&self) {

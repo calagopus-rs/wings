@@ -55,14 +55,14 @@ mod put {
 
         let mut renamed_count = 0;
         for file in data.files {
-            let from = root.join(file.from);
-            if !server.filesystem.is_safe_path(&from) || from == root {
-                continue;
-            }
-            let to = root.join(file.to);
-            if !server.filesystem.is_safe_path(&to) || to == root {
-                continue;
-            }
+            let from = match server.filesystem.safe_path(&file.from) {
+                Some(path) => path,
+                None => continue,
+            };
+            let to = match server.filesystem.safe_path(&file.to) {
+                Some(path) => path,
+                None => continue,
+            };
 
             if from == to {
                 continue;
