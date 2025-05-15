@@ -134,7 +134,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Download all binary artifacts
+      - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: dist
@@ -154,12 +154,12 @@ jobs:
           
       - name: Prepare binaries
         run: |
-          cp dist/${{ env.BIN_NAME }}-x86_64-linux dist/wings-rs-amd64/wings-rs
-          cp dist/${{ env.BIN_NAME }}-aarch64-linux dist/wings-rs-arm64/wings-rs
-          
+          mv dist/${{ env.BIN_NAME }}-x86_64-linux/${{ env.BIN_NAME }} dist/wings-rs-amd64/${{ env.BIN_NAME }}
+          mv dist/${{ env.BIN_NAME }}-aarch64-linux/${{ env.BIN_NAME }} dist/wings-rs-arm64/${{ env.BIN_NAME }}
+
           mkdir -p .docker/amd64 .docker/arm64
-          cp dist/wings-rs-amd64/wings-rs .docker/amd64/wings-rs
-          cp dist/wings-rs-arm64/wings-rs .docker/arm64/wings-rs
+          cp dist/wings-rs-amd64/${{ env.BIN_NAME }} .docker/amd64/${{ env.BIN_NAME }}
+          cp dist/wings-rs-arm64/${{ env.BIN_NAME }} .docker/arm64/${{ env.BIN_NAME }}
           cp entrypoint.sh .docker/
 
       - name: Build and push multi-arch Docker image
