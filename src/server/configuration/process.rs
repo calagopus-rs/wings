@@ -30,8 +30,7 @@ pub struct ServerConfigurationFile {
 }
 
 impl ServerConfigurationFile {
-
-    fn lookup_value(
+    async fn lookup_value(
         server: &crate::server::Server,
         replacement: &serde_json::Value,
     ) -> Option<String> {
@@ -42,12 +41,12 @@ impl ServerConfigurationFile {
 
             crate::logger::log(
                 crate::logger::LoggerLevel::Debug,
-                format!("Looking up variable: {} for server {}", variable, server.uuid).to_string(),
+                format!("Looking up variable: {} for server {}", variable, server.uuid),
             );
 
             let parts: Vec<&str> = variable.split('.').collect();
             if parts.len() >= 3 && parts[0] == "server" {
-                let config = server.configuration.blocking_read();
+                let config = server.configuration.read().await;
 
                 match parts[1] {
                     "build" => {
@@ -57,7 +56,7 @@ impl ServerConfigurationFile {
                                     let value = config.build.memory_limit.to_string();
                                     crate::logger::log(
                                         crate::logger::LoggerLevel::Debug,
-                                        format!("Resolved server.build.memory to: {}", value).to_string(),
+                                        format!("Resolved server.build.memory to: {}", value),
                                     );
                                     return Some(value);
                                 },
@@ -65,7 +64,7 @@ impl ServerConfigurationFile {
                                     let value = config.build.io_weight.to_string();
                                     crate::logger::log(
                                         crate::logger::LoggerLevel::Debug,
-                                        format!("Resolved server.build.io to: {}", value).to_string(),
+                                        format!("Resolved server.build.io to: {}", value),
                                     );
                                     return Some(value);
                                 },
@@ -73,7 +72,7 @@ impl ServerConfigurationFile {
                                     let value = config.build.cpu_limit.to_string();
                                     crate::logger::log(
                                         crate::logger::LoggerLevel::Debug,
-                                        format!("Resolved server.build.cpu to: {}", value).to_string(),
+                                        format!("Resolved server.build.cpu to: {}", value),
                                     );
                                     return Some(value);
                                 },
@@ -81,7 +80,7 @@ impl ServerConfigurationFile {
                                     let value = config.build.disk_space.to_string();
                                     crate::logger::log(
                                         crate::logger::LoggerLevel::Debug,
-                                        format!("Resolved server.build.disk to: {}", value).to_string(),
+                                        format!("Resolved server.build.disk to: {}", value),
                                     );
                                     return Some(value);
                                 },
@@ -91,7 +90,7 @@ impl ServerConfigurationFile {
                                             let value = config.allocations.default.port.to_string();
                                             crate::logger::log(
                                                 crate::logger::LoggerLevel::Debug,
-                                                format!("Resolved server.build.default.port to: {}", value).to_string(),
+                                                format!("Resolved server.build.default.port to: {}", value),
                                             );
                                             return Some(value);
                                         },
@@ -99,14 +98,14 @@ impl ServerConfigurationFile {
                                             let value = config.allocations.default.ip.clone();
                                             crate::logger::log(
                                                 crate::logger::LoggerLevel::Debug,
-                                                format!("Resolved server.build.default.ip to: {}", value).to_string(),
+                                                format!("Resolved server.build.default.ip to: {}", value),
                                             );
                                             return Some(value);
                                         },
                                         _ => {
                                             crate::logger::log(
                                                 crate::logger::LoggerLevel::Error,
-                                                format!("Unknown server.build.default subpath: {}", parts[3]).to_string(),
+                                                format!("Unknown server.build.default subpath: {}", parts[3]),
                                             );
                                         }
                                     }
@@ -114,7 +113,7 @@ impl ServerConfigurationFile {
                                 _ => {
                                     crate::logger::log(
                                         crate::logger::LoggerLevel::Error,
-                                        format!("Unknown server.build subpath: {}", parts[2]).to_string(),
+                                        format!("Unknown server.build subpath: {}", parts[2]),
                                     );
                                 }
                             }
@@ -127,13 +126,13 @@ impl ServerConfigurationFile {
                                 let value_str = value.to_string().trim_matches('"').to_string();
                                 crate::logger::log(
                                     crate::logger::LoggerLevel::Debug,
-                                    format!("Resolved server.env.{} to: {}", env_var, value_str).to_string(),
+                                    format!("Resolved server.env.{} to: {}", env_var, value_str),
                                 );
                                 return Some(value_str);
                             } else {
                                 crate::logger::log(
                                     crate::logger::LoggerLevel::Error,
-                                    format!("Environment variable not found: {}", env_var).to_string(),
+                                    format!("Environment variable not found: {}", env_var),
                                 );
                             }
                         }
@@ -141,7 +140,7 @@ impl ServerConfigurationFile {
                     _ => {
                         crate::logger::log(
                             crate::logger::LoggerLevel::Error,
-                            format!("Unknown server section: {}", parts[1]).to_string(),
+                            format!("Unknown server section: {}", parts[1]),
                         );
                     }
                 }
@@ -149,14 +148,14 @@ impl ServerConfigurationFile {
 
             crate::logger::log(
                 crate::logger::LoggerLevel::Error,
-                format!("Could not resolve variable: {}, returning empty string", variable).to_string(),
+                format!("Could not resolve variable: {}, returning empty string", variable),
             );
             return Some(String::new());
         }
 
         crate::logger::log(
             crate::logger::LoggerLevel::Debug,
-            format!("Using raw value: {}", value).to_string(),
+            format!("Using raw value: {}", value),
         );
         Some(value.to_string())
     }
@@ -179,7 +178,9 @@ nestify::nest! {
 }
 
 impl ProcessConfiguration {
-    pub async fn update_files(&self, server: &crate::server::Server, filesystem: &crate::server::filesystem::Filesystem) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn update_files(&self, server: &crate::server::Server) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        // Get filesystem from server directly
+        let filesystem = &server.filesystem;
 
         crate::logger::log(
             crate::logger::LoggerLevel::Info,
@@ -190,14 +191,12 @@ impl ProcessConfiguration {
         if self.configs.is_empty() {
             crate::logger::log(
                 crate::logger::LoggerLevel::Info,
-                format!("No configuration files to update for server {}", server.uuid).to_string(),
+                format!("No configuration files to update for server {}", server.uuid),
             );
             return Ok(());
         }
 
-        for (index, config_file) in self.configs.iter().enumerate() {
-
-            let server_ref = server.clone();
+        for config_file in self.configs.iter() {
             let config = config_file.clone();
             let file_path = config.file.clone();
 
@@ -209,27 +208,27 @@ impl ProcessConfiguration {
 
                     crate::logger::log(
                         crate::logger::LoggerLevel::Debug,
-                        format!("Checking if parent directory exists: {}", parent_path).to_string(),
+                        format!("Checking if parent directory exists: {}", parent_path),
                     );
 
                     if let Some(safe_path) = filesystem.safe_path(&parent_path) {
                         if !safe_path.exists() {
                             crate::logger::log(
                                 crate::logger::LoggerLevel::Info,
-                                format!("Creating parent directory: {}", safe_path.display().to_string()),
+                                format!("Creating parent directory: {}", safe_path.display()),
                             );
 
                             match tokio::fs::create_dir_all(&safe_path).await {
                                 Ok(_) => {
                                     crate::logger::log(
                                         crate::logger::LoggerLevel::Debug,
-                                        format!("Successfully created parent directory: {}", safe_path.display().to_string()),
+                                        format!("Successfully created parent directory: {}", safe_path.display()),
                                     );
                                 },
                                 Err(e) => {
                                     crate::logger::log(
                                         crate::logger::LoggerLevel::Error,
-                                        format!("Failed to create parent directory {}: {}", safe_path.display().to_string(), e),
+                                        format!("Failed to create parent directory {}: {}", safe_path.display(), e),
                                     );
                                     continue;
                                 }
@@ -237,19 +236,19 @@ impl ProcessConfiguration {
 
                             crate::logger::log(
                                 crate::logger::LoggerLevel::Debug,
-                                format!("Setting ownership for directory: {}", safe_path.display().to_string()),
+                                format!("Setting ownership for directory: {}", safe_path.display()),
                             );
                             filesystem.chown_path(&safe_path).await;
                         } else {
                             crate::logger::log(
                                 crate::logger::LoggerLevel::Debug,
-                                format!("Parent directory already exists: {}", safe_path.display().to_string()),
+                                format!("Parent directory already exists: {}", safe_path.display()),
                             );
                         }
                     } else {
                         crate::logger::log(
                             crate::logger::LoggerLevel::Error,
-                            format!("Could not resolve safe path for parent directory: {}", parent_path).to_string(),
+                            format!("Could not resolve safe path for parent directory: {}", parent_path),
                         );
                         continue;
                     }
@@ -262,14 +261,14 @@ impl ProcessConfiguration {
                 Some(path) => {
                     crate::logger::log(
                         crate::logger::LoggerLevel::Debug,
-                        format!("Resolved safe path for file: {} -> {}", file_path, path.display().to_string()),
+                        format!("Resolved safe path for file: {} -> {}", file_path, path.display()),
                     );
                     path
                 },
                 None => {
                     crate::logger::log(
                         crate::logger::LoggerLevel::Error,
-                        format!("Could not resolve safe path for file: {}", file_path).to_string(),
+                        format!("Could not resolve safe path for file: {}", file_path),
                     );
                     continue;
                 }
@@ -279,7 +278,7 @@ impl ProcessConfiguration {
                 if !metadata.is_dir() {
                     crate::logger::log(
                         crate::logger::LoggerLevel::Debug,
-                        format!("File exists, reading content: {}", safe_file_path.display().to_string()),
+                        format!("File exists, reading content: {}", safe_file_path.display()),
                     );
 
                     match tokio::fs::read_to_string(&safe_file_path).await {
@@ -287,31 +286,31 @@ impl ProcessConfiguration {
                             file_content = content;
                             crate::logger::log(
                                 crate::logger::LoggerLevel::Debug,
-                                format!("Successfully read file content ({} bytes).to_string()", file_content.len()),
+                                format!("Successfully read file content ({} bytes)", file_content.len()),
                             );
                         },
                         Err(e) => {
                             crate::logger::log(
                                 crate::logger::LoggerLevel::Error,
-                                format!("Failed to read file {}: {}", file_path, e).to_string(),
+                                format!("Failed to read file {}: {}", file_path, e),
                             );
 
                             crate::logger::log(
                                 crate::logger::LoggerLevel::Debug,
-format!("Continuing with empty content").to_string(),
+                                format!("Continuing with empty content"),
                             );
                         }
                     }
                 } else {
                     crate::logger::log(
                         crate::logger::LoggerLevel::Error,
-                        format!("Path exists but is a directory: {}", safe_file_path.display().to_string()),
+                        format!("Path exists but is a directory: {}", safe_file_path.display()),
                     );
                 }
             } else {
                 crate::logger::log(
                     crate::logger::LoggerLevel::Debug,
-                    format!("File does not exist, will create new: {}", safe_file_path.display().to_string()),
+                    format!("File does not exist, will create new: {}", safe_file_path.display()),
                 );
             }
 
@@ -319,74 +318,74 @@ format!("Continuing with empty content").to_string(),
                 ServerConfigurationFileParser::Properties => {
                     crate::logger::log(
                         crate::logger::LoggerLevel::Debug,
-format!("Using Properties parser").to_string(),
+                        format!("Using Properties parser"),
                     );
-                    process_properties_file(&file_content, &config, &server_ref)
+                    process_properties_file(&file_content, &config, server).await
                 },
                 ServerConfigurationFileParser::Json => {
                     crate::logger::log(
                         crate::logger::LoggerLevel::Debug,
-format!("Using JSON parser").to_string(),
+                        format!("Using JSON parser"),
                     );
-                    process_json_file(&file_content, &config, &server_ref)
+                    process_json_file(&file_content, &config, server).await
                 },
                 ServerConfigurationFileParser::Yaml => {
                     crate::logger::log(
                         crate::logger::LoggerLevel::Debug,
-format!("Using YAML parser").to_string(),
+                        format!("Using YAML parser"),
                     );
-                    process_yaml_file(&file_content, &config, &server_ref)
+                    process_yaml_file(&file_content, &config, server).await
                 },
                 ServerConfigurationFileParser::Ini => {
                     crate::logger::log(
                         crate::logger::LoggerLevel::Debug,
-format!("Using INI parser").to_string(),
+                        format!("Using INI parser"),
                     );
-                    process_ini_file(&file_content, &config, &server_ref)
+                    process_ini_file(&file_content, &config, server).await
                 },
                 ServerConfigurationFileParser::Xml => {
                     crate::logger::log(
                         crate::logger::LoggerLevel::Debug,
-format!("Using XML parser").to_string(),
+                        format!("Using XML parser"),
                     );
-                    process_xml_file(&file_content, &config, &server_ref)
+                    process_xml_file(&file_content, &config, server).await
                 },
                 ServerConfigurationFileParser::File => {
                     crate::logger::log(
                         crate::logger::LoggerLevel::Debug,
-format!("Using Plain File parser").to_string(),
+                        format!("Using Plain File parser"),
                     );
-                    process_plain_file(&file_content, &config, &server_ref)
+                    process_plain_file(&file_content, &config, server).await
                 },
             };
 
             crate::logger::log(
                 crate::logger::LoggerLevel::Debug,
-                format!("Finished processing content, writing updated content ({} bytes).to_string()", updated_content.len()),
+                format!("Finished processing content, writing updated content ({} bytes)", updated_content.len()),
             );
 
             match tokio::fs::write(&safe_file_path, updated_content.as_bytes()).await {
                 Ok(_) => {
                     crate::logger::log(
                         crate::logger::LoggerLevel::Debug,
-                        format!("Successfully wrote content to file: {}", safe_file_path.display().to_string()),
+                        format!("Successfully wrote content to file: {}", safe_file_path.display()),
                     );
 
                     crate::logger::log(
                         crate::logger::LoggerLevel::Debug,
-                        format!("Setting ownership for file: {}", safe_file_path.display().to_string()),
+                        format!("Setting ownership for file: {}", safe_file_path.display()),
                     );
                     filesystem.chown_path(&safe_file_path).await;
 
                     crate::logger::log(
                         crate::logger::LoggerLevel::Info,
-                        format!("Successfully processed configuration file {} for server {}", file_path, server.uuid).to_string(),
+                        format!("Successfully processed configuration file {} for server {}", file_path, server.uuid),
                     );
                 },
                 Err(e) => {
                     crate::logger::log(
                         crate::logger::LoggerLevel::Error,
-                        format!("Failed to write to file {}: {}", file_path, e).to_string(),
+                        format!("Failed to write to file {}: {}", file_path, e),
                     );
                 }
             }
@@ -394,14 +393,14 @@ format!("Using Plain File parser").to_string(),
 
         crate::logger::log(
             crate::logger::LoggerLevel::Info,
-            format!("Completed all configuration file updates for server {}", server.uuid).to_string(),
+            format!("Completed all configuration file updates for server {}", server.uuid),
         );
 
         Ok(())
     }
 }
 
-fn process_properties_file(
+async fn process_properties_file(
     content: &str,
     config: &ServerConfigurationFile,
     server: &crate::server::Server,
@@ -420,7 +419,7 @@ fn process_properties_file(
         if line.trim().is_empty() || line.trim().starts_with('#') {
             crate::logger::log(
                 crate::logger::LoggerLevel::Debug,
-                format!("Line {}: Skipping comment or empty line: '{}'", line_num, line).to_string(),
+                format!("Line {}: Skipping comment or empty line: '{}'", line_num, line),
             );
             result.push(updated_line);
             continue;
@@ -430,7 +429,7 @@ fn process_properties_file(
         if parts.len() != 2 {
             crate::logger::log(
                 crate::logger::LoggerLevel::Debug,
-                format!("Line {}: Not a key-value pair: '{}'", line_num, line).to_string(),
+                format!("Line {}: Not a key-value pair: '{}'", line_num, line),
             );
             result.push(updated_line);
             continue;
@@ -442,32 +441,32 @@ fn process_properties_file(
 
         crate::logger::log(
             crate::logger::LoggerLevel::Debug,
-            format!("Line {}: Processing key '{}' with value '{}'", line_num, key, original_value).to_string(),
+            format!("Line {}: Processing key '{}' with value '{}'", line_num, key, original_value),
         );
 
         for replacement in &config.replace {
             if replacement.r#match == key {
                 crate::logger::log(
                     crate::logger::LoggerLevel::Debug,
-                    format!("Found replacement match for key: {}", key).to_string(),
+                    format!("Found replacement match for key: {}", key),
                 );
 
                 if let Some(if_value) = &replacement.if_value {
                     if original_value != if_value {
                         crate::logger::log(
                             crate::logger::LoggerLevel::Debug,
-                            format!("Value '{}' does not match required if_value '{}', skipping", original_value, if_value).to_string(),
+                            format!("Value '{}' does not match required if_value '{}', skipping", original_value, if_value),
                         );
                         continue;
                     }
                 }
 
-                if let Some(value) = ServerConfigurationFile::lookup_value(server, &replacement.replace_with) {
+                if let Some(value) = ServerConfigurationFile::lookup_value(server, &replacement.replace_with).await {
                     crate::logger::log(
                         crate::logger::LoggerLevel::Debug,
-                        format!("Replacing value for key '{}': '{}' -> '{}'", key, original_value, value).to_string(),
+                        format!("Replacing value for key '{}': '{}' -> '{}'", key, original_value, value),
                     );
-                    updated_line = format!("{}={}", key, value).to_string();
+                    updated_line = format!("{}={}", key, value);
                     break;
                 }
             }
@@ -480,41 +479,41 @@ fn process_properties_file(
         if !processed_keys.contains_key(&replacement.r#match) {
             crate::logger::log(
                 crate::logger::LoggerLevel::Debug,
-                format!("Adding missing key: {}", replacement.r#match).to_string(),
+                format!("Adding missing key: {}", replacement.r#match),
             );
 
-            if let Some(value) = ServerConfigurationFile::lookup_value(server, &replacement.replace_with) {
+            if let Some(value) = ServerConfigurationFile::lookup_value(server, &replacement.replace_with).await {
                 crate::logger::log(
                     crate::logger::LoggerLevel::Debug,
-                    format!("Adding new key-value pair: '{}={}'", replacement.r#match, value).to_string(),
+                    format!("Adding new key-value pair: '{}={}'", replacement.r#match, value),
                 );
-                result.push(format!("{}={}", replacement.r#match, value).to_string());
+                result.push(format!("{}={}", replacement.r#match, value));
             }
         }
     }
 
     crate::logger::log(
         crate::logger::LoggerLevel::Debug,
-        format!("Finished processing properties file, resulting in {} lines", result.len().to_string()),
+        format!("Finished processing properties file, resulting in {} lines", result.len()),
     );
 
     result.join("\n") + "\n"
 }
 
-fn process_json_file(
+async fn process_json_file(
     content: &str, 
     config: &ServerConfigurationFile,
     server: &crate::server::Server,
 ) -> String {
     crate::logger::log(
         crate::logger::LoggerLevel::Debug,
-        format!("Processing JSON file with {} bytes", content.len().to_string()),
+        format!("Processing JSON file with {} bytes", content.len()),
     );
 
     let mut json: serde_json::Value = if content.trim().is_empty() {
         crate::logger::log(
             crate::logger::LoggerLevel::Debug,
-format!("Content is empty, starting with empty object").to_string(),
+            format!("Content is empty, starting with empty object"),
         );
         serde_json::Value::Object(serde_json::Map::new())
     } else {
@@ -522,14 +521,14 @@ format!("Content is empty, starting with empty object").to_string(),
             Ok(j) => {
                 crate::logger::log(
                     crate::logger::LoggerLevel::Debug,
-format!("Successfully parsed JSON content").to_string(),
+                    format!("Successfully parsed JSON content"),
                 );
                 j
             },
             Err(e) => {
                 crate::logger::log(
                     crate::logger::LoggerLevel::Error,
-                    format!("Failed to parse JSON content: {}. Starting with empty object.", e).to_string(),
+                    format!("Failed to parse JSON content: {}. Starting with empty object.", e),
                 );
                 serde_json::Value::Object(serde_json::Map::new())
             }
@@ -538,11 +537,10 @@ format!("Successfully parsed JSON content").to_string(),
 
     crate::logger::log(
         crate::logger::LoggerLevel::Debug,
-        format!("Applying {} replacements to JSON", config.replace.len().to_string()),
+        format!("Applying {} replacements to JSON", config.replace.len()),
     );
 
     for (index, replacement) in config.replace.iter().enumerate() {
-
         let path_parts: Vec<&str> = replacement.r#match.split('.').collect();
 
         crate::logger::log(
@@ -551,10 +549,10 @@ format!("Successfully parsed JSON content").to_string(),
                 index + 1, config.replace.len(), replacement.r#match),
         );
 
-        if let Some(value) = ServerConfigurationFile::lookup_value(server, &replacement.replace_with) {
+        if let Some(value) = ServerConfigurationFile::lookup_value(server, &replacement.replace_with).await {
             crate::logger::log(
                 crate::logger::LoggerLevel::Debug,
-                format!("Updating JSON value at path '{}' with value '{}'", replacement.r#match, value).to_string(),
+                format!("Updating JSON value at path '{}' with value '{}'", replacement.r#match, value),
             );
             update_json_value(&mut json, &path_parts, value);
         }
@@ -564,14 +562,14 @@ format!("Successfully parsed JSON content").to_string(),
         Ok(json_str) => {
             crate::logger::log(
                 crate::logger::LoggerLevel::Debug,
-                format!("Successfully serialized JSON ({} bytes).to_string()", json_str.len()),
+                format!("Successfully serialized JSON ({} bytes)", json_str.len()),
             );
             json_str
         },
         Err(e) => {
             crate::logger::log(
                 crate::logger::LoggerLevel::Error,
-                format!("Failed to serialize JSON: {}", e).to_string(),
+                format!("Failed to serialize JSON: {}", e),
             );
             "{}".to_string()
         }
@@ -586,7 +584,7 @@ fn update_json_value(
     if path.is_empty() {
         crate::logger::log(
             crate::logger::LoggerLevel::Debug,
-format!("Empty path provided to update_json_value, skipping").to_string(),
+            format!("Empty path provided to update_json_value, skipping"),
         );
         return;
     }
@@ -594,43 +592,41 @@ format!("Empty path provided to update_json_value, skipping").to_string(),
     if path.len() == 1 {
         crate::logger::log(
             crate::logger::LoggerLevel::Debug,
-            format!("Setting leaf value at path '{}' to '{}'", path[0], value).to_string(),
+            format!("Setting leaf value at path '{}' to '{}'", path[0], value),
         );
 
         match json {
             serde_json::Value::Object(map) => {
-
                 let val = if value.eq_ignore_ascii_case("true") {
                     crate::logger::log(
                         crate::logger::LoggerLevel::Debug,
-format!("Treating value as boolean (true)").to_string(),
+                        format!("Treating value as boolean (true)"),
                     );
                     serde_json::Value::Bool(true)
                 } else if value.eq_ignore_ascii_case("false") {
                     crate::logger::log(
                         crate::logger::LoggerLevel::Debug,
-format!("Treating value as boolean (false)").to_string(),
+                        format!("Treating value as boolean (false)"),
                     );
                     serde_json::Value::Bool(false)
                 } else if let Ok(i) = value.parse::<i64>() {
                     crate::logger::log(
                         crate::logger::LoggerLevel::Debug,
-                        format!("Treating value as integer: {}", i).to_string(),
+                        format!("Treating value as integer: {}", i),
                     );
                     serde_json::Value::Number(serde_json::Number::from(i))
                 } else if let Ok(f) = value.parse::<f64>() {
-
                     if f.fract() != 0.0 {
                         crate::logger::log(
                             crate::logger::LoggerLevel::Debug,
-                            format!("Treating value as float: {}", f).to_string(),
+                            format!("Treating value as float: {}", f),
                         );
                         match serde_json::Number::from_f64(f) {
                             Some(n) => serde_json::Value::Number(n),
                             None => {
                                 crate::logger::log(
                                     crate::logger::LoggerLevel::Debug,
-format!("Failed to convert float to JSON number, using string").to_string(),
+                                    format!("Failed to convert float to JSON number, using string"),
                                 );
                                 serde_json::Value::String(value)
                             }
@@ -638,28 +634,28 @@ format!("Failed to convert float to JSON number, using string").to_string(),
                     } else {
                         crate::logger::log(
                             crate::logger::LoggerLevel::Debug,
-format!("Float has no fractional part, treating as string").to_string(),
+                            format!("Float has no fractional part, treating as string"),
                         );
                         serde_json::Value::String(value)
                     }
                 } else {
                     crate::logger::log(
                         crate::logger::LoggerLevel::Debug,
-format!("Treating value as string").to_string(),
+                        format!("Treating value as string"),
                     );
                     serde_json::Value::String(value)
                 };
 
                 crate::logger::log(
                     crate::logger::LoggerLevel::Debug,
-                    format!("Setting JSON object key '{}' to value", path[0]).to_string(),
+                    format!("Setting JSON object key '{}' to value", path[0]),
                 );
                 map.insert(path[0].to_string(), val);
             },
             _ => {
                 crate::logger::log(
                     crate::logger::LoggerLevel::Debug,
-format!("JSON value is not an object, replacing with new object").to_string(),
+                    format!("JSON value is not an object, replacing with new object"),
                 );
 
                 let mut map = serde_json::Map::new();
@@ -672,19 +668,19 @@ format!("JSON value is not an object, replacing with new object").to_string(),
 
     crate::logger::log(
         crate::logger::LoggerLevel::Debug,
-        format!("Navigating to nested path: {}", path[0]).to_string(),
+        format!("Navigating to nested path: {}", path[0]),
     );
 
     match json {
         serde_json::Value::Object(map) => {
             crate::logger::log(
                 crate::logger::LoggerLevel::Debug,
-                format!("Found object at path '{}', navigating deeper", path[0]).to_string(),
+                format!("Found object at path '{}', navigating deeper", path[0]),
             );
             let entry = map.entry(path[0].to_string()).or_insert_with(|| {
                 crate::logger::log(
                     crate::logger::LoggerLevel::Debug,
-                    format!("Creating new object for key '{}'", path[0]).to_string(),
+                    format!("Creating new object for key '{}'", path[0]),
                 );
                 serde_json::Value::Object(serde_json::Map::new())
             });
@@ -693,7 +689,7 @@ format!("JSON value is not an object, replacing with new object").to_string(),
         _ => {
             crate::logger::log(
                 crate::logger::LoggerLevel::Debug,
-                format!("Value at '{}' is not an object, replacing with new object hierarchy", path[0]).to_string(),
+                format!("Value at '{}' is not an object, replacing with new object hierarchy", path[0]),
             );
 
             let mut map = serde_json::Map::new();
@@ -705,20 +701,20 @@ format!("JSON value is not an object, replacing with new object").to_string(),
     }
 }
 
-fn process_yaml_file(
+async fn process_yaml_file(
     content: &str,
     config: &ServerConfigurationFile,
     server: &crate::server::Server,
 ) -> String {
     crate::logger::log(
         crate::logger::LoggerLevel::Debug,
-        format!("Processing YAML file with {} bytes", content.len().to_string()),
+        format!("Processing YAML file with {} bytes", content.len()),
     );
 
     let mut json = if content.trim().is_empty() {
         crate::logger::log(
             crate::logger::LoggerLevel::Debug,
-format!("Content is empty, starting with empty object").to_string(),
+            format!("Content is empty, starting with empty object"),
         );
         serde_json::Value::Object(serde_json::Map::new())
     } else {
@@ -726,15 +722,14 @@ format!("Content is empty, starting with empty object").to_string(),
             Ok(j) => {
                 crate::logger::log(
                     crate::logger::LoggerLevel::Debug,
-format!("Successfully parsed YAML content as JSON").to_string(),
+                    format!("Successfully parsed YAML content as JSON"),
                 );
                 j
             },
             Err(e) => {
-
                 crate::logger::log(
                     crate::logger::LoggerLevel::Error,
-                    format!("Failed to parse YAML content as JSON: {}. Starting with empty document.", e).to_string(),
+                    format!("Failed to parse YAML content as JSON: {}. Starting with empty document.", e),
                 );
                 serde_json::Value::Object(serde_json::Map::new())
             }
@@ -743,7 +738,7 @@ format!("Successfully parsed YAML content as JSON").to_string(),
 
     crate::logger::log(
         crate::logger::LoggerLevel::Debug,
-        format!("Applying {} replacements to YAML", config.replace.len().to_string()),
+        format!("Applying {} replacements to YAML", config.replace.len()),
     );
 
     for (index, replacement) in config.replace.iter().enumerate() {
@@ -755,10 +750,10 @@ format!("Successfully parsed YAML content as JSON").to_string(),
                 index + 1, config.replace.len(), replacement.r#match),
         );
 
-        if let Some(value) = ServerConfigurationFile::lookup_value(server, &replacement.replace_with) {
+        if let Some(value) = ServerConfigurationFile::lookup_value(server, &replacement.replace_with).await {
             crate::logger::log(
                 crate::logger::LoggerLevel::Debug,
-                format!("Updating YAML value at path '{}' with value '{}'", replacement.r#match, value).to_string(),
+                format!("Updating YAML value at path '{}' with value '{}'", replacement.r#match, value),
             );
             update_json_value(&mut json, &path_parts, value);
         }
@@ -769,14 +764,14 @@ format!("Successfully parsed YAML content as JSON").to_string(),
         Err(e) => {
             crate::logger::log(
                 crate::logger::LoggerLevel::Error,
-                format!("Failed to serialize YAML: {}", e).to_string(),
+                format!("Failed to serialize YAML: {}", e),
             );
             "{}\n".to_string()
         }
     }
 }
 
-fn process_ini_file(
+async fn process_ini_file(
     content: &str,
     config: &ServerConfigurationFile,
     server: &crate::server::Server,
@@ -804,7 +799,7 @@ fn process_ini_file(
             let full_key = if current_section.is_empty() {
                 key.to_string()
             } else {
-                format!("{}.{}", current_section, key).to_string()
+                format!("{}.{}", current_section, key)
             };
 
             processed_keys.insert(full_key.clone(), lines.len());
@@ -817,34 +812,28 @@ fn process_ini_file(
     for replacement in &config.replace {
         let parts: Vec<&str> = replacement.r#match.splitn(2, '.').collect();
 
-        if let Some(value) = ServerConfigurationFile::lookup_value(server, &replacement.replace_with) {
+        if let Some(value) = ServerConfigurationFile::lookup_value(server, &replacement.replace_with).await {
             if parts.len() == 2 {
-
                 let section = parts[0];
                 let key = parts[1];
                 let full_key = replacement.r#match.clone();
 
                 if let Some(line_idx) = processed_keys.get(&full_key) {
-
-                    lines[*line_idx] = format!("{}={}", key, value).to_string();
+                    lines[*line_idx] = format!("{}={}", key, value);
                 } else {
-
                     if !sections.contains_key(section) {
                         sections.insert(section.to_string(), true);
-                        lines.push(format!("[{}]", section).to_string());
+                        lines.push(format!("[{}]", section));
                     }
-                    lines.push(format!("{}={}", key, value).to_string());
+                    lines.push(format!("{}={}", key, value));
                 }
             } else {
-
                 let key = parts[0];
 
                 if let Some(line_idx) = processed_keys.get(key) {
-
-                    lines[*line_idx] = format!("{}={}", key, value).to_string();
+                    lines[*line_idx] = format!("{}={}", key, value);
                 } else {
-
-                    lines.push(format!("{}={}", key, value).to_string());
+                    lines.push(format!("{}={}", key, value));
                 }
             }
         }
@@ -853,7 +842,7 @@ fn process_ini_file(
     lines.join("\n") + "\n"
 }
 
-fn process_xml_file(
+async fn process_xml_file(
     content: &str,
     config: &ServerConfigurationFile,
     server: &crate::server::Server,
@@ -865,19 +854,17 @@ fn process_xml_file(
     };
 
     for replacement in &config.replace {
-        if let Some(value) = ServerConfigurationFile::lookup_value(server, &replacement.replace_with) {
-
+        if let Some(value) = ServerConfigurationFile::lookup_value(server, &replacement.replace_with).await {
             let parts: Vec<&str> = replacement.r#match.split('/').filter(|p| !p.is_empty()).collect();
             if parts.is_empty() {
                 continue;
             }
 
             let tag_name = parts.last().unwrap();
-            let start_tag = format!("<{}>", tag_name).to_string();
-            let end_tag = format!("</{}>", tag_name).to_string();
+            let start_tag = format!("<{}>", tag_name);
+            let end_tag = format!("</{}>", tag_name);
 
             if xml_content.contains(&start_tag) && xml_content.contains(&end_tag) {
-
                 if let Some(start_pos) = xml_content.find(&start_tag) {
                     let tag_end = start_pos + start_tag.len();
                     if let Some(end_pos) = xml_content[tag_end..].find(&end_tag) {
@@ -892,9 +879,8 @@ fn process_xml_file(
                     }
                 }
             } else if parts.len() == 1 {
-
                 if let Some(root_end_idx) = xml_content.rfind("</root>") {
-                    xml_content.insert_str(root_end_idx, &format!("\n  <{}>{}</{}>\n", tag_name, value, tag_name).to_string());
+                    xml_content.insert_str(root_end_idx, &format!("\n  <{}>{}</{}>\n", tag_name, value, tag_name));
                 }
             }
         }
@@ -903,7 +889,7 @@ fn process_xml_file(
     xml_content
 }
 
-fn process_plain_file(
+async fn process_plain_file(
     content: &str,
     config: &ServerConfigurationFile,
     server: &crate::server::Server,
@@ -924,7 +910,7 @@ fn process_plain_file(
                     }
                 }
 
-                if let Some(value) = ServerConfigurationFile::lookup_value(server, &replacement.replace_with) {
+                if let Some(value) = ServerConfigurationFile::lookup_value(server, &replacement.replace_with).await {
                     updated_line = value;
                     break;
                 }
@@ -936,7 +922,7 @@ fn process_plain_file(
 
     for replacement in &config.replace {
         if !processed_matches.contains_key(&replacement.r#match) {
-            if let Some(value) = ServerConfigurationFile::lookup_value(server, &replacement.replace_with) {
+            if let Some(value) = ServerConfigurationFile::lookup_value(server, &replacement.replace_with).await {
                 result.push(value);
             }
         }
