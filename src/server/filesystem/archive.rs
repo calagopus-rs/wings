@@ -227,7 +227,7 @@ impl Archive {
                                 let mut writer = super::writer::FileSystemWriter::new(
                                     Arc::clone(&self.filesystem),
                                     destination_path,
-                                    Some(Permissions::from_mode(header.mode().unwrap_or(0o644))),
+                                    header.mode().map(Permissions::from_mode).ok(),
                                 )
                                 .unwrap();
 
@@ -266,7 +266,7 @@ impl Archive {
                             let mut writer = super::writer::FileSystemWriter::new(
                                 Arc::clone(&self.filesystem),
                                 destination_path,
-                                Some(Permissions::from_mode(entry.unix_mode().unwrap_or(0o644))),
+                                entry.unix_mode().map(Permissions::from_mode),
                             )?;
 
                             std::io::copy(&mut entry, &mut writer)?;
