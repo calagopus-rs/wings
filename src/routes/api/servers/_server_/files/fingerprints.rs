@@ -3,7 +3,7 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod get {
     use crate::routes::api::servers::_server_::GetServer;
-    use axum::extract::Query;
+    use axum_extra::extract::Query;
     use serde::{Deserialize, Serialize};
     use sha1::Digest;
     use std::collections::HashMap;
@@ -27,7 +27,7 @@ mod get {
     #[derive(ToSchema, Deserialize)]
     pub struct Params {
         algorithm: Algorithm,
-        files: String,
+        files: Vec<String>,
     }
 
     #[derive(ToSchema, Serialize)]
@@ -51,14 +51,8 @@ mod get {
         server: GetServer,
         Query(data): Query<Params>,
     ) -> axum::Json<serde_json::Value> {
-        let paths = data
-            .files
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .collect::<Vec<String>>();
-
         let mut fingerprint_handles = HashMap::new();
-        for path_raw in paths {
+        for path_raw in data.files {
             let path = match server.filesystem.safe_path(&path_raw) {
                 Some(path) => path,
                 None => continue,
