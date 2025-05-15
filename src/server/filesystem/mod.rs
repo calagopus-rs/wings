@@ -164,7 +164,7 @@ impl Filesystem {
             match component {
                 std::path::Component::ParentDir => {
                     if !result.as_os_str().is_empty()
-                        && result.components().last() != Some(std::path::Component::RootDir)
+                        && result.components().next_back() != Some(std::path::Component::RootDir)
                     {
                         result.pop();
                     }
@@ -428,10 +428,12 @@ impl Filesystem {
             .unwrap_or(());
     }
 
-    pub async fn to_api_entry(
+    #[inline]
+    pub fn to_api_entry_buffer(
         &self,
         path: PathBuf,
-        metadata: Metadata,
+        metadata: &Metadata,
+        buffer: Option<&[u8]>,
     ) -> crate::models::DirectoryEntry {
         let size = if metadata.is_dir() {
             let disk_usage = self.disk_usage.read().unwrap();
@@ -446,18 +448,16 @@ impl Filesystem {
             "inode/directory"
         } else if metadata.is_symlink() {
             "inode/symlink"
-        } else {
-            let mut buffer = [0; 128];
-            let mut file = tokio::fs::File::open(&path).await.unwrap();
-            let bytes_read = file.read(&mut buffer).await.unwrap_or(0);
-
-            if let Some(mime) = infer::get(&buffer[..bytes_read]) {
+        } else if let Some(buffer) = buffer {
+            if let Some(mime) = infer::get(buffer) {
                 mime.mime_type()
-            } else if std::str::from_utf8(&buffer[..bytes_read]).is_ok() {
+            } else if std::str::from_utf8(buffer).is_ok() {
                 "text/plain"
             } else {
                 "application/octet-stream"
             }
+        } else {
+            "application/octet-stream"
         };
 
         #[inline]
@@ -515,6 +515,24 @@ impl Filesystem {
             symlink: metadata.is_symlink(),
             mime,
         }
+    }
+
+    pub async fn to_api_entry(
+        &self,
+        path: PathBuf,
+        metadata: Metadata,
+    ) -> crate::models::DirectoryEntry {
+        let mut buffer = [0; 128];
+        let buffer = if metadata.is_file() {
+            let mut file = tokio::fs::File::open(&path).await.unwrap();
+            let bytes_read = file.read(&mut buffer).await.unwrap_or(0);
+
+            Some(&buffer[..bytes_read])
+        } else {
+            None
+        };
+
+        self.to_api_entry_buffer(path, &metadata, buffer)
     }
 }
 

@@ -12,6 +12,7 @@ mod fingerprints;
 mod list_directory;
 mod pull;
 mod rename;
+mod search;
 mod write;
 
 pub fn router(state: &State) -> OpenApiRouter<State> {
@@ -24,8 +25,9 @@ pub fn router(state: &State) -> OpenApiRouter<State> {
         .nest("/create-directory", create_directory::router(state))
         .nest("/delete", delete::router(state))
         .nest("/chmod", chmod::router(state))
-        .nest("/pull", pull::router(state))
+        .nest("/search", search::router(state))
         .nest("/fingerprints", fingerprints::router(state))
+        .nest("/pull", pull::router(state))
         .nest("/compress", compress::router(state))
         .nest("/decompress", decompress::router(state))
         .with_state(state.clone())
