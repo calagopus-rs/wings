@@ -158,8 +158,9 @@ jobs:
           chmod +x dist/${{ env.PROJECT_NAME }}-aarch64-linux/${{ env.BIN_NAME }}-aarch64-linux
 
           mkdir -p .docker/amd64 .docker/arm64
-          cp dist/${{ env.BIN_NAME }}-x86_64-linux/${{ env.BIN_NAME }}-x86_64-linux .docker/amd64/${{ env.BIN_NAME }}
-          cp dist/${{ env.BIN_NAME }}-aarch64-linux/${{ env.BIN_NAME }}-aarch64-linux .docker/arm64/${{ env.BIN_NAME }}
+          cp dist/${{ env.BIN_NAME }}-x86_64-linux/${{ env.BIN_NAME }}-x86_64-linux .docker/amd64/wings-rs
+          cp dist/${{ env.BIN_NAME }}-aarch64-linux/${{ env.BIN_NAME }}-aarch64-linux .docker/arm64/wings-rs
+          cp entrypoint.sh .docker/entrypoint.sh
 
       - name: Build and push multi-arch Docker image
         uses: docker/build-push-action@v5
