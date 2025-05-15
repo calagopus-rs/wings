@@ -603,6 +603,16 @@ impl Server {
                     self.filesystem.setup().await;
                     self.destroy_container(client).await;
 
+                    if let Ok(configuration) = self.config.client.server(self.uuid).await {
+                        self
+                            .update_configuration(
+                                configuration.settings,
+                                configuration.process_configuration,
+                                client,
+                            )
+                            .await;
+                    }
+
                     self.log_daemon_with_prelude("Updating process configuration files...")
                         .await;
                     if let Err(err) = self.process_configuration
