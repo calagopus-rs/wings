@@ -8,6 +8,7 @@ mod copy;
 mod create_directory;
 mod decompress;
 mod delete;
+mod fingerprints;
 mod list_directory;
 mod pull;
 mod rename;
@@ -24,6 +25,7 @@ pub fn router(state: &State) -> OpenApiRouter<State> {
         .nest("/delete", delete::router(state))
         .nest("/chmod", chmod::router(state))
         .nest("/pull", pull::router(state))
+        .nest("/fingerprints", fingerprints::router(state))
         .nest("/compress", compress::router(state))
         .nest("/decompress", decompress::router(state))
         .with_state(state.clone())

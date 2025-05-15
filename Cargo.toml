@@ -1,6 +1,6 @@
 [package]
 name = "wings-rs"
-version = "0.5.1"
+version = "0.5.2"
 edition = "2024"
 
 [dependencies]
@@ -40,3 +40,4 @@ sha1 = "0.10.6"
 futures = "0.3.31"
 russh = "0.52.1"
 russh-sftp = "2.1.1"
+md5 = "0.7.0"

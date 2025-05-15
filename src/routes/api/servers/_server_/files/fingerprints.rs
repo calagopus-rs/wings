@@ -1,0 +1,219 @@
+use super::State;
+use utoipa_axum::{router::OpenApiRouter, routes};
+
+mod get {
+    use crate::routes::api::servers::_server_::GetServer;
+    use axum::extract::Query;
+    use serde::{Deserialize, Serialize};
+    use sha1::Digest;
+    use std::collections::HashMap;
+    use tokio::{
+        fs::File,
+        io::{AsyncReadExt, AsyncSeekExt, BufReader},
+    };
+    use utoipa::ToSchema;
+
+    #[derive(ToSchema, Deserialize, Clone, Copy)]
+    #[serde(rename_all = "lowercase")]
+    #[schema(rename_all = "lowercase")]
+    pub enum Algorithm {
+        Md5,
+        Sha1,
+        Sha256,
+        Sha512,
+        Curseforge,
+    }
+
+    #[derive(ToSchema, Deserialize)]
+    pub struct Params {
+        algorithm: Algorithm,
+        files: String,
+    }
+
+    #[derive(ToSchema, Serialize)]
+    struct Response {
+        fingerprints: HashMap<String, String>,
+    }
+
+    #[utoipa::path(get, path = "/", responses(
+        (status = OK, body = inline(Response)),
+    ), params(
+        (
+            "algorithm" = Algorithm, Query,
+            description = "The algorithm to use for the fingerprint",
+        ),
+        (
+            "files" = String, Query,
+            description = "Comma-separated list of files to fingerprint",
+        ),
+    ))]
+    pub async fn route(
+        server: GetServer,
+        Query(data): Query<Params>,
+    ) -> axum::Json<serde_json::Value> {
+        let paths = data
+            .files
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .collect::<Vec<String>>();
+
+        let mut fingerprint_handles = HashMap::new();
+        for path_raw in paths {
+            let path = match server.filesystem.safe_path(&path_raw) {
+                Some(path) => path,
+                None => continue,
+            };
+
+            if !path.exists() || !path.is_file() {
+                continue;
+            }
+
+            let mut file = match File::open(&path).await {
+                Ok(file) => file,
+                Err(_) => continue,
+            };
+
+            fingerprint_handles.insert(
+                path_raw,
+                tokio::spawn(async move {
+                    match data.algorithm {
+                        Algorithm::Md5 => {
+                            let mut hasher = md5::Context::new();
+                            let mut buffer = [0; 8192];
+                            loop {
+                                let bytes_read = file.read(&mut buffer).await.unwrap();
+                                if bytes_read == 0 {
+                                    break;
+                                }
+
+                                hasher.consume(&buffer[..bytes_read]);
+                            }
+
+                            format!("{:x}", hasher.compute())
+                        }
+                        Algorithm::Sha1 => {
+                            let mut hasher = sha1::Sha1::new();
+                            let mut buffer = [0; 8192];
+                            loop {
+                                let bytes_read = file.read(&mut buffer).await.unwrap();
+                                if bytes_read == 0 {
+                                    break;
+                                }
+
+                                hasher.update(&buffer[..bytes_read]);
+                            }
+
+                            format!("{:x}", hasher.finalize())
+                        }
+                        Algorithm::Sha256 => {
+                            let mut hasher = sha2::Sha256::new();
+                            let mut buffer = [0; 8192];
+                            loop {
+                                let bytes_read = file.read(&mut buffer).await.unwrap();
+                                if bytes_read == 0 {
+                                    break;
+                                }
+
+                                hasher.update(&buffer[..bytes_read]);
+                            }
+
+                            format!("{:x}", hasher.finalize())
+                        }
+                        Algorithm::Sha512 => {
+                            let mut hasher = sha2::Sha512::new();
+                            let mut buffer = [0; 8192];
+                            loop {
+                                let bytes_read = file.read(&mut buffer).await.unwrap();
+                                if bytes_read == 0 {
+                                    break;
+                                }
+
+                                hasher.update(&buffer[..bytes_read]);
+                            }
+
+                            format!("{:x}", hasher.finalize())
+                        }
+                        Algorithm::Curseforge => {
+                            #[inline]
+                            fn is_ignored_in_curseforge_fingerprint(b: u8) -> bool {
+                                b == b'\t' || b == b'\n' || b == b'\r' || b == b' '
+                            }
+
+                            const MULTIPLEX: u32 = 1540483477;
+
+                            file.seek(std::io::SeekFrom::Start(0)).await.unwrap();
+                            let mut buffer = [0; 8192];
+                            let mut normalized_length: u32 = 0;
+
+                            loop {
+                                let bytes_read = file.read(&mut buffer).await.unwrap();
+                                if bytes_read == 0 {
+                                    break;
+                                }
+
+                                for &b in &buffer[..bytes_read] {
+                                    if !is_ignored_in_curseforge_fingerprint(b) {
+                                        normalized_length = normalized_length.wrapping_add(1);
+                                    }
+                                }
+                            }
+
+                            file.seek(std::io::SeekFrom::Start(0)).await.unwrap();
+                            let mut reader = BufReader::new(&mut file);
+
+                            let mut num2: u32 = 1 ^ normalized_length;
+                            let mut num3: u32 = 0;
+                            let mut num4: u32 = 0;
+
+                            loop {
+                                let bytes_read = reader.read(&mut buffer).await.unwrap();
+                                if bytes_read == 0 {
+                                    break;
+                                }
+
+                                for &b in &buffer[..bytes_read] {
+                                    if !is_ignored_in_curseforge_fingerprint(b) {
+                                        num3 |= (b as u32) << num4;
+                                        num4 = num4.wrapping_add(8);
+
+                                        if num4 == 32 {
+                                            let num6 = num3.wrapping_mul(MULTIPLEX);
+                                            let num7 =
+                                                (num6 ^ (num6 >> 24)).wrapping_mul(MULTIPLEX);
+
+                                            num2 = num2.wrapping_mul(MULTIPLEX) ^ num7;
+                                            num3 = 0;
+                                            num4 = 0;
+                                        }
+                                    }
+                                }
+                            }
+
+                            if num4 > 0 {
+                                num2 = (num2 ^ num3).wrapping_mul(MULTIPLEX);
+                            }
+
+                            let num6 = (num2 ^ (num2 >> 13)).wrapping_mul(MULTIPLEX);
+                            let result = num6 ^ (num6 >> 15);
+
+                            result.to_string()
+                        }
+                    }
+                }),
+            );
+        }
+
+        let mut fingerprints = HashMap::new();
+        for (path, handle) in fingerprint_handles {
+            fingerprints.insert(path, handle.await.unwrap());
+        }
+
+        axum::Json(serde_json::to_value(&Response { fingerprints }).unwrap())
+    }
+}
+
+pub fn router(state: &State) -> OpenApiRouter<State> {
+    OpenApiRouter::new()
+        .routes(routes!(get::route))
+        .with_state(state.clone())
+}
