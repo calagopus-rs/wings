@@ -6,4 +6,3 @@ wings, but in rust, very innovative.
 
 - Transfer system
 - Rerewrite power/stats stuff
-- Server configuration updates
