@@ -605,11 +605,16 @@ impl Server {
 
                     self.log_daemon_with_prelude("Updating process configuration files...")
                         .await;
-                    self.process_configuration
+                    if let Err(err) = self.process_configuration
                         .read()
                         .await
                         .update_files(self)
-                        .await;
+                        .await {
+                        crate::logger::log(
+                            crate::logger::LoggerLevel::Error,
+                            format!("Failed to update process configuration files: {}", err),
+                        );
+                    }
 
                     if self.config.system.check_permissions_on_boot {
                         self.log_daemon_with_prelude(
