@@ -1,4 +1,4 @@
-FROM --platform=$TARGETPLATFORM alpine:latest
+FROM --platform=$TARGETPLATFORM debian:bookworm-slim
 LABEL author="Robert Jansen" maintainer="me@rjns.dev"
 
 ARG TARGETPLATFORM
