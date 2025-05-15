@@ -7,5 +7,3 @@ wings, but in rust, very innovative.
 - Transfer system
 - Rerewrite power/stats stuff
 - Server configuration updates
-- Fix weird env var issues
-- panel activity logs

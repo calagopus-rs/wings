@@ -1,4 +1,6 @@
-use crate::server::{installation::InstallationScript, permissions::Permissions};
+use crate::server::{
+    activity::ApiActivity, installation::InstallationScript, permissions::Permissions,
+};
 use axum::http::HeaderMap;
 
 pub struct Client {
@@ -53,6 +55,10 @@ impl Client {
         password: &str,
     ) -> Result<(uuid::Uuid, uuid::Uuid, Permissions), reqwest::Error> {
         super::get_sftp_auth(self, r#type, username, password).await
+    }
+
+    pub async fn send_activity(&self, activity: Vec<ApiActivity>) -> Result<(), reqwest::Error> {
+        super::send_activity(self, activity).await
     }
 
     pub async fn servers(&self) -> Result<Vec<super::servers::RawServer>, reqwest::Error> {

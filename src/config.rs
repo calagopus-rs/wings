@@ -53,7 +53,7 @@ fn system_disk_check_interval() -> u64 {
 fn system_activity_send_interval() -> u64 {
     60
 }
-fn system_activity_send_count() -> u64 {
+fn system_activity_send_count() -> usize {
     100
 }
 fn system_check_permissions_on_boot() -> bool {
@@ -244,7 +244,7 @@ nestify::nest! {
             #[serde(default = "system_activity_send_interval")]
             pub activity_send_interval: u64,
             #[serde(default = "system_activity_send_count")]
-            pub activity_send_count: u64,
+            pub activity_send_count: usize,
             #[serde(default = "system_check_permissions_on_boot")]
             pub check_permissions_on_boot: bool,
             #[serde(default = "system_enable_log_rotate")]
@@ -508,7 +508,6 @@ impl Config {
         let config = unsafe { &mut *self.inner.get() };
         let _ = std::mem::replace(config, new_config);
 
-        self.ensure_directories()?;
         self.save()?;
 
         Ok(())

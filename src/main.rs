@@ -281,7 +281,7 @@ async fn main() {
         .unwrap();
 
         axum_server::bind_rustls(address, config)
-            .serve(router.into_make_service())
+            .serve(router.into_make_service_with_connect_info::<SocketAddr>())
             .await
             .unwrap();
     } else {
@@ -301,8 +301,11 @@ async fn main() {
         );
 
         let listener = tokio::net::TcpListener::bind(address).await.unwrap();
-        axum::serve(listener, router.into_make_service())
-            .await
-            .unwrap();
+        axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .unwrap();
     }
 }

@@ -1,16 +1,24 @@
 use super::{WebsocketEvent, WebsocketJwtPayload, WebsocketMessage};
-use crate::server::permissions::Permission;
+use crate::server::{
+    activity::{Activity, ActivityEvent},
+    permissions::Permission,
+};
 use axum::extract::ws::{Message, WebSocket};
 use futures_util::stream::SplitSink;
+use serde_json::json;
+use std::net::IpAddr;
 use tokio::sync::Mutex;
 
 pub async fn handle_message(
     state: &crate::routes::AppState,
+    user_ip: IpAddr,
     server: &crate::server::Server,
     sender: &Mutex<SplitSink<WebSocket, Message>>,
     socket_jwt: &WebsocketJwtPayload,
     message: super::WebsocketMessage,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let user_ip = Some(user_ip);
+
     match message.event {
         WebsocketEvent::SendStats => {
             super::send_message(
@@ -75,6 +83,17 @@ pub async fn handle_message(
                             crate::logger::LoggerLevel::Error,
                             format!("Failed to start server: {}", err),
                         );
+                    } else {
+                        server
+                            .activity
+                            .log_activity(Activity {
+                                event: ActivityEvent::PowerStart,
+                                user: Some(socket_jwt.user_uuid),
+                                ip: user_ip,
+                                metadata: None,
+                                timestamp: chrono::Utc::now(),
+                            })
+                            .await;
                     }
                 }
                 crate::models::ServerPowerAction::Kill => {
@@ -98,6 +117,17 @@ pub async fn handle_message(
                             crate::logger::LoggerLevel::Error,
                             format!("Failed to kill server: {}", err),
                         );
+                    } else {
+                        server
+                            .activity
+                            .log_activity(Activity {
+                                event: ActivityEvent::PowerKill,
+                                user: Some(socket_jwt.user_uuid),
+                                ip: user_ip,
+                                metadata: None,
+                                timestamp: chrono::Utc::now(),
+                            })
+                            .await;
                     }
                 }
                 crate::models::ServerPowerAction::Stop => {
@@ -121,6 +151,17 @@ pub async fn handle_message(
                             crate::logger::LoggerLevel::Error,
                             format!("Failed to stop server: {}", err),
                         );
+                    } else {
+                        server
+                            .activity
+                            .log_activity(Activity {
+                                event: ActivityEvent::PowerStop,
+                                user: Some(socket_jwt.user_uuid),
+                                ip: user_ip,
+                                metadata: None,
+                                timestamp: chrono::Utc::now(),
+                            })
+                            .await;
                     }
                 }
                 crate::models::ServerPowerAction::Restart => {
@@ -144,6 +185,17 @@ pub async fn handle_message(
                             crate::logger::LoggerLevel::Error,
                             format!("Failed to restart server: {}", err),
                         );
+                    } else {
+                        server
+                            .activity
+                            .log_activity(Activity {
+                                event: ActivityEvent::PowerRestart,
+                                user: Some(socket_jwt.user_uuid),
+                                ip: user_ip,
+                                metadata: None,
+                                timestamp: chrono::Utc::now(),
+                            })
+                            .await;
                     }
                 }
             }
@@ -164,10 +216,9 @@ pub async fn handle_message(
                 return Ok(());
             }
 
-            let command = message.args.first().map_or("", |v| v.as_str());
-
+            let raw_command = message.args.first().map_or("", |v| v.as_str());
             if let Some(stdin) = server.container_stdin().await {
-                let mut command = command.to_string();
+                let mut command = raw_command.to_string();
                 command.push('\n');
 
                 if let Err(err) = stdin.send(command).await {
@@ -175,6 +226,19 @@ pub async fn handle_message(
                         crate::logger::LoggerLevel::Debug,
                         format!("Failed to send command to docker: {}", err),
                     );
+                } else {
+                    server
+                        .activity
+                        .log_activity(Activity {
+                            event: ActivityEvent::ConsoleCommand,
+                            user: Some(socket_jwt.user_uuid),
+                            ip: user_ip,
+                            metadata: Some(json!({
+                                "command": raw_command,
+                            })),
+                            timestamp: chrono::Utc::now(),
+                        })
+                        .await;
                 }
             }
         }

@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        build: [x86_64-linux, x86_64-macos]
+        build: [x86_64-linux, x86_64-macos, aarch64-linux, aarch64-macos]
         include:
         - build: x86_64-linux
           os: ubuntu-22.04
@@ -74,16 +74,11 @@ jobs:
         if: matrix.build == 'x86_64-linux' || matrix.build == 'x86_64-macos'
         run: strip "target/${{ matrix.target }}/release/$BIN_NAME"
 
-      - name: Build archive
-        shell: bash
-        run: |
-          mkdir -p dist/lib
-          cp "target/${{ matrix.target }}/release/$BIN_NAME" "dist/"
-
-      - uses: actions/upload-artifact@v4
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: bins-${{ matrix.build }}
-          path: dist
+          name: ${{ env.PROJECT_NAME }}-${{ matrix.build }}
+          path: target/${{ matrix.target }}/release/${{ env.BIN_NAME }}
 
   publish:
     name: Publish
@@ -103,30 +98,10 @@ jobs:
           target: x86_64-unknown-linux-gnu
           override: true
 
-      - uses: actions/download-artifact@v4
-
-      - run: ls -al bins-*
-
-      - name: Build archive
-        shell: bash
-        run: |
-          set -ex
-
-          rm -rf tmp
-          mkdir tmp
-          mkdir dist
-
-          for dir in bins-* ; do
-              platform=${dir#"bins-"}
-
-              pkgname=$PROJECT_NAME-$platform
-              mkdir -p tmp/$pkgname
-              # cp LICENSE README.md tmp/$pkgname
-              cp -r bins-$platform/* tmp/$pkgname/
-              chmod +x tmp/$pkgname/$BIN_NAME
-
-              tar cJf dist/$pkgname.tar.xz -C tmp $pkgname
-          done
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
 
       - name: Get cli version from Cargo.toml
         id: version
@@ -136,7 +111,7 @@ jobs:
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: dist/*
+          file: artifacts/*/*
           file_glob: true
           tag: ${{ steps.version.outputs.val }}
           overwrite: true

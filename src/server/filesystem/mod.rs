@@ -157,11 +157,16 @@ impl Filesystem {
 
     #[inline]
     pub fn relative_path(&self, path: &Path) -> Option<PathBuf> {
-        path.canonicalize()
-            .ok()?
+        let parent = path.parent()?.canonicalize().ok()?;
+        if !parent.starts_with(&self.base_path) {
+            return None;
+        }
+
+        let file_name = path.file_name()?;
+        parent
             .strip_prefix(&self.base_path)
             .ok()
-            .map(|p| p.to_path_buf())
+            .map(|p| p.join(file_name))
     }
 
     #[inline]

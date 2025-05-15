@@ -2,13 +2,17 @@ use super::State;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod post {
-    use crate::routes::{ApiError, GetState};
+    use crate::{
+        routes::{ApiError, GetState},
+        server::activity::{Activity, ActivityEvent},
+    };
     use axum::{
-        extract::{Multipart, Query},
+        extract::{ConnectInfo, Multipart, Query},
         http::StatusCode,
     };
     use serde::{Deserialize, Serialize};
-    use std::sync::Arc;
+    use serde_json::json;
+    use std::{net::SocketAddr, sync::Arc};
     use tokio::io::AsyncWriteExt;
     use utoipa::ToSchema;
 
@@ -49,6 +53,7 @@ mod post {
     ))]
     pub async fn route(
         state: GetState,
+        user_ip: ConnectInfo<SocketAddr>,
         Query(data): Query<Params>,
         mut multipart: Multipart,
     ) -> (StatusCode, axum::Json<serde_json::Value>) {
@@ -139,6 +144,20 @@ mod post {
             )
             .await
             .unwrap();
+
+            server
+                .activity
+                .log_activity(Activity {
+                    event: ActivityEvent::FileUploaded,
+                    user: Some(payload.user_uuid),
+                    ip: Some(user_ip.ip()),
+                    metadata: Some(json!({
+                        "file": filename,
+                        "directory": server.filesystem.relative_path(&directory),
+                    })),
+                    timestamp: chrono::Utc::now(),
+                })
+                .await;
 
             while let Ok(Some(chunk)) = field.chunk().await {
                 if written_size + chunk.len() > state.config.api.upload_limit * 1000 * 1000 {

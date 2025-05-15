@@ -1,11 +1,13 @@
 use crate::routes::State;
+use crate::server::activity::{Activity, ActivityEvent};
 use crate::server::permissions::{Permission, Permissions};
 use russh_sftp::protocol::{
     Data, File, FileAttributes, Handle, Name, OpenFlags, Status, StatusCode,
 };
+use serde_json::json;
 use std::collections::HashMap;
 use std::fs::{Metadata, OpenOptions};
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::os::unix::fs::{FileExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -25,7 +27,7 @@ impl russh::server::Server for Server {
             state: Arc::clone(&self.state),
             server: None,
 
-            user_ip: client,
+            user_ip: client.map(|addr| addr.ip()),
             user_uuid: None,
             user_permissions: Default::default(),
 
@@ -48,7 +50,7 @@ struct SftpSession {
     state: State,
     server: Arc<crate::server::Server>,
 
-    user_ip: Option<SocketAddr>,
+    user_ip: Option<IpAddr>,
     user_uuid: Option<uuid::Uuid>,
     user_permissions: Permissions,
 
@@ -223,6 +225,18 @@ impl russh_sftp::server::Handler for SftpSession {
                 self.server
                     .filesystem
                     .allocate_in_path(parent, -(metadata.len() as i64));
+                self.server
+                    .activity
+                    .log_activity(Activity {
+                        event: ActivityEvent::SftpDelete,
+                        user: self.user_uuid,
+                        ip: self.user_ip,
+                        metadata: Some(json!({
+                            "files": [self.server.filesystem.relative_path(&path)],
+                        })),
+                        timestamp: chrono::Utc::now(),
+                    })
+                    .await;
             }
 
             Ok(Status {
@@ -246,12 +260,24 @@ impl russh_sftp::server::Handler for SftpSession {
         }
 
         if let Some(path) = self.server.filesystem.safe_path(&path) {
-            if path.exists()
-                && path != self.server.filesystem.base_path
+            if path != self.server.filesystem.base_path
                 && tokio::fs::remove_dir(&path).await.is_err()
             {
                 return Err(StatusCode::NoSuchFile);
             }
+
+            self.server
+                .activity
+                .log_activity(Activity {
+                    event: ActivityEvent::SftpDelete,
+                    user: self.user_uuid,
+                    ip: self.user_ip,
+                    metadata: Some(json!({
+                        "files": [self.server.filesystem.relative_path(&path)],
+                    })),
+                    timestamp: chrono::Utc::now(),
+                })
+                .await;
 
             Ok(Status {
                 id,
@@ -297,6 +323,19 @@ impl russh_sftp::server::Handler for SftpSession {
                     .unwrap()
             }
 
+            self.server
+                .activity
+                .log_activity(Activity {
+                    event: ActivityEvent::SftpCreateDirectory,
+                    user: self.user_uuid,
+                    ip: self.user_ip,
+                    metadata: Some(json!({
+                        "files": [self.server.filesystem.relative_path(&path)],
+                    })),
+                    timestamp: chrono::Utc::now(),
+                })
+                .await;
+
             Ok(Status {
                 id,
                 status_code: StatusCode::Ok,
@@ -337,6 +376,24 @@ impl russh_sftp::server::Handler for SftpSession {
                 {
                     return Err(StatusCode::NoSuchFile);
                 }
+
+                self.server
+                    .activity
+                    .log_activity(Activity {
+                        event: ActivityEvent::SftpRename,
+                        user: self.user_uuid,
+                        ip: self.user_ip,
+                        metadata: Some(json!({
+                            "files": [
+                                {
+                                    "from": self.server.filesystem.relative_path(&old_path),
+                                    "to": self.server.filesystem.relative_path(&new_path),
+                                }
+                            ],
+                        })),
+                        timestamp: chrono::Utc::now(),
+                    })
+                    .await;
 
                 Ok(Status {
                     id,
@@ -487,6 +544,13 @@ impl russh_sftp::server::Handler for SftpSession {
                 return Err(StatusCode::NoSuchFile);
             }
 
+            let mut activity_event = None;
+            if pflags.contains(OpenFlags::TRUNCATE) || pflags.contains(OpenFlags::CREATE) {
+                activity_event = Some(ActivityEvent::SftpCreate);
+            } else if pflags.contains(OpenFlags::WRITE) || pflags.contains(OpenFlags::APPEND) {
+                activity_event = Some(ActivityEvent::SftpWrite);
+            }
+
             let (file, metadata) = tokio::task::spawn_blocking({
                 let path = path.clone();
 
@@ -501,6 +565,21 @@ impl russh_sftp::server::Handler for SftpSession {
             .unwrap();
 
             let path_components = self.server.filesystem.path_to_components(&path);
+
+            if let Some(event) = activity_event {
+                self.server
+                    .activity
+                    .log_activity(Activity {
+                        event,
+                        user: self.user_uuid,
+                        ip: self.user_ip,
+                        metadata: Some(json!({
+                            "files": [self.server.filesystem.relative_path(&path)],
+                        })),
+                        timestamp: chrono::Utc::now(),
+                    })
+                    .await;
+            }
 
             self.handles.insert(
                 handle.clone(),

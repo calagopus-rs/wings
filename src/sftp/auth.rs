@@ -4,14 +4,14 @@ use russh::{
     server::{Auth, Msg, Session},
 };
 use russh_sftp::protocol::StatusCode;
-use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use std::{collections::HashMap, net::IpAddr, sync::Arc};
 use tokio::sync::Mutex;
 
 pub struct SshSession {
     pub state: State,
     pub server: Option<Arc<crate::server::Server>>,
 
-    pub user_ip: Option<SocketAddr>,
+    pub user_ip: Option<IpAddr>,
     pub user_uuid: Option<uuid::Uuid>,
     pub user_permissions: Permissions,
 

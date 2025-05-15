@@ -4,16 +4,17 @@ use crate::{
 };
 use axum::{
     body::Bytes,
-    extract::{Path, WebSocketUpgrade, ws::Message},
+    extract::{ConnectInfo, Path, WebSocketUpgrade, ws::Message},
     http::StatusCode,
     response::Response,
 };
 use futures_util::{SinkExt, StreamExt};
-use std::sync::Arc;
+use std::{net::SocketAddr, sync::Arc};
 use tokio::sync::{Mutex, RwLock, broadcast::error::RecvError};
 
 pub async fn handle_ws(
     ws: WebSocketUpgrade,
+    user_ip: ConnectInfo<SocketAddr>,
     state: GetState,
     Path(server): Path<uuid::Uuid>,
 ) -> Response {
@@ -91,7 +92,12 @@ pub async fn handle_ws(
 
                                 async move {
                                     match super::message_handler::handle_message(
-                                        &state, &server, &sender, &jwt, message,
+                                        &state,
+                                        user_ip.ip(),
+                                        &server,
+                                        &sender,
+                                        &jwt,
+                                        message,
                                     )
                                     .await
                                     {

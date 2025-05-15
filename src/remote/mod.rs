@@ -1,4 +1,4 @@
-use crate::server::permissions::Permissions;
+use crate::server::{activity::ApiActivity, permissions::Permissions};
 use client::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -53,4 +53,20 @@ pub async fn get_sftp_auth(
     }
 
     Ok((response.user, response.server, response.permissions))
+}
+
+pub async fn send_activity(
+    client: &Client,
+    activity: Vec<ApiActivity>,
+) -> Result<(), reqwest::Error> {
+    client
+        .client
+        .post(format!("{}/activity", client.url))
+        .json(&json!({
+            "data": activity,
+        }))
+        .send()
+        .await?;
+
+    Ok(())
 }

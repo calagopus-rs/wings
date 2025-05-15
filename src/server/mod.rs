@@ -9,6 +9,7 @@ use std::{
 };
 use tokio::sync::RwLock;
 
+pub mod activity;
 pub mod backup;
 pub mod configuration;
 pub mod container;
@@ -33,6 +34,7 @@ pub struct Server {
     websocket_sender: RwLock<Option<tokio::task::JoinHandle<()>>>,
 
     pub container: Arc<RwLock<Option<container::Container>>>,
+    pub activity: activity::ActivityManager,
 
     pub state: Arc<state::ServerStateLock>,
     suspended: AtomicBool,
@@ -65,6 +67,7 @@ impl Server {
 
         let state = Arc::new(state::ServerStateLock::new(rx.clone()));
         let container = Arc::new(RwLock::new(None::<container::Container>));
+        let activity = activity::ActivityManager::new(configuration.uuid, &config);
 
         Self {
             uuid: configuration.uuid,
@@ -79,6 +82,7 @@ impl Server {
             websocket_sender: RwLock::new(None),
 
             container,
+            activity,
 
             state,
             suspended: AtomicBool::new(false),
