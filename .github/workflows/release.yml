@@ -74,11 +74,17 @@ jobs:
         if: matrix.build == 'x86_64-linux' || matrix.build == 'x86_64-macos'
         run: strip "target/${{ matrix.target }}/release/$BIN_NAME"
 
+      - name: Prepare binary with platform name
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp "target/${{ matrix.target }}/release/$BIN_NAME" "dist/$BIN_NAME-${{ matrix.build }}"
+
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.PROJECT_NAME }}-${{ matrix.build }}
-          path: target/${{ matrix.target }}/release/${{ env.BIN_NAME }}
+          path: dist/${{ env.BIN_NAME }}-${{ matrix.build }}
 
   publish:
     name: Publish
