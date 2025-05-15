@@ -133,7 +133,7 @@ nestify::nest! {
     #[derive(ToSchema, Deserialize)]
     pub struct ProcessConfiguration {
         pub startup: #[derive(ToSchema, Deserialize, Clone)] pub struct ProcessConfigurationStartup {
-            pub done: Vec<String>,
+            pub done: Option<Vec<String>>,
             pub strip_ansi: bool,
         },
         pub stop: #[derive(ToSchema, Deserialize)] pub struct ProcessConfigurationStop {

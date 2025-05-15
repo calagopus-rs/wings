@@ -189,37 +189,39 @@ impl Container {
                                     return;
                                 }
 
-                                if startup_configuration.strip_ansi {
-                                    let mut result_line = line.clone();
-                                    let mut chars = line.chars().peekable();
+                                if let Some(done_vec) = &startup_configuration.done {
+                                    if startup_configuration.strip_ansi {
+                                        let mut result_line = line.clone();
+                                        let mut chars = line.chars().peekable();
 
-                                    while let Some(c) = chars.next() {
-                                        if c == '\u{1b}' {
-                                            while let Some(&next) = chars.peek() {
-                                                chars.next();
+                                        while let Some(c) = chars.next() {
+                                            if c == '\u{1b}' {
+                                                while let Some(&next) = chars.peek() {
+                                                    chars.next();
 
-                                                if next.is_ascii_alphabetic() {
-                                                    break;
+                                                    if next.is_ascii_alphabetic() {
+                                                        break;
+                                                    }
                                                 }
+                                            } else {
+                                                result_line.push(c);
                                             }
-                                        } else {
-                                            result_line.push(c);
                                         }
-                                    }
 
-                                    for done in &startup_configuration.done {
-                                        if result_line.contains(done) {
-                                            parent_state
-                                                .set_state(super::state::ServerState::Running);
-                                            break;
+                                        for done in done_vec {
+                                            if result_line.contains(done) {
+                                                parent_state
+                                                    .set_state(super::state::ServerState::Running);
+                                                break;
+                                            }
                                         }
-                                    }
-                                } else {
-                                    for done in &startup_configuration.done {
-                                        if line.contains(done) {
-                                            parent_state
-                                                .set_state(super::state::ServerState::Running);
-                                            break;
+                                    } else {
+                                        for done in done_vec {
+                                            if line.contains(done) {
+                                                parent_state
+                                                    .set_state(super::state::ServerState::Running);
+                                                break;
+                                            }
                                         }
                                     }
                                 }

@@ -88,7 +88,7 @@ impl ServerConfiguration {
         config: &crate::config::Config,
         filesystem: &super::filesystem::Filesystem,
     ) -> Vec<Mount> {
-        let mut mounts = self.mounts.clone();
+        let mut mounts = Vec::new();
 
         mounts.push(Mount {
             default: true,
@@ -116,6 +116,14 @@ impl ServerConfiguration {
                     .to_string(),
                 read_only: true,
             });
+        }
+
+        for mount in &self.mounts {
+            if !config.allowed_mounts.contains(&mount.source) {
+                continue;
+            }
+
+            mounts.push(mount.clone());
         }
 
         mounts

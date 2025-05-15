@@ -18,19 +18,18 @@ mod post {
         state: GetState,
         server: GetServer,
     ) -> (StatusCode, axum::Json<serde_json::Value>) {
-        if server.is_locked_state()
-            || server.state.get_state() != crate::server::state::ServerState::Offline
-        {
+        if server.is_locked_state() {
             return (
                 StatusCode::CONFLICT,
-                axum::Json(
-                    serde_json::to_value(ApiError::new("server is not offline or is locked"))
-                        .unwrap(),
-                ),
+                axum::Json(serde_json::to_value(ApiError::new("server is locked")).unwrap()),
             );
         }
 
-        server.destroy_container(&state.docker).await;
+        server
+            .stop_with_kill_timeout(&state.docker, std::time::Duration::from_secs(30))
+            .await;
+        server.sync_configuration(&state.docker).await;
+
         tokio::spawn(async move {
             if let Err(err) =
                 crate::server::installation::install_server(&server, &state.docker, true).await

@@ -316,6 +316,28 @@ impl Server {
         }
     }
 
+    pub async fn sync_configuration(&self, client: &Arc<bollard::Docker>) {
+        match self.config.client.server(self.uuid).await {
+            Ok(configuration) => {
+                self.update_configuration(
+                    configuration.settings,
+                    configuration.process_configuration,
+                    client,
+                )
+                .await;
+            }
+            Err(err) => {
+                crate::logger::log(
+                    crate::logger::LoggerLevel::Debug,
+                    format!(
+                        "Failed to sync server configuration for {}: {}",
+                        self.uuid, err
+                    ),
+                );
+            }
+        }
+    }
+
     pub fn is_locked_state(&self) -> bool {
         self.suspended.load(std::sync::atomic::Ordering::SeqCst)
             || self.installing.load(std::sync::atomic::Ordering::SeqCst)
@@ -603,15 +625,7 @@ impl Server {
                     self.filesystem.setup().await;
                     self.destroy_container(client).await;
 
-                    if let Ok(configuration) = self.config.client.server(self.uuid).await {
-                        self
-                            .update_configuration(
-                                configuration.settings,
-                                configuration.process_configuration,
-                                client,
-                            )
-                            .await;
-                    }
+                    self.sync_configuration(client).await;
 
                     self.log_daemon_with_prelude("Updating process configuration files...")
                         .await;
