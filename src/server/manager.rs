@@ -36,9 +36,9 @@ impl Manager {
             let server = Server::new(s.settings, s.process_configuration, Arc::clone(&config));
 
             let state = states.remove(&server.uuid).unwrap_or_default();
-            server.state.set_state(state);
             if state != ServerState::Offline {
                 server.attach_container(&client).await.unwrap();
+                server.start(&client, None).await.ok();
             }
 
             let server = Arc::new(server);
