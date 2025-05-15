@@ -604,7 +604,7 @@ impl Server {
                     self.process_configuration
                         .read()
                         .await
-                        .update_files(&self.filesystem)
+                        .update_files(self)
                         .await;
 
                     if self.config.system.check_permissions_on_boot {
