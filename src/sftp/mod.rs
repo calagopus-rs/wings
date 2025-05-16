@@ -104,6 +104,11 @@ impl SftpSession {
 
         false
     }
+
+    #[inline]
+    fn allow_action(&self) -> bool {
+        !self.server.is_locked_state()
+    }
 }
 
 impl russh_sftp::server::Handler for SftpSession {
@@ -128,10 +133,12 @@ impl russh_sftp::server::Handler for SftpSession {
 
     #[inline]
     async fn realpath(&mut self, id: u32, path: String) -> Result<Name, Self::Error> {
-        if let Some(Ok(path)) = self.server.filesystem.safe_path(&path).map(|p| {
-            p.strip_prefix(&self.server.filesystem.base_path)
-                .map(|p| p.to_path_buf())
-        }) {
+        if let Some(path) = self
+            .server
+            .filesystem
+            .safe_path(&path)
+            .and_then(|p| self.server.filesystem.relative_path(&p))
+        {
             Ok(Name {
                 id,
                 files: vec![File::dummy(format!("/{}", path.display()))],
@@ -142,6 +149,10 @@ impl russh_sftp::server::Handler for SftpSession {
     }
 
     async fn opendir(&mut self, id: u32, path: String) -> Result<Handle, Self::Error> {
+        if !self.allow_action() {
+            return Err(StatusCode::PermissionDenied);
+        }
+
         if self.handles.len() >= 256 {
             return Err(StatusCode::Failure);
         }
@@ -177,6 +188,10 @@ impl russh_sftp::server::Handler for SftpSession {
     }
 
     async fn readdir(&mut self, id: u32, handle: String) -> Result<Name, Self::Error> {
+        if !self.allow_action() {
+            return Err(StatusCode::PermissionDenied);
+        }
+
         let handle = match self.handles.get_mut(&handle) {
             Some(handle) => handle,
             None => return Err(StatusCode::NoSuchFile),
@@ -203,6 +218,10 @@ impl russh_sftp::server::Handler for SftpSession {
     }
 
     async fn remove(&mut self, id: u32, filename: String) -> Result<Status, Self::Error> {
+        if !self.allow_action() {
+            return Err(StatusCode::PermissionDenied);
+        }
+
         if self.state.config.system.sftp.read_only {
             return Err(StatusCode::PermissionDenied);
         }
@@ -251,6 +270,10 @@ impl russh_sftp::server::Handler for SftpSession {
     }
 
     async fn rmdir(&mut self, id: u32, path: String) -> Result<Status, Self::Error> {
+        if !self.allow_action() {
+            return Err(StatusCode::PermissionDenied);
+        }
+
         if self.state.config.system.sftp.read_only {
             return Err(StatusCode::PermissionDenied);
         }
@@ -296,6 +319,10 @@ impl russh_sftp::server::Handler for SftpSession {
         path: String,
         attrs: FileAttributes,
     ) -> Result<Status, Self::Error> {
+        if !self.allow_action() {
+            return Err(StatusCode::PermissionDenied);
+        }
+
         if self.state.config.system.sftp.read_only {
             return Err(StatusCode::PermissionDenied);
         }
@@ -353,6 +380,10 @@ impl russh_sftp::server::Handler for SftpSession {
         oldpath: String,
         newpath: String,
     ) -> Result<Status, Self::Error> {
+        if !self.allow_action() {
+            return Err(StatusCode::PermissionDenied);
+        }
+
         if self.state.config.system.sftp.read_only {
             return Err(StatusCode::PermissionDenied);
         }
@@ -415,6 +446,10 @@ impl russh_sftp::server::Handler for SftpSession {
         path: String,
         attrs: FileAttributes,
     ) -> Result<Status, Self::Error> {
+        if !self.allow_action() {
+            return Err(StatusCode::PermissionDenied);
+        }
+
         if self.state.config.system.sftp.read_only {
             return Err(StatusCode::PermissionDenied);
         }
@@ -454,6 +489,10 @@ impl russh_sftp::server::Handler for SftpSession {
         handle: String,
         attrs: FileAttributes,
     ) -> Result<Status, Self::Error> {
+        if !self.allow_action() {
+            return Err(StatusCode::PermissionDenied);
+        }
+
         let handle = match self.handles.get(&handle) {
             Some(handle) => handle,
             None => return Err(StatusCode::NoSuchFile),
@@ -494,6 +533,10 @@ impl russh_sftp::server::Handler for SftpSession {
         id: u32,
         handle: String,
     ) -> Result<russh_sftp::protocol::Attrs, Self::Error> {
+        if !self.allow_action() {
+            return Err(StatusCode::PermissionDenied);
+        }
+
         let handle = match self.handles.get(&handle) {
             Some(handle) => handle,
             None => return Err(StatusCode::NoSuchFile),
@@ -518,6 +561,10 @@ impl russh_sftp::server::Handler for SftpSession {
         pflags: russh_sftp::protocol::OpenFlags,
         _attrs: FileAttributes,
     ) -> Result<Handle, Self::Error> {
+        if !self.allow_action() {
+            return Err(StatusCode::PermissionDenied);
+        }
+
         if self.handles.len() >= 256 {
             return Err(StatusCode::Failure);
         }
@@ -606,6 +653,10 @@ impl russh_sftp::server::Handler for SftpSession {
         offset: u64,
         len: u32,
     ) -> Result<russh_sftp::protocol::Data, Self::Error> {
+        if !self.allow_action() {
+            return Err(StatusCode::PermissionDenied);
+        }
+
         let handle = match self.handles.get_mut(&handle) {
             Some(handle) => handle,
             None => return Err(StatusCode::NoSuchFile),
@@ -649,6 +700,10 @@ impl russh_sftp::server::Handler for SftpSession {
         offset: u64,
         data: Vec<u8>,
     ) -> Result<Status, Self::Error> {
+        if !self.allow_action() {
+            return Err(StatusCode::PermissionDenied);
+        }
+
         let handle = match self.handles.get_mut(&handle) {
             Some(handle) => handle,
             None => return Err(StatusCode::NoSuchFile),

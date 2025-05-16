@@ -1,6 +1,5 @@
-use crate::server::permissions::Permission;
-
 use super::{WebsocketEvent, WebsocketJwtPayload, WebsocketMessage};
+use crate::server::permissions::Permission;
 use axum::extract::ws::{Message, WebSocket};
 use futures_util::stream::SplitSink;
 use std::sync::Arc;

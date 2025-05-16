@@ -68,6 +68,8 @@ mod post {
                 WalkBuilder::new(root)
                     .hidden(false)
                     .git_ignore(false)
+                    .ignore(false)
+                    .git_exclude(false)
                     .follow_links(false)
                     .build_parallel()
                     .run(move || {
@@ -131,7 +133,7 @@ mod post {
                                     Err(_) => return WalkState::Continue,
                                 };
 
-                                if std::str::from_utf8(&buffer[..bytes_read]).is_err() {
+                                if std::str::from_utf8(&buffer[..bytes_read.min(128)]).is_err() {
                                     return WalkState::Continue;
                                 }
 

@@ -66,6 +66,7 @@ impl DiskUsage {
             if let Some(removed) = self.entries.remove(name) {
                 return Some(removed);
             }
+
             return None;
         }
 
@@ -76,22 +77,12 @@ impl DiskUsage {
                 return Some(removed);
             }
         }
+
         None
     }
 
     pub fn clear(&mut self) {
         self.entries.clear();
-    }
-
-    pub fn copy_from(&mut self, other: &DiskUsage) {
-        for (name, usage) in &other.entries {
-            let entry = self
-                .entries
-                .entry(name.clone())
-                .or_insert_with(DiskUsage::new);
-
-            entry.copy_from(usage);
-        }
     }
 
     pub fn add_directory(&mut self, target_path: &[String], source_dir: DiskUsage) -> bool {
@@ -116,14 +107,5 @@ impl DiskUsage {
         current.entries.insert(leaf.clone(), source_dir);
 
         true
-    }
-}
-
-impl Clone for DiskUsage {
-    fn clone(&self) -> Self {
-        let mut cloned = DiskUsage::new();
-        cloned.copy_from(self);
-
-        cloned
     }
 }

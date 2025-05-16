@@ -164,7 +164,9 @@ impl Server {
                                 server.state.set_state(state::ServerState::Running);
                             }
                         }
-                        ContainerStateStatusEnum::DEAD | ContainerStateStatusEnum::EXITED => {
+                        ContainerStateStatusEnum::EMPTY
+                        | ContainerStateStatusEnum::DEAD
+                        | ContainerStateStatusEnum::EXITED => {
                             server.state.set_state(state::ServerState::Offline);
 
                             if server.restarting.load(std::sync::atomic::Ordering::Relaxed) {
@@ -230,7 +232,8 @@ impl Server {
                                     .await;
 
                                 if let Some(last_crash) = *server.last_crash.read().await {
-                                    if last_crash.elapsed().as_secs()
+                                    if chrono::Utc::now().timestamp() as u64
+                                        - last_crash.elapsed().as_secs()
                                         < server.config.system.crash_detection.timeout
                                     {
                                         server.log_daemon_with_prelude(
@@ -336,6 +339,17 @@ impl Server {
                 );
             }
         }
+    }
+
+    /// Only use if you are sure that this will not cause any issues.
+    pub fn reset_state(&self) {
+        self.installing
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        self.restoring
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        self.transferring
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        self.state.set_state(state::ServerState::Offline);
     }
 
     pub fn is_locked_state(&self) -> bool {
@@ -693,14 +707,18 @@ impl Server {
 
         self.stopping
             .store(true, std::sync::atomic::Ordering::Relaxed);
-        client
+        if client
             .kill_container(
                 &container,
                 Some(bollard::container::KillContainerOptions {
                     signal: "SIGKILL".to_string(),
                 }),
             )
-            .await?;
+            .await
+            .is_err()
+        {
+            self.reset_state();
+        }
 
         Ok(())
     }

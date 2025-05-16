@@ -1,3 +1,4 @@
+use super::permissions::Permissions;
 use axum::extract::ws::{Message, WebSocket};
 use futures_util::{SinkExt, stream::SplitSink};
 use serde::{
@@ -6,8 +7,6 @@ use serde::{
 };
 use std::marker::PhantomData;
 use tokio::sync::Mutex;
-
-use super::permissions::Permissions;
 
 pub mod handler;
 mod jwt;

@@ -1,11 +1,23 @@
 use crate::{remote::AuthenticationType, routes::State, server::permissions::Permissions};
 use russh::{
-    Channel, ChannelId,
+    Channel, ChannelId, MethodSet,
     server::{Auth, Msg, Session},
 };
 use russh_sftp::protocol::StatusCode;
-use std::{collections::HashMap, net::IpAddr, sync::Arc};
+use std::{
+    collections::HashMap,
+    net::IpAddr,
+    sync::{Arc, LazyLock},
+};
 use tokio::sync::Mutex;
+
+static AUTH_METHODS: LazyLock<MethodSet> = LazyLock::new(|| {
+    let mut methods = MethodSet::empty();
+    methods.push(russh::MethodKind::Password);
+    methods.push(russh::MethodKind::PublicKey);
+
+    methods
+});
 
 pub struct SshSession {
     pub state: State,
@@ -28,6 +40,13 @@ impl SshSession {
 
 impl russh::server::Handler for SshSession {
     type Error = Box<dyn std::error::Error + Send + Sync>;
+
+    async fn auth_none(&mut self, _user: &str) -> Result<Auth, Self::Error> {
+        Ok(Auth::Reject {
+            proceed_with_methods: Some(AUTH_METHODS.clone()),
+            partial_success: false,
+        })
+    }
 
     async fn auth_password(&mut self, username: &str, password: &str) -> Result<Auth, Self::Error> {
         let (user, server, permissions) = match self
@@ -63,8 +82,17 @@ impl russh::server::Handler for SshSession {
             .find(|s| s.uuid == server)
         {
             Some(server) => Arc::clone(server),
-            None => return Ok(Auth::reject()),
+            None => {
+                return Ok(Auth::Reject {
+                    proceed_with_methods: Some(AUTH_METHODS.clone()),
+                    partial_success: false,
+                });
+            }
         };
+
+        if server.is_locked_state() {
+            return Ok(Auth::reject());
+        }
 
         self.server = Some(server);
 
@@ -94,7 +122,10 @@ impl russh::server::Handler for SshSession {
                     format!("Failed to authenticate user {} (public_key): {}", user, err),
                 );
 
-                return Ok(Auth::reject());
+                return Ok(Auth::Reject {
+                    proceed_with_methods: Some(AUTH_METHODS.clone()),
+                    partial_success: false,
+                });
             }
         };
 
@@ -112,6 +143,10 @@ impl russh::server::Handler for SshSession {
             Some(server) => Arc::clone(server),
             None => return Ok(Auth::reject()),
         };
+
+        if server.is_locked_state() {
+            return Ok(Auth::reject());
+        }
 
         self.server = Some(server);
 

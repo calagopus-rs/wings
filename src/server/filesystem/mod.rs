@@ -48,6 +48,11 @@ impl Filesystem {
 
                 async move {
                     loop {
+                        crate::logger::log(
+                            crate::logger::LoggerLevel::Debug,
+                            format!("Checking disk usage for {}", base_path.display()),
+                        );
+
                         let mut tmp_disk_usage = usage::DiskUsage::new();
 
                         fn recursive_size(
@@ -95,6 +100,15 @@ impl Filesystem {
                         disk_usage_cached.store(
                             total_size + total_entry_size,
                             std::sync::atomic::Ordering::Relaxed,
+                        );
+
+                        crate::logger::log(
+                            crate::logger::LoggerLevel::Debug,
+                            format!(
+                                "Disk usage for {}: {} bytes",
+                                base_path.display(),
+                                disk_usage_cached.load(std::sync::atomic::Ordering::Relaxed)
+                            ),
                         );
 
                         tokio::time::sleep(tokio::time::Duration::from_secs(check_interval)).await;
@@ -204,14 +218,15 @@ impl Filesystem {
         }
     }
 
+    #[inline]
     pub fn safe_path(&self, path: &str) -> Option<PathBuf> {
         let safe_path = Self::resolve_path(&self.base_path.join(path.trim_start_matches('/')));
 
-        if !safe_path.starts_with(&self.base_path) {
-            return None;
+        if safe_path.starts_with(&self.base_path) {
+            Some(safe_path)
+        } else {
+            None
         }
-
-        Some(safe_path)
     }
 
     pub async fn truncate_path(&self, path: &PathBuf) -> tokio::io::Result<()> {
@@ -367,9 +382,9 @@ impl Filesystem {
 
             if let Ok(metadata) = path.symlink_metadata() {
                 if metadata.is_dir() {
-                    tokio::fs::remove_dir_all(&path).await.unwrap_or(());
+                    tokio::fs::remove_dir_all(&path).await.ok();
                 } else {
-                    tokio::fs::remove_file(&path).await.unwrap_or(());
+                    tokio::fs::remove_file(&path).await.ok();
                 }
             }
         }

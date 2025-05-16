@@ -34,7 +34,7 @@ mod post {
             for mut command in data.commands {
                 command.push('\n');
 
-                stdin.send(command).await.unwrap_or_default();
+                stdin.send(command).await.ok();
             }
         } else {
             return (

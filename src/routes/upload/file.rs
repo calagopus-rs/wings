@@ -8,7 +8,7 @@ mod post {
     };
     use axum::{
         extract::{ConnectInfo, Multipart, Query},
-        http::StatusCode,
+        http::{HeaderMap, StatusCode},
     };
     use serde::{Deserialize, Serialize};
     use serde_json::json;
@@ -53,7 +53,8 @@ mod post {
     ))]
     pub async fn route(
         state: GetState,
-        user_ip: ConnectInfo<SocketAddr>,
+        headers: HeaderMap,
+        connect_info: ConnectInfo<SocketAddr>,
         Query(data): Query<Params>,
         mut multipart: Multipart,
     ) -> (StatusCode, axum::Json<serde_json::Value>) {
@@ -117,6 +118,8 @@ mod post {
             );
         }
 
+        let user_ip = Some(state.config.find_ip(&headers, connect_info));
+
         while let Ok(Some(mut field)) = multipart.next_field().await {
             let filename = match field.file_name() {
                 Some(name) => name,
@@ -150,7 +153,7 @@ mod post {
                 .log_activity(Activity {
                     event: ActivityEvent::FileUploaded,
                     user: Some(payload.user_uuid),
-                    ip: Some(user_ip.ip()),
+                    ip: user_ip,
                     metadata: Some(json!({
                         "file": filename,
                         "directory": server.filesystem.relative_path(&directory),

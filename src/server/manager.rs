@@ -148,6 +148,9 @@ impl Manager {
 
         if let Some(pos) = servers.iter().position(|s| Arc::ptr_eq(s, &server)) {
             let server = servers.remove(pos);
+            server
+                .suspended
+                .store(true, std::sync::atomic::Ordering::Relaxed);
 
             tokio::spawn({
                 let client = Arc::clone(&self.client);

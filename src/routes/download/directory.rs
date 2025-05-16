@@ -9,7 +9,10 @@ mod get {
         http::{HeaderMap, StatusCode},
     };
     use serde::Deserialize;
-    use std::fs::{DirEntry, File};
+    use std::{
+        fs::{DirEntry, File},
+        os::unix::fs::MetadataExt,
+    };
     use utoipa::ToSchema;
 
     #[derive(ToSchema, Deserialize)]
@@ -185,7 +188,8 @@ mod get {
             };
 
             let mut entry_header = tar::Header::new_gnu();
-            entry_header.set_mode(0o755);
+            entry_header.set_mode(metadata.mode());
+            entry_header.set_mtime(metadata.mtime() as u64);
             entry_header.set_entry_type(tar::EntryType::Directory);
 
             if archive
@@ -208,8 +212,9 @@ mod get {
             };
 
             let mut entry_header = tar::Header::new_gnu();
-            entry_header.set_mode(0o644);
+            entry_header.set_mode(metadata.mode());
             entry_header.set_entry_type(tar::EntryType::Regular);
+            entry_header.set_mtime(metadata.mtime() as u64);
             entry_header.set_size(metadata.len());
 
             let file = File::open(entry.path()).unwrap();
@@ -227,7 +232,8 @@ mod get {
             };
 
             let mut entry_header = tar::Header::new_gnu();
-            entry_header.set_mode(0o777);
+            entry_header.set_mode(metadata.mode());
+            entry_header.set_mtime(metadata.mtime() as u64);
             entry_header.set_entry_type(tar::EntryType::Symlink);
 
             if archive

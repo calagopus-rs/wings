@@ -36,14 +36,6 @@ mod post {
                         );
                     }
                 }
-                crate::models::ServerPowerAction::Kill => {
-                    if let Err(err) = server.kill(&state.docker).await {
-                        crate::logger::log(
-                            crate::logger::LoggerLevel::Error,
-                            format!("Failed to kill server: {}", err),
-                        );
-                    }
-                }
                 crate::models::ServerPowerAction::Stop => {
                     if let Err(err) = server.stop(&state.docker, aquire_timeout).await {
                         crate::logger::log(
@@ -57,6 +49,14 @@ mod post {
                         crate::logger::log(
                             crate::logger::LoggerLevel::Error,
                             format!("Failed to restart server: {}", err),
+                        );
+                    }
+                }
+                crate::models::ServerPowerAction::Kill => {
+                    if let Err(err) = server.kill(&state.docker).await {
+                        crate::logger::log(
+                            crate::logger::LoggerLevel::Error,
+                            format!("Failed to kill server: {}", err),
                         );
                     }
                 }

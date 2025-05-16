@@ -1,3 +1,4 @@
+use axum::{extract::ConnectInfo, http::HeaderMap};
 use serde::{Deserialize, Serialize};
 use serde_default::DefaultFromSerde;
 use std::{
@@ -200,7 +201,7 @@ nestify::nest! {
             /// MB
             pub upload_limit: usize,
             #[serde(default)]
-            pub trusted_proxies: Vec<String>,
+            pub trusted_proxies: Vec<std::net::IpAddr>,
         },
         #[serde(default)]
         pub system: #[derive(Deserialize, Serialize, DefaultFromSerde)] #[serde(default)] pub struct System {
@@ -531,6 +532,33 @@ impl Config {
         self.save()?;
 
         Ok(())
+    }
+
+    #[inline]
+    pub fn find_ip(
+        &self,
+        headers: &HeaderMap,
+        connect_info: ConnectInfo<std::net::SocketAddr>,
+    ) -> std::net::IpAddr {
+        for ip in &self.api.trusted_proxies {
+            if connect_info.ip() == *ip {
+                if let Some(forwarded) = headers.get("X-Forwarded-For") {
+                    if let Ok(forwarded) = forwarded.to_str() {
+                        if let Some(ip) = forwarded.split(',').next() {
+                            return ip.parse().unwrap_or_else(|_| connect_info.ip());
+                        }
+                    }
+                }
+
+                if let Some(forwarded) = headers.get("X-Real-IP") {
+                    if let Ok(forwarded) = forwarded.to_str() {
+                        return forwarded.parse().unwrap_or_else(|_| connect_info.ip());
+                    }
+                }
+            }
+        }
+
+        connect_info.ip()
     }
 
     #[allow(clippy::mut_from_ref)]

@@ -5,7 +5,7 @@ use crate::{
 use axum::{
     body::Bytes,
     extract::{ConnectInfo, Path, WebSocketUpgrade, ws::Message},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::Response,
 };
 use futures_util::{SinkExt, StreamExt};
@@ -14,7 +14,8 @@ use tokio::sync::{Mutex, RwLock, broadcast::error::RecvError};
 
 pub async fn handle_ws(
     ws: WebSocketUpgrade,
-    user_ip: ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    connect_info: ConnectInfo<SocketAddr>,
     state: GetState,
     Path(server): Path<uuid::Uuid>,
 ) -> Response {
@@ -39,6 +40,8 @@ pub async fn handle_ws(
                 .unwrap();
         }
     };
+
+    let user_ip = state.config.find_ip(&headers, connect_info);
 
     ws.on_upgrade(move |socket| async move {
         let (sender, mut reciever) = socket.split();
@@ -92,12 +95,7 @@ pub async fn handle_ws(
 
                                 async move {
                                     match super::message_handler::handle_message(
-                                        &state,
-                                        user_ip.ip(),
-                                        &server,
-                                        &sender,
-                                        &jwt,
-                                        message,
+                                        &state, user_ip, &server, &sender, &jwt, message,
                                     )
                                     .await
                                     {
