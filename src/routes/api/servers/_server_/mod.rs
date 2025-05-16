@@ -16,6 +16,7 @@ mod logs;
 mod power;
 mod reinstall;
 mod sync;
+mod version;
 mod ws;
 
 pub type GetServer = axum::extract::Extension<Arc<crate::server::Server>>;
@@ -107,6 +108,7 @@ pub fn router(state: &State) -> OpenApiRouter<State> {
     OpenApiRouter::new()
         .nest("/logs", logs::router(state))
         .nest("/power", power::router(state))
+        .nest("/version", version::router(state))
         .nest("/commands", commands::router(state))
         .nest("/sync", sync::router(state))
         .nest("/reinstall", reinstall::router(state))

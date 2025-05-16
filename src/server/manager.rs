@@ -36,15 +36,28 @@ impl Manager {
             let server = Server::new(s.settings, s.process_configuration, Arc::clone(&config));
 
             let state = states.remove(&server.uuid).unwrap_or_default();
-            if state != ServerState::Offline {
-                server.attach_container(&client).await.unwrap();
-                server.start(&client, None).await.ok();
-            }
 
             let server = Arc::new(server);
             server
                 .setup_websocket_sender(Arc::clone(&server), Arc::clone(&client))
                 .await;
+
+            if state == ServerState::Starting || state == ServerState::Running {
+                tokio::spawn({
+                    let server = Arc::clone(&server);
+                    let client = Arc::clone(&client);
+
+                    async move {
+                        crate::logger::log(
+                            crate::logger::LoggerLevel::Info,
+                            format!("Restoring server {} state: {:?}", server.uuid, state),
+                        );
+
+                        server.attach_container(&client).await.unwrap();
+                        server.start(&client, None).await.ok();
+                    }
+                });
+            }
 
             servers.push(server);
         }

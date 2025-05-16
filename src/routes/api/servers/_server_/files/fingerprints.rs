@@ -51,7 +51,7 @@ mod get {
         server: GetServer,
         Query(data): Query<Params>,
     ) -> axum::Json<serde_json::Value> {
-        let mut fingerprint_handles = HashMap::new();
+        let mut fingerprint_handles = Vec::new();
         for path_raw in data.files {
             let path = match server.filesystem.safe_path(&path_raw) {
                 Some(path) => path,
@@ -67,9 +67,9 @@ mod get {
                 Err(_) => continue,
             };
 
-            fingerprint_handles.insert(
-                path_raw,
-                tokio::spawn(async move {
+            fingerprint_handles.push(async move {
+                (
+                    path_raw,
                     match data.algorithm {
                         Algorithm::Md5 => {
                             let mut hasher = md5::Context::new();
@@ -192,17 +192,19 @@ mod get {
 
                             result.to_string()
                         }
-                    }
-                }),
-            );
+                    },
+                )
+            });
         }
 
-        let mut fingerprints = HashMap::new();
-        for (path, handle) in fingerprint_handles {
-            fingerprints.insert(path, handle.await.unwrap());
-        }
+        let joined_fingerprints = futures::future::join_all(fingerprint_handles).await;
 
-        axum::Json(serde_json::to_value(&Response { fingerprints }).unwrap())
+        axum::Json(
+            serde_json::to_value(&Response {
+                fingerprints: HashMap::from_iter(joined_fingerprints),
+            })
+            .unwrap(),
+        )
     }
 }
 
