@@ -54,7 +54,13 @@ impl Manager {
                         );
 
                         server.attach_container(&client).await.unwrap();
-                        server.start(&client, None).await.ok();
+
+                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                        if server.state.get_state() != ServerState::Running
+                            && state != ServerState::Starting
+                        {
+                            server.start(&client, None).await.ok();
+                        }
                     }
                 });
             }
