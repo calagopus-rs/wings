@@ -228,6 +228,13 @@ impl Archive {
                                     Arc::clone(&self.filesystem),
                                     destination_path,
                                     header.mode().map(Permissions::from_mode).ok(),
+                                    header
+                                        .mtime()
+                                        .map(|t| {
+                                            std::time::UNIX_EPOCH
+                                                + std::time::Duration::from_secs(t)
+                                        })
+                                        .ok(),
                                 )
                                 .unwrap();
 
@@ -267,6 +274,7 @@ impl Archive {
                                 Arc::clone(&self.filesystem),
                                 destination_path,
                                 entry.unix_mode().map(Permissions::from_mode),
+                                None,
                             )?;
 
                             std::io::copy(&mut entry, &mut writer)?;

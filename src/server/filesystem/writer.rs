@@ -5,6 +5,7 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
+    time::SystemTime,
 };
 use tokio::io::{AsyncSeek, AsyncWrite};
 
@@ -13,8 +14,9 @@ const ALLOCATION_THRESHOLD: i64 = 1_024_000; // 1 MB
 pub struct FileSystemWriter {
     filesystem: Arc<super::Filesystem>,
     parent: Vec<String>,
-    writer: BufWriter<File>,
+    writer: Option<BufWriter<File>>,
     accumulated_bytes: i64,
+    modified: Option<SystemTime>,
 }
 
 impl FileSystemWriter {
@@ -22,6 +24,7 @@ impl FileSystemWriter {
         filesystem: Arc<super::Filesystem>,
         destination: PathBuf,
         permissions: Option<Permissions>,
+        modified: Option<SystemTime>,
     ) -> std::io::Result<Self> {
         let parent = filesystem.path_to_components(&destination.parent().unwrap().canonicalize()?);
         let file = File::create(&destination)?;
@@ -39,8 +42,12 @@ impl FileSystemWriter {
         Ok(Self {
             filesystem,
             parent,
-            writer: BufWriter::with_capacity(ALLOCATION_THRESHOLD as usize, file),
+            writer: Some(BufWriter::with_capacity(
+                ALLOCATION_THRESHOLD as usize,
+                file,
+            )),
             accumulated_bytes: 0,
+            modified,
         })
     }
 
@@ -55,8 +62,10 @@ impl FileSystemWriter {
                     "Failed to allocate space",
                 ));
             }
+
             self.accumulated_bytes = 0;
         }
+
         Ok(())
     }
 }
@@ -72,20 +81,55 @@ impl Write for FileSystemWriter {
             self.allocate_accumulated()?;
         }
 
-        self.writer.write(buf)
+        if let Some(writer) = self.writer.as_mut() {
+            writer.write(buf)
+        } else {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "Writer is not available",
+            ))
+        }
     }
 
     #[inline]
     fn flush(&mut self) -> std::io::Result<()> {
         self.allocate_accumulated()?;
-        self.writer.flush()
+
+        if let Some(writer) = self.writer.as_mut() {
+            writer.flush()
+        } else {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "Writer is not available",
+            ))
+        }
     }
 }
 
 impl Seek for FileSystemWriter {
     fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
         self.allocate_accumulated()?;
-        self.writer.seek(pos)
+
+        if let Some(writer) = self.writer.as_mut() {
+            writer.seek(pos)
+        } else {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "Writer is not available",
+            ))
+        }
+    }
+}
+
+impl Drop for FileSystemWriter {
+    fn drop(&mut self) {
+        if let Some(modified) = self.modified {
+            if let Some(writer) = self.writer.take() {
+                if let Ok(file) = writer.into_inner() {
+                    file.set_modified(modified).ok();
+                }
+            }
+        }
     }
 }
 

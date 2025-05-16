@@ -144,6 +144,7 @@ pub async fn restore_backup(
                             Arc::clone(&server.filesystem),
                             destination_path,
                             Some(file.mode.into()),
+                            Some(file.mtime),
                         )
                         .unwrap();
 

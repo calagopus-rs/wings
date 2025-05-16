@@ -138,6 +138,10 @@ pub async fn restore_backup(
                             Arc::clone(&filesystem),
                             destination_path,
                             Some(Permissions::from_mode(header.mode().unwrap_or(0o644))),
+                            header
+                                .mtime()
+                                .map(|t| std::time::UNIX_EPOCH + std::time::Duration::from_secs(t))
+                                .ok(),
                         )
                         .unwrap();
 
