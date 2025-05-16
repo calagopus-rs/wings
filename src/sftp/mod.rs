@@ -133,12 +133,10 @@ impl russh_sftp::server::Handler for SftpSession {
 
     #[inline]
     async fn realpath(&mut self, id: u32, path: String) -> Result<Name, Self::Error> {
-        if let Some(path) = self
-            .server
-            .filesystem
-            .safe_path(&path)
-            .and_then(|p| self.server.filesystem.relative_path(&p))
-        {
+        if let Some(Ok(path)) = self.server.filesystem.safe_path(&path).map(|p| {
+            p.strip_prefix(&self.server.filesystem.base_path)
+                .map(|p| p.to_path_buf())
+        }) {
             Ok(Name {
                 id,
                 files: vec![File::dummy(format!("/{}", path.display()))],
