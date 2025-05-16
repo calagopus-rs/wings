@@ -8,7 +8,7 @@ pub mod client;
 pub mod jwt;
 pub mod servers;
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Default)]
 pub struct Pagination {
     current_page: usize,
     from: usize,

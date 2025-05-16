@@ -23,9 +23,10 @@ pub async fn get_servers_paged(
         .send()
         .await?
         .json()
-        .await?;
+        .await
+        .unwrap_or_default();
 
-    #[derive(Deserialize)]
+    #[derive(Deserialize, Default)]
     struct Response {
         data: Vec<RawServer>,
         meta: super::Pagination,
