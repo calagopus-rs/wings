@@ -112,7 +112,7 @@ impl Server {
             let mut prev_usage = resources::ResourceUsage::default();
 
             loop {
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
 
                 let mut container_channel = match server.container.read().await.as_ref() {
                     Some(container) => match container.update_reciever.lock().await.take() {
@@ -126,7 +126,7 @@ impl Server {
                     let (container_state, usage) = match container_channel.recv().await {
                         Some((container_state, usage)) => (container_state, usage),
                         None => {
-                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
                             break;
                         }
                     };
@@ -712,7 +712,6 @@ impl Server {
 
     pub async fn kill(&self, client: &bollard::Docker) -> Result<(), bollard::errors::Error> {
         if self.state.get_state() == state::ServerState::Offline {
-            self.log_daemon_error("server is already offline").await;
             return Ok(());
         }
 
