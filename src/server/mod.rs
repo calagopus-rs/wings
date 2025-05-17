@@ -105,16 +105,17 @@ impl Server {
             let mut prev_usage = resources::ResourceUsage::default();
 
             loop {
-                let container_channel = server.container.read().await;
-                let mut container_channel = match container_channel.as_ref() {
-                    Some(container) => container.update_reciever.lock().await,
-                    None => {
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                        continue;
-                    }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+                let mut container_channel = match server.container.read().await.as_ref() {
+                    Some(container) => match container.update_reciever.lock().await.take() {
+                        Some(channel) => channel,
+                        None => continue,
+                    },
+                    None => continue,
                 };
 
-                loop {
+                'main: loop {
                     let (container_state, usage) = match container_channel.recv().await {
                         Some((container_state, usage)) => (container_state, usage),
                         None => {
@@ -278,6 +279,8 @@ impl Server {
                                         );
                                     }
                                 }
+
+                                break 'main;
                             }
                             _ => {}
                         }

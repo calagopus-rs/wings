@@ -10,10 +10,12 @@ pub struct Container {
     pub docker_id: String,
 
     pub update_reciever: Mutex<
-        tokio::sync::mpsc::Receiver<(
-            bollard::models::ContainerState,
-            crate::server::resources::ResourceUsage,
-        )>,
+        Option<
+            tokio::sync::mpsc::Receiver<(
+                bollard::models::ContainerState,
+                crate::server::resources::ResourceUsage,
+            )>,
+        >,
     >,
 
     state_reciever: tokio::task::JoinHandle<()>,
@@ -61,7 +63,7 @@ impl Container {
         Ok(Self {
             docker_id: docker_id.clone(),
 
-            update_reciever: Mutex::new(update_reciever),
+            update_reciever: Mutex::new(Some(update_reciever)),
 
             state_reciever: tokio::spawn({
                 let docker_id = docker_id.clone();
