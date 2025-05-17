@@ -62,7 +62,7 @@ mod post {
         let mut server_data = state.config.client.server(data.uuid).await.unwrap();
         server_data.settings.start_on_completion = Some(data.start_on_completion);
 
-        state.server_manager.create_server(server_data).await;
+        state.server_manager.create_server(server_data, true).await;
 
         (
             StatusCode::OK,

@@ -19,6 +19,7 @@ pub mod manager;
 pub mod permissions;
 pub mod resources;
 pub mod state;
+pub mod transfer;
 pub mod websocket;
 
 pub struct Server {
@@ -37,10 +38,13 @@ pub struct Server {
     pub activity: activity::ActivityManager,
 
     pub state: Arc<state::ServerStateLock>,
+    pub outgoing_transfer: RwLock<Option<transfer::OutgoingServerTransfer>>,
+    pub incoming_transfer: RwLock<Option<tokio::task::JoinHandle<()>>>,
+
     suspended: AtomicBool,
     installing: AtomicBool,
     restoring: AtomicBool,
-    transferring: AtomicBool,
+    pub transferring: AtomicBool,
 
     restarting: AtomicBool,
     stopping: AtomicBool,
@@ -86,6 +90,9 @@ impl Server {
             activity,
 
             state,
+            outgoing_transfer: RwLock::new(None),
+            incoming_transfer: RwLock::new(None),
+
             suspended: AtomicBool::new(false),
             installing: AtomicBool::new(false),
             restoring: AtomicBool::new(false),

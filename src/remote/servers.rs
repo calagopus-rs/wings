@@ -80,3 +80,22 @@ pub async fn set_server_install(
 
     Ok(())
 }
+
+pub async fn set_server_transfer(
+    client: &Client,
+    uuid: uuid::Uuid,
+    successful: bool,
+) -> Result<(), reqwest::Error> {
+    client
+        .client
+        .post(format!(
+            "{}/servers/{}/transfer/{}",
+            client.url,
+            uuid,
+            if successful { "success" } else { "failure" }
+        ))
+        .send()
+        .await?;
+
+    Ok(())
+}

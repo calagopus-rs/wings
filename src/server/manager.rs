@@ -105,7 +105,11 @@ impl Manager {
         self.servers.read().await
     }
 
-    pub async fn create_server(&self, raw_server: crate::remote::servers::RawServer) {
+    pub async fn create_server(
+        &self,
+        raw_server: crate::remote::servers::RawServer,
+        install_server: bool,
+    ) -> Arc<Server> {
         let server = Arc::new(Server::new(
             raw_server.settings,
             raw_server.process_configuration,
@@ -117,36 +121,40 @@ impl Manager {
             .setup_websocket_sender(Arc::clone(&server), Arc::clone(&self.client))
             .await;
 
-        tokio::spawn({
-            let server = Arc::clone(&server);
-            let client = Arc::clone(&self.client);
+        if install_server {
+            tokio::spawn({
+                let server = Arc::clone(&server);
+                let client = Arc::clone(&self.client);
 
-            async move {
-                if let Err(err) =
-                    crate::server::installation::install_server(&server, &client, false).await
-                {
-                    crate::logger::log(
-                        crate::logger::LoggerLevel::Error,
-                        format!("Failed to reinstall server: {}", err),
-                    );
-                } else if server
-                    .configuration
-                    .read()
-                    .await
-                    .start_on_completion
-                    .is_some_and(|s| s)
-                {
-                    if let Err(err) = server.start(&client, None).await {
+                async move {
+                    if let Err(err) =
+                        crate::server::installation::install_server(&server, &client, false).await
+                    {
                         crate::logger::log(
                             crate::logger::LoggerLevel::Error,
-                            format!("Failed to start server: {}", err),
+                            format!("Failed to reinstall server: {}", err),
                         );
+                    } else if server
+                        .configuration
+                        .read()
+                        .await
+                        .start_on_completion
+                        .is_some_and(|s| s)
+                    {
+                        if let Err(err) = server.start(&client, None).await {
+                            crate::logger::log(
+                                crate::logger::LoggerLevel::Error,
+                                format!("Failed to start server: {}", err),
+                            );
+                        }
                     }
                 }
-            }
-        });
+            });
+        }
 
-        self.servers.write().await.push(server);
+        self.servers.write().await.push(Arc::clone(&server));
+
+        server
     }
 
     pub async fn delete_server(&self, server: Arc<Server>) {

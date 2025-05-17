@@ -48,12 +48,12 @@ impl Filesystem {
         }
 
         Self {
-            checker: tokio::task::spawn({
+            checker: tokio::task::spawn_blocking({
                 let disk_usage = Arc::clone(&disk_usage);
                 let disk_usage_cached = Arc::clone(&disk_usage_cached);
                 let base_path = base_path.clone();
 
-                async move {
+                move || {
                     loop {
                         crate::logger::log(
                             crate::logger::LoggerLevel::Debug,
@@ -74,22 +74,25 @@ impl Filesystem {
                             };
 
                             if metadata.is_dir() {
-                                for entry in path.read_dir().unwrap().flatten() {
-                                    let path = entry.path();
-                                    let metadata = match path.symlink_metadata() {
-                                        Ok(metadata) => metadata,
-                                        Err(_) => continue,
-                                    };
+                                if let Ok(entries) = path.read_dir() {
+                                    for entry in entries.flatten() {
+                                        let path = entry.path();
+                                        let metadata = match path.symlink_metadata() {
+                                            Ok(metadata) => metadata,
+                                            Err(_) => continue,
+                                        };
 
-                                    let file_name = entry.file_name().to_string_lossy().to_string();
-                                    let mut new_path = relative_path.to_vec();
-                                    new_path.push(file_name);
+                                        let file_name =
+                                            entry.file_name().to_string_lossy().to_string();
+                                        let mut new_path = relative_path.to_vec();
+                                        new_path.push(file_name);
 
-                                    if metadata.is_dir() {
-                                        let size = recursive_size(&path, &new_path, disk_usage);
-                                        disk_usage.update_size(&new_path, size as i64);
-                                    } else {
-                                        total_size += metadata.len();
+                                        if metadata.is_dir() {
+                                            let size = recursive_size(&path, &new_path, disk_usage);
+                                            disk_usage.update_size(&new_path, size as i64);
+                                        } else {
+                                            total_size += metadata.len();
+                                        }
                                     }
                                 }
                             } else {
@@ -118,7 +121,7 @@ impl Filesystem {
                             ),
                         );
 
-                        tokio::time::sleep(tokio::time::Duration::from_secs(check_interval)).await;
+                        std::thread::sleep(std::time::Duration::from_secs(check_interval));
                     }
                 }
             }),
@@ -464,6 +467,7 @@ impl Filesystem {
     }
 
     pub async fn destroy(&self) {
+        self.checker.abort();
         tokio::fs::remove_dir_all(&self.base_path)
             .await
             .unwrap_or(());

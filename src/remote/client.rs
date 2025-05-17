@@ -102,6 +102,14 @@ impl Client {
         super::servers::set_server_install(self, uuid, successful, reinstalled).await
     }
 
+    pub async fn set_server_transfer(
+        &self,
+        uuid: uuid::Uuid,
+        successful: bool,
+    ) -> Result<(), reqwest::Error> {
+        super::servers::set_server_transfer(self, uuid, successful).await
+    }
+
     pub async fn set_backup_status(
         &self,
         uuid: uuid::Uuid,

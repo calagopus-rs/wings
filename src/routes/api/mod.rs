@@ -1,3 +1,4 @@
+use super::{ApiError, GetState, State};
 use axum::{
     body::Body,
     extract::Request,
@@ -7,13 +8,12 @@ use axum::{
 };
 use utoipa_axum::router::OpenApiRouter;
 
-use super::{ApiError, GetState, State};
-
 mod servers;
 mod system;
+mod transfers;
 mod update;
 
-async fn auth(state: GetState, req: Request, next: Next) -> Result<Response<Body>, StatusCode> {
+pub async fn auth(state: GetState, req: Request, next: Next) -> Result<Response<Body>, StatusCode> {
     let key = req
         .headers()
         .get("Authorization")
@@ -50,6 +50,7 @@ pub fn router(state: &State) -> OpenApiRouter<State> {
             update::router(state)
                 .route_layer(axum::middleware::from_fn_with_state(state.clone(), auth)),
         )
+        .nest("/transfers", transfers::router(state))
         .nest(
             "/servers",
             servers::router(state)
