@@ -199,10 +199,10 @@ impl Server {
                                     .stopping
                                     .store(false, std::sync::atomic::Ordering::Relaxed);
 
-                                let client_clone = Arc::clone(&client);
-                                let server_clone = server.clone();
-                                tokio::task::spawn_local(async move {
-                                    if let Err(err) = server_clone.start(&client_clone, None).await {
+                                let client = Arc::clone(&client);
+                                let server = server.clone();
+                                tokio::task::spawn_blocking(move || {
+                                    if let Err(err) = futures::executor::block_on(server.start(&client, None)) {
                                         crate::logger::log(
                                             crate::logger::LoggerLevel::Error,
                                             format!(
@@ -284,13 +284,16 @@ impl Server {
                                         .replace(std::time::Instant::now());
                                 }
 
-                                let client_clone = Arc::clone(&client);
-                                let server_clone = server.clone();
-                                tokio::task::spawn_local(async move {
-                                    if let Err(err) = server_clone.start(&client_clone, None).await {
+                                let client = Arc::clone(&client);
+                                let server = server.clone();
+                                tokio::task::spawn_blocking(move || {
+                                    if let Err(err) = futures::executor::block_on(server.start(&client, None)) {
                                         crate::logger::log(
                                             crate::logger::LoggerLevel::Error,
-                                            format!("Failed to start server after crash: {}", err),
+                                            format!(
+                                                "Failed to start server after crash: {}",
+                                                err
+                                            ),
                                         );
                                     }
                                 });
