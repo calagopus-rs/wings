@@ -105,144 +105,164 @@ impl Server {
             let mut prev_usage = resources::ResourceUsage::default();
 
             loop {
-                let usage = if let Some(container) = server.container.read().await.as_ref() {
-                    *container.resource_usage.read().await
-                } else {
-                    resources::ResourceUsage::default()
+                let container_channel = server.container.read().await;
+                let mut container_channel = match container_channel.as_ref() {
+                    Some(container) => container.update_reciever.lock().await,
+                    None => {
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        continue;
+                    }
                 };
-                let container_state =
-                    if let Some(container) = server.container.read().await.as_ref() {
-                        container.state.read().await.clone()
-                    } else {
-                        bollard::models::ContainerState::default()
+
+                loop {
+                    let (container_state, usage) = match container_channel.recv().await {
+                        Some((container_state, usage)) => (container_state, usage),
+                        None => {
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            break;
+                        }
                     };
 
-                if usage != prev_usage {
-                    let message = websocket::WebsocketMessage::new(
-                        websocket::WebsocketEvent::ServerStats,
-                        &[serde_json::to_string(&usage).unwrap()],
-                    );
-
-                    if let Err(e) = server.websocket.send(message) {
-                        crate::logger::log(
-                            crate::logger::LoggerLevel::Error,
-                            format!("Failed to send message: {}", e),
+                    if usage != prev_usage {
+                        let message = websocket::WebsocketMessage::new(
+                            websocket::WebsocketEvent::ServerStats,
+                            &[serde_json::to_string(&usage).unwrap()],
                         );
+
+                        if let Err(e) = server.websocket.send(message) {
+                            crate::logger::log(
+                                crate::logger::LoggerLevel::Error,
+                                format!("Failed to send message: {}", e),
+                            );
+                        }
+
+                        prev_usage = usage;
                     }
 
-                    prev_usage = usage;
-                }
-
-                if server.filesystem.is_full()
-                    && server.state.get_state() != state::ServerState::Offline
-                    && !server.stopping.load(std::sync::atomic::Ordering::Relaxed)
-                {
-                    server
+                    if server.filesystem.is_full()
+                        && server.state.get_state() != state::ServerState::Offline
+                        && !server.stopping.load(std::sync::atomic::Ordering::Relaxed)
+                    {
+                        server
                         .log_daemon_with_prelude("Server is exceeding the assigned disk space limit, stopping process now.")
                         .await;
 
-                    tokio::spawn({
-                        let client = Arc::clone(&client);
-                        let server = Arc::clone(&server);
+                        tokio::spawn({
+                            let client = Arc::clone(&client);
+                            let server = Arc::clone(&server);
 
-                        async move {
-                            server
-                                .stop_with_kill_timeout(&client, std::time::Duration::from_secs(30))
-                                .await;
-                        }
-                    });
-                }
-
-                if let Some(status) = container_state.status {
-                    match status {
-                        ContainerStateStatusEnum::RUNNING => {
-                            if !matches!(
-                                server.state.get_state(),
-                                state::ServerState::Running
-                                    | state::ServerState::Starting
-                                    | state::ServerState::Stopping,
-                            ) {
-                                server.state.set_state(state::ServerState::Running);
+                            async move {
+                                server
+                                    .stop_with_kill_timeout(
+                                        &client,
+                                        std::time::Duration::from_secs(30),
+                                    )
+                                    .await;
                             }
-                        }
-                        ContainerStateStatusEnum::EMPTY
-                        | ContainerStateStatusEnum::DEAD
-                        | ContainerStateStatusEnum::EXITED => {
-                            server.state.set_state(state::ServerState::Offline);
+                        });
+                    }
 
-                            if server.restarting.load(std::sync::atomic::Ordering::Relaxed) {
-                                server
-                                    .crash_handled
-                                    .store(true, std::sync::atomic::Ordering::Relaxed);
-                                server
-                                    .restarting
-                                    .store(false, std::sync::atomic::Ordering::Relaxed);
-                                server
-                                    .stopping
-                                    .store(false, std::sync::atomic::Ordering::Relaxed);
-
-                                if let Err(err) = server.start(&client, None).await {
-                                    crate::logger::log(
-                                        crate::logger::LoggerLevel::Error,
-                                        format!("Failed to start server after restart: {}", err),
-                                    );
+                    if let Some(status) = container_state.status {
+                        match status {
+                            ContainerStateStatusEnum::RUNNING => {
+                                if !matches!(
+                                    server.state.get_state(),
+                                    state::ServerState::Running
+                                        | state::ServerState::Starting
+                                        | state::ServerState::Stopping,
+                                ) {
+                                    server.state.set_state(state::ServerState::Running);
                                 }
-                            } else if server.stopping.load(std::sync::atomic::Ordering::Relaxed) {
-                                server
-                                    .crash_handled
-                                    .store(true, std::sync::atomic::Ordering::Relaxed);
-                                server
-                                    .stopping
-                                    .store(false, std::sync::atomic::Ordering::Relaxed);
-                            } else if server.config.system.crash_detection.enabled
-                                && !server
-                                    .crash_handled
-                                    .load(std::sync::atomic::Ordering::Relaxed)
-                            {
-                                server
-                                    .crash_handled
-                                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                            }
+                            ContainerStateStatusEnum::EMPTY
+                            | ContainerStateStatusEnum::DEAD
+                            | ContainerStateStatusEnum::EXITED => {
+                                server.state.set_state(state::ServerState::Offline);
 
-                                if container_state.exit_code.is_some_and(|code| code == 0)
-                                    && !container_state.oom_killed.unwrap_or(false)
-                                    && !server
-                                        .config
-                                        .system
-                                        .crash_detection
-                                        .detect_clean_exit_as_crash
+                                if server.restarting.load(std::sync::atomic::Ordering::Relaxed) {
+                                    server
+                                        .crash_handled
+                                        .store(true, std::sync::atomic::Ordering::Relaxed);
+                                    server
+                                        .restarting
+                                        .store(false, std::sync::atomic::Ordering::Relaxed);
+                                    server
+                                        .stopping
+                                        .store(false, std::sync::atomic::Ordering::Relaxed);
+
+                                    if let Err(err) = server.start(&client, None).await {
+                                        crate::logger::log(
+                                            crate::logger::LoggerLevel::Error,
+                                            format!(
+                                                "Failed to start server after restart: {}",
+                                                err
+                                            ),
+                                        );
+                                    }
+                                } else if server.stopping.load(std::sync::atomic::Ordering::Relaxed)
                                 {
-                                    crate::logger::log(
+                                    server
+                                        .crash_handled
+                                        .store(true, std::sync::atomic::Ordering::Relaxed);
+                                    server
+                                        .stopping
+                                        .store(false, std::sync::atomic::Ordering::Relaxed);
+                                } else if server.config.system.crash_detection.enabled
+                                    && !server
+                                        .crash_handled
+                                        .load(std::sync::atomic::Ordering::Relaxed)
+                                {
+                                    server
+                                        .crash_handled
+                                        .store(true, std::sync::atomic::Ordering::Relaxed);
+
+                                    if container_state.exit_code.is_some_and(|code| code == 0)
+                                        && !container_state.oom_killed.unwrap_or(false)
+                                        && !server
+                                            .config
+                                            .system
+                                            .crash_detection
+                                            .detect_clean_exit_as_crash
+                                    {
+                                        crate::logger::log(
                                         crate::logger::LoggerLevel::Debug,
                                         "Container exited cleanly, not restarting due to crash detection settings".to_string(),
                                     );
-                                    return;
-                                }
+                                        return;
+                                    }
 
-                                server.log_daemon_with_prelude("---------- Detected server process in a crashed state! ----------").await;
-                                server
-                                    .log_daemon_with_prelude(&format!(
-                                        "Exit code: {}",
-                                        container_state.exit_code.unwrap_or_default()
-                                    ))
-                                    .await;
-                                server
-                                    .log_daemon_with_prelude(&format!(
-                                        "Out of memory: {}",
-                                        container_state.oom_killed.unwrap_or(false)
-                                    ))
-                                    .await;
+                                    server.log_daemon_with_prelude("---------- Detected server process in a crashed state! ----------").await;
+                                    server
+                                        .log_daemon_with_prelude(&format!(
+                                            "Exit code: {}",
+                                            container_state.exit_code.unwrap_or_default()
+                                        ))
+                                        .await;
+                                    server
+                                        .log_daemon_with_prelude(&format!(
+                                            "Out of memory: {}",
+                                            container_state.oom_killed.unwrap_or(false)
+                                        ))
+                                        .await;
 
-                                if let Some(last_crash) = *server.last_crash.read().await {
-                                    if last_crash.elapsed().as_secs()
-                                        < server.config.system.crash_detection.timeout
-                                    {
-                                        server.log_daemon_with_prelude(
+                                    if let Some(last_crash) = *server.last_crash.read().await {
+                                        if last_crash.elapsed().as_secs()
+                                            < server.config.system.crash_detection.timeout
+                                        {
+                                            server.log_daemon_with_prelude(
                                             &format!(
                                                 "Aborting automatic restart, last crash occurred less than {} seconds ago.",
                                                 server.config.system.crash_detection.timeout
                                             ),
                                         ).await;
-                                        return;
+                                            return;
+                                        } else {
+                                            server
+                                                .last_crash
+                                                .write()
+                                                .await
+                                                .replace(std::time::Instant::now());
+                                        }
                                     } else {
                                         server
                                             .last_crash
@@ -250,27 +270,19 @@ impl Server {
                                             .await
                                             .replace(std::time::Instant::now());
                                     }
-                                } else {
-                                    server
-                                        .last_crash
-                                        .write()
-                                        .await
-                                        .replace(std::time::Instant::now());
-                                }
 
-                                if let Err(err) = server.start(&client, None).await {
-                                    crate::logger::log(
-                                        crate::logger::LoggerLevel::Error,
-                                        format!("Failed to start server after crash: {}", err),
-                                    );
+                                    if let Err(err) = server.start(&client, None).await {
+                                        crate::logger::log(
+                                            crate::logger::LoggerLevel::Error,
+                                            format!("Failed to start server after crash: {}", err),
+                                        );
+                                    }
                                 }
                             }
+                            _ => {}
                         }
-                        _ => {}
                     }
                 }
-
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             }
         }));
     }
@@ -345,12 +357,6 @@ impl Server {
 
     /// Only use if you are sure that this will not cause any issues.
     pub fn reset_state(&self) {
-        self.installing
-            .store(false, std::sync::atomic::Ordering::Relaxed);
-        self.restoring
-            .store(false, std::sync::atomic::Ordering::Relaxed);
-        self.transferring
-            .store(false, std::sync::atomic::Ordering::Relaxed);
         self.state.set_state(state::ServerState::Offline);
     }
 

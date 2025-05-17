@@ -1,12 +1,21 @@
 use super::configuration::process::ProcessConfigurationStartup;
 use futures_util::StreamExt;
 use std::sync::Arc;
-use tokio::{io::AsyncWriteExt, sync::RwLock};
+use tokio::{
+    io::AsyncWriteExt,
+    sync::{Mutex, RwLock},
+};
 
 pub struct Container {
     pub docker_id: String,
 
-    pub state: Arc<RwLock<bollard::models::ContainerState>>,
+    pub update_reciever: Mutex<
+        tokio::sync::mpsc::Receiver<(
+            bollard::models::ContainerState,
+            crate::server::resources::ResourceUsage,
+        )>,
+    >,
+
     state_reciever: tokio::task::JoinHandle<()>,
 
     pub resource_usage: Arc<RwLock<crate::server::resources::ResourceUsage>>,
@@ -30,7 +39,8 @@ impl Container {
         let (stdin, mut stdin_reciever) = tokio::sync::mpsc::channel(150);
         let (stdout_sender, stdout) = tokio::sync::broadcast::channel(150);
 
-        let state = Arc::new(RwLock::new(bollard::models::ContainerState::default()));
+        let (update_channel, update_reciever) = tokio::sync::mpsc::channel(1);
+
         let resource_usage = Arc::new(RwLock::new(
             crate::server::resources::ResourceUsage::default(),
         ));
@@ -51,27 +61,27 @@ impl Container {
         Ok(Self {
             docker_id: docker_id.clone(),
 
-            state: Arc::clone(&state),
+            update_reciever: Mutex::new(update_reciever),
+
             state_reciever: tokio::spawn({
                 let docker_id = docker_id.clone();
                 let client = Arc::clone(&client);
-                let state = Arc::clone(&state);
                 let resource_usage = Arc::clone(&resource_usage);
-                let parent_state = Arc::clone(&parent_state);
 
                 async move {
                     loop {
-                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
                         let container_state = client
                             .inspect_container(&docker_id, None)
                             .await
                             .unwrap_or_default();
+                        let container_state = container_state.state.unwrap_or_default();
 
-                        *state.write().await = container_state.state.unwrap_or_default();
-
-                        if parent_state.get_state() != super::state::ServerState::Offline {
-                            if let Some(started_at) = &state.read().await.started_at {
+                        if container_state.status
+                            == Some(bollard::secret::ContainerStateStatusEnum::RUNNING)
+                        {
+                            if let Some(started_at) = &container_state.started_at {
                                 if let Ok(started_at) =
                                     chrono::DateTime::parse_from_rfc3339(started_at)
                                 {
@@ -87,6 +97,11 @@ impl Container {
                         } else {
                             resource_usage.write().await.uptime = 0;
                         }
+
+                        update_channel
+                            .send((container_state, *resource_usage.read().await))
+                            .await
+                            .unwrap_or_default();
                     }
                 }
             }),
@@ -104,7 +119,7 @@ impl Container {
                         let mut prev_cpu = (0, 0);
 
                         while let Some(Ok(stats)) = stats_stream.next().await {
-                            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
                             let mut usage = resource_usage.write().await;
 

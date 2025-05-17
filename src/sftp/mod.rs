@@ -634,7 +634,7 @@ impl russh_sftp::server::Handler for SftpSession {
         let handle = self.next_handle_id();
 
         if let Some(path) = self.server.filesystem.safe_path(&filename) {
-            if !path.is_file() {
+            if path.exists() && !path.is_file() {
                 return Err(StatusCode::NoSuchFile);
             }
 

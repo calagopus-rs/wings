@@ -129,7 +129,7 @@ mod get {
                 .flatten()
             {
                 let path = entry.path().strip_prefix(&path).unwrap_or(entry.path());
-                if path.display().to_string().len() == 0 {
+                if path.display().to_string().is_empty() {
                     continue;
                 }
 
@@ -142,7 +142,7 @@ mod get {
 
                 if server
                     .filesystem
-                    .is_ignored(&entry.path(), metadata.is_dir())
+                    .is_ignored(entry.path(), metadata.is_dir())
                 {
                     continue;
                 }
@@ -154,7 +154,7 @@ mod get {
                     entry_header.set_entry_type(tar::EntryType::Directory);
 
                     if tar
-                        .append_data(&mut entry_header, &path, std::io::empty())
+                        .append_data(&mut entry_header, path, std::io::empty())
                         .is_err()
                     {
                         break;
@@ -168,7 +168,7 @@ mod get {
 
                     let file = File::open(entry.path()).unwrap();
 
-                    if tar.append_data(&mut entry_header, &path, file).is_err() {
+                    if tar.append_data(&mut entry_header, path, file).is_err() {
                         break;
                     }
                 } else {
@@ -178,7 +178,7 @@ mod get {
                     entry_header.set_entry_type(tar::EntryType::Symlink);
 
                     if tar
-                        .append_link(&mut entry_header, &path, entry.path())
+                        .append_link(&mut entry_header, path, entry.path())
                         .is_err()
                     {
                         break;
