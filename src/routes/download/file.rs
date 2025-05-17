@@ -99,14 +99,26 @@ mod get {
             }
         };
 
-        let metadata = path.symlink_metadata().unwrap();
-        if !metadata.is_file() {
-            return (
-                StatusCode::NOT_FOUND,
-                HeaderMap::new(),
-                Body::from("File not found"),
-            );
-        }
+        let metadata = match tokio::fs::symlink_metadata(&path).await {
+            Ok(metadata) => {
+                if !metadata.is_file() || server.filesystem.is_ignored(&path, metadata.is_dir()) {
+                    return (
+                        StatusCode::NOT_FOUND,
+                        HeaderMap::new(),
+                        Body::from("File not found"),
+                    );
+                } else {
+                    metadata
+                }
+            }
+            Err(_) => {
+                return (
+                    StatusCode::NOT_FOUND,
+                    HeaderMap::new(),
+                    Body::from("File not found"),
+                );
+            }
+        };
 
         let file = match File::open(&path).await {
             Ok(file) => file,
@@ -119,19 +131,8 @@ mod get {
             }
         };
 
-        let size = match file.metadata().await {
-            Ok(metadata) => metadata.len(),
-            Err(_) => {
-                return (
-                    StatusCode::EXPECTATION_FAILED,
-                    HeaderMap::new(),
-                    Body::from("Unable to retrieve file size"),
-                );
-            }
-        };
-
         let mut headers = HeaderMap::new();
-        headers.insert("Content-Length", size.into());
+        headers.insert("Content-Length", metadata.len().into());
         headers.insert(
             "Content-Disposition",
             format!(

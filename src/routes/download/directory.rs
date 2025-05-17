@@ -8,11 +8,9 @@ mod get {
         extract::Query,
         http::{HeaderMap, StatusCode},
     };
+    use ignore::WalkBuilder;
     use serde::Deserialize;
-    use std::{
-        fs::{DirEntry, File},
-        os::unix::fs::MetadataExt,
-    };
+    use std::{fs::File, os::unix::fs::MetadataExt};
     use utoipa::ToSchema;
 
     #[derive(ToSchema, Deserialize)]
@@ -102,8 +100,8 @@ mod get {
             }
         };
 
-        let metadata = path.symlink_metadata().unwrap();
-        if !metadata.is_dir() {
+        let metadata = tokio::fs::symlink_metadata(&path).await;
+        if !metadata.is_ok_and(|m| m.is_dir() && !server.filesystem.is_ignored(&path, m.is_dir())) {
             return (
                 StatusCode::NOT_FOUND,
                 HeaderMap::new(),
@@ -121,18 +119,74 @@ mod get {
             let mut tar = tar::Builder::new(writer);
             tar.mode(tar::HeaderMode::Complete);
 
-            let exit_early = &mut false;
-            for entry in std::fs::read_dir(path).unwrap().flatten() {
-                if *exit_early {
-                    break;
+            for entry in WalkBuilder::new(&path)
+                .hidden(false)
+                .git_ignore(false)
+                .ignore(false)
+                .git_exclude(false)
+                .follow_links(false)
+                .build()
+                .flatten()
+            {
+                let path = entry.path().strip_prefix(&path).unwrap_or(entry.path());
+                if path.display().to_string().len() == 0 {
+                    continue;
                 }
 
-                tar_recursive_convert_entries(entry, exit_early, &mut tar, "");
+                let metadata = match entry.metadata() {
+                    Ok(metadata) => metadata,
+                    Err(_) => {
+                        continue;
+                    }
+                };
+
+                if server
+                    .filesystem
+                    .is_ignored(&entry.path(), metadata.is_dir())
+                {
+                    continue;
+                }
+
+                if metadata.is_dir() {
+                    let mut entry_header = tar::Header::new_gnu();
+                    entry_header.set_mode(metadata.mode());
+                    entry_header.set_mtime(metadata.mtime() as u64);
+                    entry_header.set_entry_type(tar::EntryType::Directory);
+
+                    if tar
+                        .append_data(&mut entry_header, &path, std::io::empty())
+                        .is_err()
+                    {
+                        break;
+                    }
+                } else if metadata.is_file() {
+                    let mut entry_header = tar::Header::new_gnu();
+                    entry_header.set_mode(metadata.mode());
+                    entry_header.set_entry_type(tar::EntryType::Regular);
+                    entry_header.set_mtime(metadata.mtime() as u64);
+                    entry_header.set_size(metadata.len());
+
+                    let file = File::open(entry.path()).unwrap();
+
+                    if tar.append_data(&mut entry_header, &path, file).is_err() {
+                        break;
+                    }
+                } else {
+                    let mut entry_header = tar::Header::new_gnu();
+                    entry_header.set_mode(metadata.mode());
+                    entry_header.set_mtime(metadata.mtime() as u64);
+                    entry_header.set_entry_type(tar::EntryType::Symlink);
+
+                    if tar
+                        .append_link(&mut entry_header, &path, entry.path())
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
             }
 
-            if !*exit_early {
-                tar.finish().unwrap();
-            }
+            tar.finish().unwrap();
         });
 
         let mut folder_ascii = "".to_string();
@@ -165,86 +219,6 @@ mod get {
                 tokio::io::BufReader::new(reader),
             )),
         )
-    }
-
-    fn tar_recursive_convert_entries(
-        entry: DirEntry,
-        exit_early: &mut bool,
-        archive: &mut tar::Builder<
-            flate2::write::GzEncoder<tokio_util::io::SyncIoBridge<tokio::io::DuplexStream>>,
-        >,
-        parent_path: &str,
-    ) {
-        if *exit_early {
-            return;
-        }
-
-        let metadata = entry.metadata().unwrap();
-        if metadata.is_dir() {
-            let path = if parent_path.is_empty() {
-                entry.file_name().to_string_lossy().to_string()
-            } else {
-                format!("{}/{}", parent_path, entry.file_name().to_string_lossy())
-            };
-
-            let mut entry_header = tar::Header::new_gnu();
-            entry_header.set_mode(metadata.mode());
-            entry_header.set_mtime(metadata.mtime() as u64);
-            entry_header.set_entry_type(tar::EntryType::Directory);
-
-            if archive
-                .append_data(&mut entry_header, &path, std::io::empty())
-                .is_err()
-            {
-                *exit_early = true;
-
-                return;
-            }
-
-            for entry in std::fs::read_dir(entry.path()).unwrap().flatten() {
-                tar_recursive_convert_entries(entry, exit_early, archive, &path);
-            }
-        } else if metadata.is_file() {
-            let path = if parent_path.is_empty() {
-                entry.file_name().to_string_lossy().to_string()
-            } else {
-                format!("{}/{}", parent_path, entry.file_name().to_string_lossy())
-            };
-
-            let mut entry_header = tar::Header::new_gnu();
-            entry_header.set_mode(metadata.mode());
-            entry_header.set_entry_type(tar::EntryType::Regular);
-            entry_header.set_mtime(metadata.mtime() as u64);
-            entry_header.set_size(metadata.len());
-
-            let file = File::open(entry.path()).unwrap();
-
-            if archive.append_data(&mut entry_header, &path, file).is_err() {
-                *exit_early = true;
-
-                return;
-            }
-        } else {
-            let path = if parent_path.is_empty() {
-                entry.file_name().to_string_lossy().to_string()
-            } else {
-                format!("{}/{}", parent_path, entry.file_name().to_string_lossy())
-            };
-
-            let mut entry_header = tar::Header::new_gnu();
-            entry_header.set_mode(metadata.mode());
-            entry_header.set_mtime(metadata.mtime() as u64);
-            entry_header.set_entry_type(tar::EntryType::Symlink);
-
-            if archive
-                .append_link(&mut entry_header, &path, entry.path())
-                .is_err()
-            {
-                *exit_early = true;
-
-                return;
-            }
-        }
     }
 }
 
