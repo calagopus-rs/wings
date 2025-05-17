@@ -65,7 +65,7 @@ mod post {
             let results = Arc::clone(&results);
 
             move || {
-                WalkBuilder::new(root)
+                WalkBuilder::new(&root)
                     .hidden(false)
                     .git_ignore(false)
                     .ignore(false)
@@ -76,6 +76,7 @@ mod post {
                         let server = Arc::clone(&server);
                         let results = Arc::clone(&results);
                         let query = data.query.clone();
+                        let root = root.clone();
 
                         Box::new(move |entry| {
                             let entry = match entry {
@@ -118,9 +119,9 @@ mod post {
                                     &metadata,
                                     Some(&buffer[..bytes_read]),
                                 );
-                                entry.name = match server.filesystem.relative_path(path) {
-                                    Some(path) => path.to_string_lossy().to_string(),
-                                    None => return WalkState::Continue,
+                                entry.name = match path.strip_prefix(&root) {
+                                    Ok(path) => path.to_string_lossy().to_string(),
+                                    Err(_) => return WalkState::Continue,
                                 };
 
                                 results.push(entry);
@@ -157,9 +158,9 @@ mod post {
                                             &metadata,
                                             Some(&buffer[..bytes_read]),
                                         );
-                                        entry.name = match server.filesystem.relative_path(path) {
-                                            Some(path) => path.to_string_lossy().to_string(),
-                                            None => return WalkState::Continue,
+                                        entry.name = match path.strip_prefix(&root) {
+                                            Ok(path) => path.to_string_lossy().to_string(),
+                                            Err(_) => return WalkState::Continue,
                                         };
 
                                         results.push(entry);
