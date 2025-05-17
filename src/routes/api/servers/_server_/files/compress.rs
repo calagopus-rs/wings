@@ -86,6 +86,13 @@ mod post {
                     };
 
                     let source_metadata = source.symlink_metadata().unwrap();
+                    if server
+                        .filesystem
+                        .is_ignored(&source, source_metadata.is_dir())
+                    {
+                        continue;
+                    }
+
                     if source_metadata.is_dir() {
                         archive.append_dir_all(relative, &source).unwrap();
                     } else {

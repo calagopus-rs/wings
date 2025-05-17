@@ -53,8 +53,9 @@ mod get {
             }
         };
 
-        let metadata = path.symlink_metadata();
-        if !metadata.is_ok_and(|m| m.is_file()) {
+        let metadata = tokio::fs::symlink_metadata(&path).await;
+        if !metadata.is_ok_and(|m| m.is_file() && !server.filesystem.is_ignored(&path, m.is_dir()))
+        {
             return (
                 StatusCode::NOT_FOUND,
                 HeaderMap::from_iter([(

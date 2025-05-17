@@ -68,7 +68,15 @@ mod put {
                 continue;
             }
 
-            if !from.exists() || to.exists() {
+            let from_metadata = match tokio::fs::symlink_metadata(&from).await {
+                Ok(metadata) => metadata,
+                Err(_) => continue,
+            };
+
+            if to.exists()
+                || server.filesystem.is_ignored(&from, from_metadata.is_dir())
+                || server.filesystem.is_ignored(&to, from_metadata.is_dir())
+            {
                 continue;
             }
 

@@ -41,6 +41,14 @@ pub async fn create_backup(
         }
     }
 
+    for file in &server.configuration.read().await.egg.file_denylist {
+        if let Some(file) = file.strip_prefix('!') {
+            override_builder.add(file).ok();
+        } else {
+            override_builder.add(&format!("!{}", file)).ok();
+        }
+    }
+
     if let Some(pteroignore) = server.filesystem.get_pteroignore().await {
         for line in pteroignore.lines() {
             if line.trim().is_empty() {

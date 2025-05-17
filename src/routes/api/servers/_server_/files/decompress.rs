@@ -46,9 +46,29 @@ mod post {
             );
         }
 
+        let source = root.join(data.file);
+        if !server.filesystem.is_safe_path(&source) {
+            return (
+                StatusCode::NOT_FOUND,
+                axum::Json(ApiError::new("file not found").to_json()),
+            );
+        }
+
+        if server.filesystem.is_ignored(
+            &source,
+            tokio::fs::symlink_metadata(&source)
+                .await
+                .is_ok_and(|m| m.is_dir()),
+        ) {
+            return (
+                StatusCode::NOT_FOUND,
+                axum::Json(ApiError::new("file not found").to_json()),
+            );
+        }
+
         let mut archive = match crate::server::filesystem::archive::Archive::open(
             Arc::clone(&server.filesystem),
-            root.join(data.file),
+            source,
         )
         .await
         {

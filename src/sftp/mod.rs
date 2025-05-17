@@ -166,6 +166,10 @@ impl russh_sftp::server::Handler for SftpSession {
                 return Err(StatusCode::NoSuchFile);
             }
 
+            if self.server.filesystem.is_ignored(&path, false) {
+                return Err(StatusCode::NoSuchFile);
+            }
+
             let path_components = self.server.filesystem.path_to_components(&path);
 
             self.handles.insert(
@@ -204,10 +208,16 @@ impl russh_sftp::server::Handler for SftpSession {
         let mut read_dir = tokio::fs::read_dir(&handle.path).await.unwrap();
         while let Ok(Some(file)) = read_dir.next_entry().await {
             let path = file.path();
+            let metadata = match tokio::fs::symlink_metadata(&path).await {
+                Ok(metadata) => metadata,
+                Err(_) => continue,
+            };
 
-            files.push(
-                Self::convert_entry(&path, tokio::fs::symlink_metadata(&path).await.unwrap()).await,
-            );
+            if self.server.filesystem.is_ignored(&path, metadata.is_dir()) {
+                continue;
+            }
+
+            files.push(Self::convert_entry(&path, metadata).await);
         }
 
         handle.consumed = 1;
@@ -235,6 +245,14 @@ impl russh_sftp::server::Handler for SftpSession {
             };
 
             if let Ok(metadata) = tokio::fs::symlink_metadata(&path).await {
+                if !metadata.is_file() {
+                    return Err(StatusCode::NoSuchFile);
+                }
+
+                if self.server.filesystem.is_ignored(&path, metadata.is_dir()) {
+                    return Err(StatusCode::NoSuchFile);
+                }
+
                 if tokio::fs::remove_file(&path).await.is_err() {
                     return Err(StatusCode::NoSuchFile);
                 }
@@ -281,6 +299,14 @@ impl russh_sftp::server::Handler for SftpSession {
         }
 
         if let Some(path) = self.server.filesystem.safe_path(&path) {
+            if !path.is_dir() {
+                return Err(StatusCode::NoSuchFile);
+            }
+
+            if self.server.filesystem.is_ignored(&path, true) {
+                return Err(StatusCode::NoSuchFile);
+            }
+
             if path != self.server.filesystem.base_path
                 && tokio::fs::remove_dir(&path).await.is_err()
             {
@@ -375,8 +401,8 @@ impl russh_sftp::server::Handler for SftpSession {
     async fn rename(
         &mut self,
         id: u32,
-        oldpath: String,
-        newpath: String,
+        old_path: String,
+        new_path: String,
     ) -> Result<Status, Self::Error> {
         if !self.allow_action() {
             return Err(StatusCode::PermissionDenied);
@@ -390,10 +416,24 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
-        if let Some(old_path) = self.server.filesystem.safe_path(&oldpath) {
-            if let Some(new_path) = self.server.filesystem.safe_path(&newpath) {
-                if !old_path.exists() || new_path.exists() {
-                    return Err(StatusCode::Failure);
+        if let Some(old_path) = self.server.filesystem.safe_path(&old_path) {
+            let old_metadata = match tokio::fs::symlink_metadata(&old_path).await {
+                Ok(metadata) => metadata,
+                Err(_) => return Err(StatusCode::NoSuchFile),
+            };
+
+            if let Some(new_path) = self.server.filesystem.safe_path(&new_path) {
+                if new_path.exists()
+                    || self
+                        .server
+                        .filesystem
+                        .is_ignored(&old_path, old_metadata.is_dir())
+                    || self
+                        .server
+                        .filesystem
+                        .is_ignored(&new_path, old_metadata.is_dir())
+                {
+                    return Err(StatusCode::NoSuchFile);
                 }
 
                 if self
@@ -457,25 +497,30 @@ impl russh_sftp::server::Handler for SftpSession {
         }
 
         if let Some(path) = self.server.filesystem.safe_path(&path) {
-            if path.exists() {
-                if let Some(permissions) = attrs.permissions {
-                    let mut permissions = std::fs::Permissions::from_mode(permissions);
-                    permissions.set_mode(permissions.mode() & 0o777);
+            let metadata = match tokio::fs::symlink_metadata(&path).await {
+                Ok(metadata) => metadata,
+                Err(_) => return Err(StatusCode::NoSuchFile),
+            };
 
-                    tokio::fs::set_permissions(&path, permissions)
-                        .await
-                        .unwrap();
-                }
-
-                Ok(Status {
-                    id,
-                    status_code: StatusCode::Ok,
-                    error_message: "Ok".to_string(),
-                    language_tag: "en-US".to_string(),
-                })
-            } else {
-                Err(StatusCode::NoSuchFile)
+            if self.server.filesystem.is_ignored(&path, metadata.is_dir()) {
+                return Err(StatusCode::NoSuchFile);
             }
+
+            if let Some(permissions) = attrs.permissions {
+                let mut permissions = std::fs::Permissions::from_mode(permissions);
+                permissions.set_mode(permissions.mode() & 0o777);
+
+                tokio::fs::set_permissions(&path, permissions)
+                    .await
+                    .unwrap();
+            }
+
+            Ok(Status {
+                id,
+                status_code: StatusCode::Ok,
+                error_message: "Ok".to_string(),
+                language_tag: "en-US".to_string(),
+            })
         } else {
             Err(StatusCode::NoSuchFile)
         }
@@ -510,17 +555,21 @@ impl russh_sftp::server::Handler for SftpSession {
         }
 
         if let Some(path) = self.server.filesystem.safe_path(&path) {
-            if path.exists() {
-                let metadata = tokio::fs::symlink_metadata(&path).await.unwrap();
-                let file = Self::convert_entry(&path, metadata).await;
+            let metadata = match tokio::fs::symlink_metadata(&path).await {
+                Ok(metadata) => metadata,
+                Err(_) => return Err(StatusCode::NoSuchFile),
+            };
 
-                Ok(russh_sftp::protocol::Attrs {
-                    id,
-                    attrs: file.attrs,
-                })
-            } else {
-                Err(StatusCode::NoSuchFile)
+            if self.server.filesystem.is_ignored(&path, metadata.is_dir()) {
+                return Err(StatusCode::NoSuchFile);
             }
+
+            let file = Self::convert_entry(&path, metadata).await;
+
+            Ok(russh_sftp::protocol::Attrs {
+                id,
+                attrs: file.attrs,
+            })
         } else {
             Err(StatusCode::NoSuchFile)
         }
@@ -585,7 +634,11 @@ impl russh_sftp::server::Handler for SftpSession {
         let handle = self.next_handle_id();
 
         if let Some(path) = self.server.filesystem.safe_path(&filename) {
-            if path.exists() && !path.is_file() {
+            if !path.is_file() {
+                return Err(StatusCode::NoSuchFile);
+            }
+
+            if self.server.filesystem.is_ignored(&path, false) {
                 return Err(StatusCode::NoSuchFile);
             }
 

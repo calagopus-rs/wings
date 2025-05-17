@@ -57,8 +57,12 @@ mod get {
                 Some(path) => path,
                 None => continue,
             };
+            let metadata = match tokio::fs::symlink_metadata(&path).await {
+                Ok(metadata) => metadata,
+                Err(_) => continue,
+            };
 
-            if !path.exists() || !path.is_file() {
+            if !metadata.is_file() || server.filesystem.is_ignored(&path, metadata.is_dir()) {
                 continue;
             }
 

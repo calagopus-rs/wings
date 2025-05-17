@@ -61,6 +61,7 @@ impl Server {
             configuration.build.disk_space * 1024 * 1024,
             config.system.disk_check_interval,
             &config,
+            &configuration.egg.file_denylist,
         ));
 
         let (rx, tx) = tokio::sync::broadcast::channel(128);
@@ -232,8 +233,7 @@ impl Server {
                                     .await;
 
                                 if let Some(last_crash) = *server.last_crash.read().await {
-                                    if chrono::Utc::now().timestamp() as u64
-                                        - last_crash.elapsed().as_secs()
+                                    if last_crash.elapsed().as_secs()
                                         < server.config.system.crash_detection.timeout
                                     {
                                         server.log_daemon_with_prelude(
@@ -308,6 +308,8 @@ impl Server {
         process_configuration: configuration::process::ProcessConfiguration,
         client: &Arc<bollard::Docker>,
     ) {
+        self.filesystem
+            .update_ignored(&configuration.egg.file_denylist);
         *self.configuration.write().await = configuration;
         *self.process_configuration.write().await = process_configuration;
 

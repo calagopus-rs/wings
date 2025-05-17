@@ -75,6 +75,10 @@ impl Download {
             return Err("Unsafe path generated".into());
         }
 
+        if filesystem.is_ignored(&real_destination, false) {
+            return Err("File is ignored".into());
+        }
+
         Ok(Self {
             identifier: uuid::Uuid::new_v4(),
             progress: Arc::new(AtomicU64::new(0)),

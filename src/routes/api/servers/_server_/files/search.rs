@@ -89,6 +89,10 @@ mod post {
                                 Err(_) => return WalkState::Continue,
                             };
 
+                            if server.filesystem.is_ignored(path, metadata.is_dir()) {
+                                return WalkState::Continue;
+                            }
+
                             if !metadata.is_file() || metadata.len() > max_size {
                                 return WalkState::Continue;
                             }

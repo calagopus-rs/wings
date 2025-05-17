@@ -23,6 +23,7 @@ pub struct Filesystem {
     pub disk_limit: AtomicI64,
     pub disk_usage_cached: Arc<AtomicU64>,
     pub disk_usage: Arc<RwLock<usage::DiskUsage>>,
+    pub disk_ignored: Arc<RwLock<ignore::overrides::Override>>,
 
     pub owner_uid: u32,
     pub owner_gid: u32,
@@ -36,9 +37,15 @@ impl Filesystem {
         disk_limit: u64,
         check_interval: u64,
         config: &crate::config::Config,
+        deny_list: &[String],
     ) -> Self {
         let disk_usage = Arc::new(RwLock::new(usage::DiskUsage::new()));
         let disk_usage_cached = Arc::new(AtomicU64::new(0));
+        let mut disk_ignored = ignore::overrides::OverrideBuilder::new(&base_path);
+
+        for entry in deny_list {
+            disk_ignored.add(entry).ok();
+        }
 
         Self {
             checker: tokio::task::spawn({
@@ -120,6 +127,7 @@ impl Filesystem {
             disk_limit: AtomicI64::new(disk_limit as i64),
             disk_usage_cached,
             disk_usage,
+            disk_ignored: Arc::new(RwLock::new(disk_ignored.build().unwrap())),
 
             owner_uid: config.system.user.uid,
             owner_gid: config.system.user.gid,
@@ -128,23 +136,41 @@ impl Filesystem {
         }
     }
 
+    pub fn update_ignored(&self, deny_list: &[String]) {
+        let mut disk_ignored = ignore::overrides::OverrideBuilder::new(&self.base_path);
+        for entry in deny_list {
+            disk_ignored.add(entry).ok();
+        }
+
+        *self.disk_ignored.write().unwrap() = disk_ignored.build().unwrap();
+    }
+
+    pub fn is_ignored(&self, path: &Path, is_dir: bool) -> bool {
+        self.disk_ignored
+            .read()
+            .unwrap()
+            .matched(path, is_dir)
+            .invert()
+            .is_ignore()
+    }
+
     pub fn pulls(&self) -> RwLockReadGuard<'_, HashMap<uuid::Uuid, Arc<RwLock<pull::Download>>>> {
-        let mut pulls = self.pulls.write().unwrap();
-        for key in pulls.keys().cloned().collect::<Vec<_>>() {
-            if let Some(download) = pulls.get(&key) {
-                if download
-                    .read()
-                    .unwrap()
-                    .task
-                    .as_ref()
-                    .map(|t| t.is_finished())
-                    .unwrap_or(true)
-                {
-                    pulls.remove(&key);
+        if let Ok(mut pulls) = self.pulls.try_write() {
+            for key in pulls.keys().cloned().collect::<Vec<_>>() {
+                if let Some(download) = pulls.get(&key) {
+                    if download
+                        .read()
+                        .unwrap()
+                        .task
+                        .as_ref()
+                        .map(|t| t.is_finished())
+                        .unwrap_or(true)
+                    {
+                        pulls.remove(&key);
+                    }
                 }
             }
         }
-        drop(pulls);
 
         self.pulls.read().unwrap()
     }

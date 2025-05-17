@@ -49,6 +49,16 @@ mod post {
             .unwrap_or(0);
         let metadata = path.symlink_metadata().ok();
 
+        if server.filesystem.is_ignored(
+            &path,
+            metadata.as_ref().map(|m| m.is_dir()).unwrap_or(false),
+        ) {
+            return (
+                StatusCode::NOT_FOUND,
+                axum::Json(ApiError::new("file not found").to_json()),
+            );
+        }
+
         let old_content_size = if let Some(metadata) = metadata {
             if !metadata.is_file() {
                 return (

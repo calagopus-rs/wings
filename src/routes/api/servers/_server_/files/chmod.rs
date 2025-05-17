@@ -58,8 +58,17 @@ mod post {
         let mut updated_count = 0;
         for file in data.files {
             let source = root.join(file.file);
-
             if !server.filesystem.is_safe_path(&source) {
+                continue;
+            }
+            let metadata = match tokio::fs::symlink_metadata(&source).await {
+                Ok(metadata) => metadata,
+                Err(_) => {
+                    continue;
+                }
+            };
+
+            if server.filesystem.is_ignored(&source, metadata.is_dir()) {
                 continue;
             }
 
@@ -70,11 +79,12 @@ mod post {
                 }
             };
 
-            tokio::fs::set_permissions(&source, Permissions::from_mode(mode))
+            if tokio::fs::set_permissions(&source, Permissions::from_mode(mode))
                 .await
-                .unwrap();
-
-            updated_count += 1;
+                .is_ok()
+            {
+                updated_count += 1;
+            }
         }
 
         (

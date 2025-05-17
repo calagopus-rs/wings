@@ -48,12 +48,19 @@ mod get {
 
         let mut directory = tokio::fs::read_dir(path).await.unwrap();
         while let Ok(Some(entry)) = directory.next_entry().await {
-            entries.push(
-                server
-                    .filesystem
-                    .to_api_entry(entry.path(), entry.metadata().await.unwrap())
-                    .await,
-            );
+            let metadata = match entry.metadata().await {
+                Ok(metadata) => metadata,
+                Err(_) => continue,
+            };
+
+            if server
+                .filesystem
+                .is_ignored(&entry.path(), metadata.is_dir())
+            {
+                continue;
+            }
+
+            entries.push(server.filesystem.to_api_entry(entry.path(), metadata).await);
         }
 
         entries.sort_by(|a, b| {

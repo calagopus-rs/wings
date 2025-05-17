@@ -32,13 +32,25 @@ mod post {
             }
         };
 
-        let metadata = location.symlink_metadata().unwrap();
-        if !metadata.is_file() {
-            return (
-                StatusCode::EXPECTATION_FAILED,
-                axum::Json(ApiError::new("location is not a file").to_json()),
-            );
-        }
+        let metadata = match tokio::fs::symlink_metadata(&location).await {
+            Ok(metadata) => {
+                if !metadata.is_file() || server.filesystem.is_ignored(&location, metadata.is_dir())
+                {
+                    return (
+                        StatusCode::NOT_FOUND,
+                        axum::Json(ApiError::new("file not found").to_json()),
+                    );
+                } else {
+                    metadata
+                }
+            }
+            Err(_) => {
+                return (
+                    StatusCode::NOT_FOUND,
+                    axum::Json(ApiError::new("file not found").to_json()),
+                );
+            }
+        };
 
         if !server
             .filesystem

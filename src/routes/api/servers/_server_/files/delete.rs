@@ -50,8 +50,16 @@ mod post {
         let mut deleted_count = 0;
         for file in data.files {
             let destination = root.join(file);
-
             if !server.filesystem.is_safe_path(&destination) || destination == root {
+                continue;
+            }
+
+            if server.filesystem.is_ignored(
+                &destination,
+                tokio::fs::symlink_metadata(&destination)
+                    .await
+                    .is_ok_and(|m| m.is_dir()),
+            ) {
                 continue;
             }
 
