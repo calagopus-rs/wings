@@ -184,7 +184,7 @@ async fn cleanup_container(
 }
 
 pub async fn install_server(
-    server: &Arc<super::Server>,
+    server: &super::Server,
     client: &Arc<bollard::Docker>,
     reinstall: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {

@@ -6,20 +6,20 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 pub struct OutgoingServerTransfer {
     pub bytes_sent: Arc<AtomicU64>,
 
-    server: Arc<super::Server>,
+    server: super::Server,
     task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl OutgoingServerTransfer {
-    pub fn new(server: &Arc<super::Server>) -> Self {
+    pub fn new(server: &super::Server) -> Self {
         Self {
             bytes_sent: Arc::new(AtomicU64::new(0)),
-            server: Arc::clone(server),
+            server: server.clone(),
             task: None,
         }
     }
 
-    fn log(server: &Arc<super::Server>, message: &str) {
+    fn log(server: &super::Server, message: &str) {
         server
             .websocket
             .send(super::websocket::WebsocketMessage::new(
@@ -38,7 +38,7 @@ impl OutgoingServerTransfer {
             .ok();
     }
 
-    async fn transfer_failure(server: &Arc<super::Server>) {
+    async fn transfer_failure(server: &super::Server) {
         server
             .config
             .client
@@ -66,8 +66,8 @@ impl OutgoingServerTransfer {
         token: String,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let client = Arc::clone(client);
-        let server = Arc::clone(&self.server);
         let bytes_sent = Arc::clone(&self.bytes_sent);
+        let server = self.server.clone();
 
         self.task.replace(tokio::spawn(async move {
             if server.state.get_state() != super::state::ServerState::Offline {
@@ -131,7 +131,7 @@ impl OutgoingServerTransfer {
             });
 
             let progress_task = tokio::task::spawn({
-                let server = Arc::clone(&server);
+                let server = server.clone();
 
                 async move {
                     loop {

@@ -6,7 +6,6 @@ use axum::{
     http::{Response, StatusCode},
     middleware::Next,
 };
-use std::sync::Arc;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod backup;
@@ -20,7 +19,7 @@ mod transfer;
 mod version;
 mod ws;
 
-pub type GetServer = axum::extract::Extension<Arc<crate::server::Server>>;
+pub type GetServer = axum::extract::Extension<crate::server::Server>;
 
 async fn auth(
     state: GetState,
@@ -58,8 +57,9 @@ async fn auth(
         .await
         .iter()
         .find(|s| s.uuid == uuid)
+        .cloned()
     {
-        Some(server) => Arc::clone(server),
+        Some(server) => server,
         None => {
             return Ok(Response::builder()
                 .status(StatusCode::NOT_FOUND)
@@ -99,7 +99,7 @@ mod delete {
         (status = OK, body = inline(Response)),
     ))]
     pub async fn route(state: GetState, server: GetServer) -> axum::Json<serde_json::Value> {
-        state.server_manager.delete_server(server.0).await;
+        state.server_manager.delete_server(&server).await;
 
         axum::Json(serde_json::to_value(&Response {}).unwrap())
     }

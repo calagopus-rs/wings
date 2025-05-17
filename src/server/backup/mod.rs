@@ -23,7 +23,7 @@ pub enum BackupAdapter {
 
 pub async fn create_backup(
     adapter: BackupAdapter,
-    server: &Arc<crate::server::Server>,
+    server: &crate::server::Server,
     uuid: uuid::Uuid,
     ignore: String,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -110,7 +110,7 @@ pub async fn create_backup(
 pub async fn restore_backup(
     adapter: BackupAdapter,
     client: &Arc<bollard::Docker>,
-    server: &Arc<crate::server::Server>,
+    server: &crate::server::Server,
     uuid: uuid::Uuid,
     truncate_directory: bool,
     download_url: Option<String>,
@@ -176,7 +176,7 @@ pub async fn restore_backup(
 
 pub async fn download_backup(
     adapter: BackupAdapter,
-    server: &Arc<crate::server::Server>,
+    server: &crate::server::Server,
     uuid: uuid::Uuid,
 ) -> Result<(StatusCode, HeaderMap, Body), Box<dyn std::error::Error + Send + Sync>> {
     match adapter {
@@ -188,7 +188,7 @@ pub async fn download_backup(
 
 pub async fn delete_backup(
     adapter: BackupAdapter,
-    server: &Arc<crate::server::Server>,
+    server: &crate::server::Server,
     uuid: uuid::Uuid,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     match adapter {
@@ -200,7 +200,7 @@ pub async fn delete_backup(
 
 pub async fn list_backups(
     adapter: BackupAdapter,
-    server: &Arc<crate::server::Server>,
+    server: &crate::server::Server,
 ) -> Result<Vec<uuid::Uuid>, Box<dyn std::error::Error + Send + Sync>> {
     match adapter {
         BackupAdapter::Wings => wings::list_backups(server).await,

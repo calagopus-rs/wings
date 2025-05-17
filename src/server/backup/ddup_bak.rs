@@ -38,7 +38,7 @@ async fn get_repository(server: &crate::server::Server) -> Arc<ddup_bak::reposit
 }
 
 pub async fn create_backup(
-    server: &Arc<crate::server::Server>,
+    server: &crate::server::Server,
     uuid: uuid::Uuid,
     overrides: ignore::overrides::Override,
 ) -> Result<RawServerBackup, Box<dyn std::error::Error + Send + Sync>> {
@@ -105,12 +105,12 @@ pub async fn create_backup(
 }
 
 pub async fn restore_backup(
-    server: &Arc<crate::server::Server>,
+    server: &crate::server::Server,
     uuid: uuid::Uuid,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let repository = get_repository(server).await;
 
-    let server = Arc::clone(server);
+    let server = server.clone();
     tokio::task::spawn_blocking(
         move || -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             let archive = repository.get_archive(&uuid.to_string())?;
@@ -119,7 +119,7 @@ pub async fn restore_backup(
                 repository: &Arc<ddup_bak::repository::Repository>,
                 entry: Entry,
                 path: &Path,
-                server: &Arc<crate::server::Server>,
+                server: &crate::server::Server,
             ) {
                 let path = path.join(entry.name());
 
@@ -184,7 +184,7 @@ pub async fn restore_backup(
 }
 
 pub async fn download_backup(
-    server: &Arc<crate::server::Server>,
+    server: &crate::server::Server,
     uuid: uuid::Uuid,
 ) -> Result<(StatusCode, HeaderMap, Body), Box<dyn std::error::Error + Send + Sync>> {
     let repository = get_repository(server).await;
@@ -346,7 +346,7 @@ fn tar_recursive_convert_entries(
 }
 
 pub async fn delete_backup(
-    server: &Arc<crate::server::Server>,
+    server: &crate::server::Server,
     uuid: uuid::Uuid,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let repository = get_repository(server).await;
@@ -364,7 +364,7 @@ pub async fn delete_backup(
 }
 
 pub async fn list_backups(
-    server: &Arc<crate::server::Server>,
+    server: &crate::server::Server,
 ) -> Result<Vec<uuid::Uuid>, Box<dyn std::error::Error + Send + Sync>> {
     let repository = get_repository(server).await;
     let mut backups = Vec::new();

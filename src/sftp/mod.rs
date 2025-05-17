@@ -48,7 +48,7 @@ struct FileHandle {
 
 struct SftpSession {
     state: State,
-    server: Arc<crate::server::Server>,
+    server: crate::server::Server,
 
     user_ip: Option<IpAddr>,
     user_uuid: Option<uuid::Uuid>,

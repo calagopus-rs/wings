@@ -4,6 +4,7 @@ use futures_util::StreamExt;
 use serde_json::json;
 use std::{
     collections::HashMap,
+    ops::Deref,
     path::PathBuf,
     sync::{Arc, atomic::AtomicBool},
 };
@@ -22,7 +23,7 @@ pub mod state;
 pub mod transfer;
 pub mod websocket;
 
-pub struct Server {
+pub struct ServerInner {
     pub uuid: uuid::Uuid,
     config: Arc<crate::config::Config>,
 
@@ -34,7 +35,7 @@ pub struct Server {
     _websocket_receiver: tokio::sync::broadcast::Receiver<websocket::WebsocketMessage>,
     websocket_sender: RwLock<Option<tokio::task::JoinHandle<()>>>,
 
-    pub container: Arc<RwLock<Option<container::Container>>>,
+    pub container: Arc<RwLock<Option<Arc<container::Container>>>>,
     pub activity: activity::ActivityManager,
 
     pub state: Arc<state::ServerStateLock>,
@@ -54,6 +55,8 @@ pub struct Server {
     pub filesystem: Arc<filesystem::Filesystem>,
 }
 
+pub struct Server(pub Arc<ServerInner>);
+
 impl Server {
     pub fn new(
         configuration: configuration::ServerConfiguration,
@@ -71,10 +74,9 @@ impl Server {
         let (rx, tx) = tokio::sync::broadcast::channel(128);
 
         let state = Arc::new(state::ServerStateLock::new(rx.clone()));
-        let container = Arc::new(RwLock::new(None::<container::Container>));
         let activity = activity::ActivityManager::new(configuration.uuid, &config);
 
-        Self {
+        Self(Arc::new(ServerInner {
             uuid: configuration.uuid,
 
             config,
@@ -86,7 +88,7 @@ impl Server {
             _websocket_receiver: tx,
             websocket_sender: RwLock::new(None),
 
-            container,
+            container: Arc::new(RwLock::new(None)),
             activity,
 
             state,
@@ -104,101 +106,103 @@ impl Server {
             crash_handled: AtomicBool::new(false),
 
             filesystem,
-        }
+        }))
     }
 
-    pub async fn setup_websocket_sender(&self, server: Arc<Self>, client: Arc<bollard::Docker>) {
-        *self.websocket_sender.write().await = Some(tokio::task::spawn(async move {
+    pub async fn setup_websocket_sender(
+        &self,
+        container: Arc<container::Container>,
+        client: Arc<bollard::Docker>,
+    ) {
+        let server = self.clone();
+        let old_sender = self.websocket_sender.write().await.replace(tokio::spawn(async move {
             let mut prev_usage = resources::ResourceUsage::default();
 
-            loop {
-                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            let mut container_channel = match container.update_reciever.lock().await.take() {
+                Some(channel) => channel,
+                None => {
+                    crate::logger::log(
+                        crate::logger::LoggerLevel::Error,
+                        "Container channel is None, skipping update (uh oh)".to_string(),
+                    );
+                    return;
+                }
+            };
 
-                let mut container_channel = match server.container.read().await.as_ref() {
-                    Some(container) => match container.update_reciever.lock().await.take() {
-                        Some(channel) => channel,
-                        None => continue,
-                    },
-                    None => continue,
+            loop {
+                let (container_state, usage) = match container_channel.recv().await {
+                    Some((container_state, usage)) => (container_state, usage),
+                    None => break,
                 };
 
-                'main: loop {
-                    let (container_state, usage) = match container_channel.recv().await {
-                        Some((container_state, usage)) => (container_state, usage),
-                        None => {
-                            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-                            break;
-                        }
-                    };
+                if usage != prev_usage {
+                    let message = websocket::WebsocketMessage::new(
+                        websocket::WebsocketEvent::ServerStats,
+                        &[serde_json::to_string(&usage).unwrap()],
+                    );
 
-                    if usage != prev_usage {
-                        let message = websocket::WebsocketMessage::new(
-                            websocket::WebsocketEvent::ServerStats,
-                            &[serde_json::to_string(&usage).unwrap()],
+                    if let Err(e) = server.websocket.send(message) {
+                        crate::logger::log(
+                            crate::logger::LoggerLevel::Error,
+                            format!("Failed to send message: {}", e),
                         );
+                    }
 
-                        if let Err(e) = server.websocket.send(message) {
-                            crate::logger::log(
-                                crate::logger::LoggerLevel::Error,
-                                format!("Failed to send message: {}", e),
-                            );
+                    prev_usage = usage;
+                }
+
+                if server.filesystem.is_full()
+                    && server.state.get_state() != state::ServerState::Offline
+                    && !server.stopping.load(std::sync::atomic::Ordering::Relaxed)
+                {
+                    server
+                    .log_daemon_with_prelude("Server is exceeding the assigned disk space limit, stopping process now.")
+                    .await;
+
+                    let client_clone = Arc::clone(&client);
+                    let server_clone = server.clone();
+                    tokio::spawn(async move {
+                        server_clone
+                            .stop_with_kill_timeout(
+                                &client_clone,
+                                std::time::Duration::from_secs(30),
+                            )
+                            .await;
+                    });
+                }
+
+                if let Some(status) = container_state.status {
+                    match status {
+                        ContainerStateStatusEnum::RUNNING => {
+                            if !matches!(
+                                server.state.get_state(),
+                                state::ServerState::Running
+                                    | state::ServerState::Starting
+                                    | state::ServerState::Stopping,
+                            ) {
+                                server.state.set_state(state::ServerState::Running);
+                            }
                         }
+                        ContainerStateStatusEnum::EMPTY
+                        | ContainerStateStatusEnum::DEAD
+                        | ContainerStateStatusEnum::EXITED => {
+                            server.state.set_state(state::ServerState::Offline);
 
-                        prev_usage = usage;
-                    }
-
-                    if server.filesystem.is_full()
-                        && server.state.get_state() != state::ServerState::Offline
-                        && !server.stopping.load(std::sync::atomic::Ordering::Relaxed)
-                    {
-                        server
-                        .log_daemon_with_prelude("Server is exceeding the assigned disk space limit, stopping process now.")
-                        .await;
-
-                        tokio::spawn({
-                            let client = Arc::clone(&client);
-                            let server = Arc::clone(&server);
-
-                            async move {
+                            if server.restarting.load(std::sync::atomic::Ordering::Relaxed) {
                                 server
-                                    .stop_with_kill_timeout(
-                                        &client,
-                                        std::time::Duration::from_secs(30),
-                                    )
-                                    .await;
-                            }
-                        });
-                    }
+                                    .crash_handled
+                                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                                server
+                                    .restarting
+                                    .store(false, std::sync::atomic::Ordering::Relaxed);
+                                server
+                                    .stopping
+                                    .store(false, std::sync::atomic::Ordering::Relaxed);
 
-                    if let Some(status) = container_state.status {
-                        match status {
-                            ContainerStateStatusEnum::RUNNING => {
-                                if !matches!(
-                                    server.state.get_state(),
-                                    state::ServerState::Running
-                                        | state::ServerState::Starting
-                                        | state::ServerState::Stopping,
-                                ) {
-                                    server.state.set_state(state::ServerState::Running);
-                                }
-                            }
-                            ContainerStateStatusEnum::EMPTY
-                            | ContainerStateStatusEnum::DEAD
-                            | ContainerStateStatusEnum::EXITED => {
-                                server.state.set_state(state::ServerState::Offline);
-
-                                if server.restarting.load(std::sync::atomic::Ordering::Relaxed) {
-                                    server
-                                        .crash_handled
-                                        .store(true, std::sync::atomic::Ordering::Relaxed);
-                                    server
-                                        .restarting
-                                        .store(false, std::sync::atomic::Ordering::Relaxed);
-                                    server
-                                        .stopping
-                                        .store(false, std::sync::atomic::Ordering::Relaxed);
-
-                                    if let Err(err) = server.start(&client, None).await {
+                                let client_clone = Arc::clone(&client);
+                                let server_clone = server.clone();
+                                tokio::task::spawn_local(async move {
+                                    if let Err(err) = server_clone.start(&client_clone, None).await {
                                         crate::logger::log(
                                             crate::logger::LoggerLevel::Error,
                                             format!(
@@ -207,70 +211,64 @@ impl Server {
                                             ),
                                         );
                                     }
-                                } else if server.stopping.load(std::sync::atomic::Ordering::Relaxed)
-                                {
-                                    server
-                                        .crash_handled
-                                        .store(true, std::sync::atomic::Ordering::Relaxed);
-                                    server
-                                        .stopping
-                                        .store(false, std::sync::atomic::Ordering::Relaxed);
-                                } else if server.config.system.crash_detection.enabled
+                                });
+                            } else if server.stopping.load(std::sync::atomic::Ordering::Relaxed)
+                            {
+                                server
+                                    .crash_handled
+                                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                                server
+                                    .stopping
+                                    .store(false, std::sync::atomic::Ordering::Relaxed);
+                            } else if server.config.system.crash_detection.enabled
+                                && !server
+                                    .crash_handled
+                                    .load(std::sync::atomic::Ordering::Relaxed)
+                            {
+                                server
+                                    .crash_handled
+                                    .store(true, std::sync::atomic::Ordering::Relaxed);
+
+                                if container_state.exit_code.is_some_and(|code| code == 0)
+                                    && !container_state.oom_killed.unwrap_or(false)
                                     && !server
-                                        .crash_handled
-                                        .load(std::sync::atomic::Ordering::Relaxed)
+                                        .config
+                                        .system
+                                        .crash_detection
+                                        .detect_clean_exit_as_crash
                                 {
-                                    server
-                                        .crash_handled
-                                        .store(true, std::sync::atomic::Ordering::Relaxed);
+                                    crate::logger::log(
+                                    crate::logger::LoggerLevel::Debug,
+                                    "Container exited cleanly, not restarting due to crash detection settings".to_string(),
+                                );
+                                    return;
+                                }
 
-                                    if container_state.exit_code.is_some_and(|code| code == 0)
-                                        && !container_state.oom_killed.unwrap_or(false)
-                                        && !server
-                                            .config
-                                            .system
-                                            .crash_detection
-                                            .detect_clean_exit_as_crash
+                                server.log_daemon_with_prelude("---------- Detected server process in a crashed state! ----------").await;
+                                server
+                                    .log_daemon_with_prelude(&format!(
+                                        "Exit code: {}",
+                                        container_state.exit_code.unwrap_or_default()
+                                    ))
+                                    .await;
+                                server
+                                    .log_daemon_with_prelude(&format!(
+                                        "Out of memory: {}",
+                                        container_state.oom_killed.unwrap_or(false)
+                                    ))
+                                    .await;
+
+                                if let Some(last_crash) = *server.last_crash.read().await {
+                                    if last_crash.elapsed().as_secs()
+                                        < server.config.system.crash_detection.timeout
                                     {
-                                        crate::logger::log(
-                                        crate::logger::LoggerLevel::Debug,
-                                        "Container exited cleanly, not restarting due to crash detection settings".to_string(),
-                                    );
+                                        server.log_daemon_with_prelude(
+                                        &format!(
+                                            "Aborting automatic restart, last crash occurred less than {} seconds ago.",
+                                            server.config.system.crash_detection.timeout
+                                        ),
+                                    ).await;
                                         return;
-                                    }
-
-                                    server.log_daemon_with_prelude("---------- Detected server process in a crashed state! ----------").await;
-                                    server
-                                        .log_daemon_with_prelude(&format!(
-                                            "Exit code: {}",
-                                            container_state.exit_code.unwrap_or_default()
-                                        ))
-                                        .await;
-                                    server
-                                        .log_daemon_with_prelude(&format!(
-                                            "Out of memory: {}",
-                                            container_state.oom_killed.unwrap_or(false)
-                                        ))
-                                        .await;
-
-                                    if let Some(last_crash) = *server.last_crash.read().await {
-                                        if last_crash.elapsed().as_secs()
-                                            < server.config.system.crash_detection.timeout
-                                        {
-                                            server.log_daemon_with_prelude(
-                                            &format!(
-                                                "Aborting automatic restart, last crash occurred less than {} seconds ago.",
-                                                server.config.system.crash_detection.timeout
-                                            ),
-                                        ).await;
-                                            return;
-                                        } else {
-                                            server
-                                                .last_crash
-                                                .write()
-                                                .await
-                                                .replace(std::time::Instant::now());
-                                        }
                                     } else {
                                         server
                                             .last_crash
@@ -278,23 +276,35 @@ impl Server {
                                             .await
                                             .replace(std::time::Instant::now());
                                     }
+                                } else {
+                                    server
+                                        .last_crash
+                                        .write()
+                                        .await
+                                        .replace(std::time::Instant::now());
+                                }
 
-                                    if let Err(err) = server.start(&client, None).await {
+                                let client_clone = Arc::clone(&client);
+                                let server_clone = server.clone();
+                                tokio::task::spawn_local(async move {
+                                    if let Err(err) = server_clone.start(&client_clone, None).await {
                                         crate::logger::log(
                                             crate::logger::LoggerLevel::Error,
                                             format!("Failed to start server after crash: {}", err),
                                         );
                                     }
-                                }
-
-                                break 'main;
+                                });
                             }
-                            _ => {}
                         }
+                        _ => {}
                     }
                 }
             }
         }));
+
+        if let Some(old_sender) = old_sender {
+            old_sender.abort();
+        }
     }
 
     pub async fn container_stdin(&self) -> Option<tokio::sync::mpsc::Sender<String>> {
@@ -402,7 +412,7 @@ impl Server {
             )
             .await?;
 
-        *self.container.write().await = Some(
+        let container = Arc::new(
             container::Container::new(
                 container.id.clone(),
                 self.process_configuration.read().await.startup.clone(),
@@ -412,6 +422,10 @@ impl Server {
             )
             .await?,
         );
+
+        self.setup_websocket_sender(Arc::clone(&container), Arc::clone(client))
+            .await;
+        *self.container.write().await = Some(container);
 
         Ok(())
     }
@@ -434,8 +448,7 @@ impl Server {
         {
             if let Some(container) = containers.first() {
                 let container = container.id.clone().unwrap();
-
-                *self.container.write().await = Some(
+                let container = Arc::new(
                     container::Container::new(
                         container.to_string(),
                         self.process_configuration.read().await.startup.clone(),
@@ -445,6 +458,10 @@ impl Server {
                     )
                     .await?,
                 );
+
+                self.setup_websocket_sender(Arc::clone(&container), Arc::clone(client))
+                    .await;
+                *self.container.write().await = Some(container);
             }
         }
 
@@ -956,6 +973,7 @@ impl Server {
         }
 
         self.container.write().await.take();
+        self.websocket_sender.write().await.take();
     }
 
     pub async fn destroy(&self, client: &bollard::Docker) {
@@ -974,10 +992,16 @@ impl Server {
     }
 }
 
-impl Drop for Server {
-    fn drop(&mut self) {
-        if let Some(handle) = self.websocket_sender.blocking_write().take() {
-            handle.abort();
-        }
+impl Clone for Server {
+    fn clone(&self) -> Self {
+        Self(Arc::clone(&self.0))
+    }
+}
+
+impl Deref for Server {
+    type Target = Arc<ServerInner>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }

@@ -20,7 +20,7 @@ fn get_file_name(server: &crate::server::Server, uuid: uuid::Uuid) -> PathBuf {
 }
 
 pub async fn create_backup(
-    server: &Arc<crate::server::Server>,
+    server: &crate::server::Server,
     uuid: uuid::Uuid,
     overrides: ignore::overrides::Override,
 ) -> Result<RawServerBackup, Box<dyn std::error::Error + Send + Sync>> {
@@ -86,14 +86,14 @@ pub async fn create_backup(
 }
 
 pub async fn restore_backup(
-    server: &Arc<crate::server::Server>,
+    server: &crate::server::Server,
     uuid: uuid::Uuid,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let file_name = get_file_name(server, uuid);
     let file = std::fs::File::open(&file_name)?;
 
     let filesystem = Arc::clone(&server.filesystem);
-    let server = Arc::clone(server);
+    let server = server.clone();
     tokio::task::spawn_blocking(
         move || -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(file));
@@ -161,7 +161,7 @@ pub async fn restore_backup(
 }
 
 pub async fn download_backup(
-    server: &Arc<crate::server::Server>,
+    server: &crate::server::Server,
     uuid: uuid::Uuid,
 ) -> Result<(StatusCode, HeaderMap, Body), Box<dyn std::error::Error + Send + Sync>> {
     let file_name = get_file_name(server, uuid);
@@ -187,7 +187,7 @@ pub async fn download_backup(
 }
 
 pub async fn delete_backup(
-    server: &Arc<crate::server::Server>,
+    server: &crate::server::Server,
     uuid: uuid::Uuid,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let file_name = get_file_name(server, uuid);
@@ -199,7 +199,7 @@ pub async fn delete_backup(
 }
 
 pub async fn list_backups(
-    server: &Arc<crate::server::Server>,
+    server: &crate::server::Server,
 ) -> Result<Vec<uuid::Uuid>, Box<dyn std::error::Error + Send + Sync>> {
     let mut backups = Vec::new();
     let path = Path::new(&server.config.system.backup_directory);

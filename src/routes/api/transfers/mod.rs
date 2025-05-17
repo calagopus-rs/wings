@@ -44,16 +44,16 @@ mod post {
             );
         }
 
-        let payload: crate::remote::jwt::BasePayload =
-            match state.config.jwt.verify(token.unwrap()) {
-                Ok(payload) => payload,
-                Err(_) => {
-                    return (
-                        StatusCode::UNAUTHORIZED,
-                        axum::Json(ApiError::new("invalid token").to_json()),
-                    );
-                }
-            };
+        let payload: crate::remote::jwt::BasePayload = match state.config.jwt.verify(token.unwrap())
+        {
+            Ok(payload) => payload,
+            Err(_) => {
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    axum::Json(ApiError::new("invalid token").to_json()),
+                );
+            }
+        };
 
         if !payload.validate(&state.config.jwt) {
             return (

@@ -49,10 +49,10 @@ pub async fn handle_ws(
         let socket_jwt = Arc::new(RwLock::new(None));
 
         let writer = tokio::spawn({
-            let server = Arc::clone(&server);
             let state = Arc::clone(&state);
             let socket_jwt = Arc::clone(&socket_jwt);
             let sender = Arc::clone(&sender);
+            let server = server.clone();
 
             async move {
                 loop {
@@ -90,8 +90,8 @@ pub async fn handle_ws(
                         Ok(Some((message, jwt))) => {
                             tokio::spawn({
                                 let sender = Arc::clone(&sender);
-                                let server = Arc::clone(&server);
                                 let state = Arc::clone(&state);
+                                let server = server.clone();
 
                                 async move {
                                     match super::message_handler::handle_message(
@@ -192,11 +192,9 @@ pub async fn handle_ws(
             let state = Arc::clone(&state);
             let socket_jwt = Arc::clone(&socket_jwt);
             let sender = Arc::clone(&sender);
-            let server = Arc::clone(&server);
+            let server = server.clone();
 
             async move {
-                let server = Arc::clone(&server);
-
                 loop {
                     if let Some(mut stdout) = server.container_stdout().await {
                         let thread = tokio::spawn({

@@ -21,7 +21,7 @@ static AUTH_METHODS: LazyLock<MethodSet> = LazyLock::new(|| {
 
 pub struct SshSession {
     pub state: State,
-    pub server: Option<Arc<crate::server::Server>>,
+    pub server: Option<crate::server::Server>,
 
     pub user_ip: Option<IpAddr>,
     pub user_uuid: Option<uuid::Uuid>,
@@ -80,8 +80,9 @@ impl russh::server::Handler for SshSession {
             .await
             .iter()
             .find(|s| s.uuid == server)
+            .cloned()
         {
-            Some(server) => Arc::clone(server),
+            Some(server) => server,
             None => {
                 return Ok(Auth::Reject {
                     proceed_with_methods: Some(AUTH_METHODS.clone()),
@@ -139,8 +140,9 @@ impl russh::server::Handler for SshSession {
             .await
             .iter()
             .find(|s| s.uuid == server)
+            .cloned()
         {
-            Some(server) => Arc::clone(server),
+            Some(server) => server,
             None => return Ok(Auth::reject()),
         };
 
@@ -183,7 +185,7 @@ impl russh::server::Handler for SshSession {
         session: &mut Session,
     ) -> Result<(), Self::Error> {
         let server = match &self.server {
-            Some(server) => Arc::clone(server),
+            Some(server) => server.clone(),
             None => return Err(Box::new(StatusCode::PermissionDenied)),
         };
 

@@ -13,7 +13,7 @@ pub struct Manager {
     config: Arc<crate::config::Config>,
     client: Arc<bollard::Docker>,
 
-    pub servers: Arc<RwLock<Vec<Arc<Server>>>>,
+    pub servers: Arc<RwLock<Vec<Server>>>,
 }
 
 impl Manager {
@@ -34,18 +34,12 @@ impl Manager {
 
         for s in raw_servers {
             let server = Server::new(s.settings, s.process_configuration, Arc::clone(&config));
-
             let state = states.remove(&server.uuid).unwrap_or_default();
-
-            let server = Arc::new(server);
-            server
-                .setup_websocket_sender(Arc::clone(&server), Arc::clone(&client))
-                .await;
 
             if state == ServerState::Starting || state == ServerState::Running {
                 tokio::spawn({
-                    let server = Arc::clone(&server);
                     let client = Arc::clone(&client);
+                    let server = server.clone();
 
                     async move {
                         crate::logger::log(
@@ -101,7 +95,7 @@ impl Manager {
         })
     }
 
-    pub async fn get_servers(&self) -> tokio::sync::RwLockReadGuard<'_, Vec<Arc<Server>>> {
+    pub async fn get_servers(&self) -> tokio::sync::RwLockReadGuard<'_, Vec<Server>> {
         self.servers.read().await
     }
 
@@ -109,22 +103,19 @@ impl Manager {
         &self,
         raw_server: crate::remote::servers::RawServer,
         install_server: bool,
-    ) -> Arc<Server> {
-        let server = Arc::new(Server::new(
+    ) -> Server {
+        let server = Server::new(
             raw_server.settings,
             raw_server.process_configuration,
             Arc::clone(&self.config),
-        ));
+        );
 
         server.filesystem.setup().await;
-        server
-            .setup_websocket_sender(Arc::clone(&server), Arc::clone(&self.client))
-            .await;
 
         if install_server {
             tokio::spawn({
-                let server = Arc::clone(&server);
                 let client = Arc::clone(&self.client);
+                let server = server.clone();
 
                 async move {
                     if let Err(err) =
@@ -152,15 +143,15 @@ impl Manager {
             });
         }
 
-        self.servers.write().await.push(Arc::clone(&server));
+        self.servers.write().await.push(server.clone());
 
         server
     }
 
-    pub async fn delete_server(&self, server: Arc<Server>) {
+    pub async fn delete_server(&self, server: &Server) {
         let mut servers = self.servers.write().await;
 
-        if let Some(pos) = servers.iter().position(|s| Arc::ptr_eq(s, &server)) {
+        if let Some(pos) = servers.iter().position(|s| Arc::ptr_eq(s, server)) {
             let server = servers.remove(pos);
             server
                 .suspended
