@@ -36,6 +36,7 @@ pub struct Archive {
     pub header: [u8; 16],
 
     pub file: File,
+    pub path: PathBuf,
 }
 
 impl Archive {
@@ -68,7 +69,7 @@ impl Archive {
             }),
         };
 
-        if !path.symlink_metadata().ok()?.is_file() {
+        if !tokio::fs::symlink_metadata(&path).await.ok()?.is_file() {
             return None;
         }
 
@@ -78,6 +79,7 @@ impl Archive {
             filesystem,
             header,
             file,
+            path,
         })
     }
 
@@ -282,7 +284,24 @@ impl Archive {
                         }
                     }
                 }
-                ArchiveType::None => {}
+                ArchiveType::None => {
+                    let mut sync_reader = SyncIoBridge::new(reader.unwrap());
+
+                    let file_name = match self.path.file_stem() {
+                        Some(stem) => destination.join(stem),
+                        None => destination,
+                    };
+
+                    let mut writer = super::writer::FileSystemWriter::new(
+                        Arc::clone(&self.filesystem),
+                        file_name,
+                        None,
+                        None,
+                    )?;
+
+                    std::io::copy(&mut sync_reader, &mut writer)?;
+                    writer.flush()?;
+                }
             }
 
             Ok(())

@@ -81,16 +81,6 @@ mod post {
             }
         };
 
-        if matches!(
-            archive.archive,
-            crate::server::filesystem::archive::ArchiveType::None
-        ) {
-            return (
-                StatusCode::EXPECTATION_FAILED,
-                axum::Json(ApiError::new("archive is not supported").to_json()),
-            );
-        }
-
         let reader = archive.reader().await;
         archive.extract(root.clone(), reader).await.unwrap();
         server.filesystem.chown_path(&root).await;
