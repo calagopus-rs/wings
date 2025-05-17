@@ -7,7 +7,7 @@ use std::{
 };
 use tokio::{
     fs::File,
-    io::{AsyncRead, AsyncReadExt, AsyncSeekExt, BufReader},
+    io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader},
 };
 use tokio_util::io::SyncIoBridge;
 
@@ -198,6 +198,25 @@ impl Archive {
         destination: PathBuf,
         reader: Option<Box<dyn AsyncRead + Send + Unpin>>,
     ) -> std::io::Result<()> {
+        if matches!(self.archive, ArchiveType::None) {
+            let file_name = match self.path.file_stem() {
+                Some(stem) => destination.join(stem),
+                None => destination,
+            };
+
+            let mut writer = super::writer::AsyncFileSystemWriter::new(
+                Arc::clone(&self.filesystem),
+                file_name,
+                None,
+            )
+            .await?;
+
+            tokio::io::copy(&mut reader.unwrap(), &mut writer).await?;
+            writer.flush().await?;
+
+            return Ok(());
+        }
+
         tokio::task::spawn_blocking(move || -> std::io::Result<()> {
             match self.archive {
                 ArchiveType::Tar => {
@@ -284,24 +303,7 @@ impl Archive {
                         }
                     }
                 }
-                ArchiveType::None => {
-                    let mut sync_reader = SyncIoBridge::new(reader.unwrap());
-
-                    let file_name = match self.path.file_stem() {
-                        Some(stem) => destination.join(stem),
-                        None => destination,
-                    };
-
-                    let mut writer = super::writer::FileSystemWriter::new(
-                        Arc::clone(&self.filesystem),
-                        file_name,
-                        None,
-                        None,
-                    )?;
-
-                    std::io::copy(&mut sync_reader, &mut writer)?;
-                    writer.flush()?;
-                }
+                ArchiveType::None => unreachable!(),
             }
 
             Ok(())
