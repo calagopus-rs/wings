@@ -122,8 +122,7 @@ mod post {
                         let reader = flate2::read::GzDecoder::new(sync_reader);
                         let mut archive = tar::Archive::new(reader);
 
-                        for entry in archive.entries().unwrap() {
-                            let mut entry = entry.unwrap();
+                        for mut entry in archive.entries().unwrap().flatten() {
                             let path = entry.path().unwrap();
 
                             if path.is_absolute() {
