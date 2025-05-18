@@ -2,10 +2,7 @@ use colored::Colorize;
 use human_bytes::human_bytes;
 use ignore::WalkBuilder;
 use sha2::Digest;
-use std::{
-    os::unix::fs::MetadataExt,
-    sync::{Arc, atomic::AtomicU64},
-};
+use std::sync::{Arc, atomic::AtomicU64};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 pub struct OutgoingServerTransfer {
@@ -103,6 +100,7 @@ impl OutgoingServerTransfer {
 
                     let mut tar = tar::Builder::new(writer);
                     tar.mode(tar::HeaderMode::Complete);
+                    tar.follow_symlinks(false);
 
                     for entry in WalkBuilder::new(&server.filesystem.base_path)
                         .git_ignore(false)
@@ -117,9 +115,6 @@ impl OutgoingServerTransfer {
                             .path()
                             .strip_prefix(&server.filesystem.base_path)
                             .unwrap_or(entry.path());
-                        if path.display().to_string().is_empty() {
-                            continue;
-                        }
 
                         let metadata = match entry.metadata() {
                             Ok(metadata) => metadata,
@@ -135,46 +130,15 @@ impl OutgoingServerTransfer {
                             continue;
                         }
 
+                        if metadata.is_file() {
+                            bytes_archived
+                                .fetch_add(metadata.len(), std::sync::atomic::Ordering::Relaxed);
+                        }
+
                         if metadata.is_dir() {
-                            let mut entry_header = tar::Header::new_gnu();
-                            entry_header.set_mode(metadata.mode());
-                            entry_header.set_mtime(metadata.mtime() as u64);
-                            entry_header.set_entry_type(tar::EntryType::Directory);
-
-                            if tar
-                                .append_data(&mut entry_header, path, std::io::empty())
-                                .is_err()
-                            {
-                                break;
-                            }
-                        } else if metadata.is_file() {
-                            let mut entry_header = tar::Header::new_gnu();
-                            entry_header.set_mode(metadata.mode());
-                            entry_header.set_entry_type(tar::EntryType::Regular);
-                            entry_header.set_mtime(metadata.mtime() as u64);
-                            entry_header.set_size(metadata.len());
-
-                            let file = std::fs::File::open(entry.path()).unwrap();
-                            bytes_archived.fetch_add(
-                                file.metadata().unwrap().len(),
-                                std::sync::atomic::Ordering::Relaxed,
-                            );
-
-                            if tar.append_data(&mut entry_header, path, file).is_err() {
-                                break;
-                            }
+                            tar.append_dir(path, entry.path()).ok();
                         } else {
-                            let mut entry_header = tar::Header::new_gnu();
-                            entry_header.set_mode(metadata.mode());
-                            entry_header.set_mtime(metadata.mtime() as u64);
-                            entry_header.set_entry_type(tar::EntryType::Symlink);
-
-                            if tar
-                                .append_link(&mut entry_header, path, entry.path())
-                                .is_err()
-                            {
-                                break;
-                            }
+                            tar.append_path_with_name(entry.path(), path).ok();
                         }
                     }
 

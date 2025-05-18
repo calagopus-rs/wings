@@ -10,7 +10,6 @@ mod get {
     };
     use ignore::WalkBuilder;
     use serde::Deserialize;
-    use std::{fs::File, os::unix::fs::MetadataExt};
     use utoipa::ToSchema;
 
     #[derive(ToSchema, Deserialize)]
@@ -118,6 +117,7 @@ mod get {
 
             let mut tar = tar::Builder::new(writer);
             tar.mode(tar::HeaderMode::Complete);
+            tar.follow_symlinks(false);
 
             for entry in WalkBuilder::new(&path)
                 .git_ignore(false)
@@ -148,41 +148,9 @@ mod get {
                 }
 
                 if metadata.is_dir() {
-                    let mut entry_header = tar::Header::new_gnu();
-                    entry_header.set_mode(metadata.mode());
-                    entry_header.set_mtime(metadata.mtime() as u64);
-                    entry_header.set_entry_type(tar::EntryType::Directory);
-
-                    if tar
-                        .append_data(&mut entry_header, path, std::io::empty())
-                        .is_err()
-                    {
-                        break;
-                    }
-                } else if metadata.is_file() {
-                    let mut entry_header = tar::Header::new_gnu();
-                    entry_header.set_mode(metadata.mode());
-                    entry_header.set_entry_type(tar::EntryType::Regular);
-                    entry_header.set_mtime(metadata.mtime() as u64);
-                    entry_header.set_size(metadata.len());
-
-                    let file = File::open(entry.path()).unwrap();
-
-                    if tar.append_data(&mut entry_header, path, file).is_err() {
-                        break;
-                    }
+                    tar.append_dir(path, entry.path()).ok();
                 } else {
-                    let mut entry_header = tar::Header::new_gnu();
-                    entry_header.set_mode(metadata.mode());
-                    entry_header.set_mtime(metadata.mtime() as u64);
-                    entry_header.set_entry_type(tar::EntryType::Symlink);
-
-                    if tar
-                        .append_link(&mut entry_header, path, entry.path())
-                        .is_err()
-                    {
-                        break;
-                    }
+                    tar.append_path_with_name(entry.path(), path).ok();
                 }
             }
 

@@ -90,10 +90,13 @@ pub async fn create_backup(
     let compression_level = server.config.system.backups.compression_level;
     tokio::task::spawn_blocking(
         move || -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-            let mut archive = tar::Builder::new(flate2::write::GzEncoder::new(
+            let mut tar = tar::Builder::new(flate2::write::GzEncoder::new(
                 writer,
                 flate2::Compression::new(compression_level.into()),
             ));
+
+            tar.mode(tar::HeaderMode::Complete);
+            tar.follow_symlinks(false);
 
             for entry in WalkBuilder::new(&filesystem.base_path)
                 .overrides(overrides)
@@ -109,14 +112,14 @@ pub async fn create_backup(
 
                 if let Ok(relative) = path.strip_prefix(&filesystem.base_path) {
                     if metadata.is_dir() {
-                        archive.append_dir(relative, &path).ok();
+                        tar.append_dir(relative, &path).ok();
                     } else {
-                        archive.append_path_with_name(&path, relative).ok();
+                        tar.append_path_with_name(&path, relative).ok();
                     }
                 }
             }
 
-            archive.finish()?;
+            tar.finish()?;
 
             Ok(())
         },
