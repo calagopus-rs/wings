@@ -58,6 +58,18 @@ impl Filesystem {
             move || {
                 loop {
                     if checker_abort.load(std::sync::atomic::Ordering::Relaxed) {
+                        if base_path.exists() {
+                            if let Err(err) = std::fs::remove_dir_all(&base_path) {
+                                crate::logger::log(
+                                    crate::logger::LoggerLevel::Error,
+                                    format!(
+                                        "Failed to delete server base directory (attmpt 2): {}",
+                                        err
+                                    ),
+                                );
+                            }
+                        }
+
                         break;
                     }
 
@@ -515,7 +527,15 @@ impl Filesystem {
     pub async fn destroy(&self) {
         self.checker_abort
             .store(true, std::sync::atomic::Ordering::Relaxed);
-        tokio::fs::remove_dir_all(&self.base_path).await.ok();
+        if let Err(err) = tokio::fs::remove_dir_all(&self.base_path).await {
+            crate::logger::log(
+                crate::logger::LoggerLevel::Error,
+                format!(
+                    "Failed to delete server base directory (attempt 1): {}",
+                    err
+                ),
+            );
+        }
     }
 
     #[inline]

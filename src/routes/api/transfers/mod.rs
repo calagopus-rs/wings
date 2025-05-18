@@ -103,7 +103,8 @@ mod post {
             .transferring
             .store(true, std::sync::atomic::Ordering::SeqCst);
 
-        Arc::clone(&server)
+        server
+            .clone()
             .incoming_transfer
             .write()
             .await
@@ -111,10 +112,10 @@ mod post {
                 while let Ok(Some(field)) = futures::executor::block_on(multipart.next_field()) {
                     if let Some("archive") = field.name() {
                         let sync_reader = SyncIoBridge::new(tokio_util::io::StreamReader::new(
-                            field.into_stream().map_err(|_| {
+                            field.into_stream().map_err(|err| {
                                 std::io::Error::new(
                                     std::io::ErrorKind::Other,
-                                    "failed to read multipart field",
+                                    format!("failed to read multipart field: {}", err),
                                 )
                             }),
                         ));
