@@ -713,6 +713,7 @@ impl Config {
         if network.is_err() {
             client
                 .create_network(bollard::network::CreateNetworkOptions {
+                    name: self.docker.network.name.clone(),
                     driver: self.docker.network.driver.clone(),
                     enable_ipv6: true,
                     internal: self.docker.network.is_internal,
