@@ -130,7 +130,7 @@ mod post {
                             }
 
                             let destination_path = server.filesystem.base_path.join(path);
-                            if !server.filesystem.is_safe_path(&destination_path) {
+                            if !server.filesystem.is_safe_path_sync(&destination_path) {
                                 continue;
                             }
 

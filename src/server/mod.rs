@@ -6,6 +6,7 @@ use std::{
     collections::HashMap,
     ops::Deref,
     path::PathBuf,
+    pin::Pin,
     sync::{Arc, atomic::AtomicBool},
 };
 use tokio::sync::RwLock;
@@ -109,13 +110,15 @@ impl Server {
         }))
     }
 
-    pub async fn setup_websocket_sender(
+    pub fn setup_websocket_sender(
         &self,
         container: Arc<container::Container>,
         client: Arc<bollard::Docker>,
-    ) {
+    ) -> Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
         let server = self.clone();
-        let old_sender = self.websocket_sender.write().await.replace(tokio::spawn(async move {
+
+        Box::pin(async move {
+            let old_sender = server.clone().websocket_sender.write().await.replace(tokio::spawn(async move {
             let mut prev_usage = resources::ResourceUsage::default();
 
             let mut container_channel = match container.update_reciever.lock().await.take() {
@@ -201,12 +204,12 @@ impl Server {
 
                                 let client = Arc::clone(&client);
                                 let server = server.clone();
-                                tokio::task::spawn_blocking(move || {
-                                    if let Err(err) = futures::executor::block_on(server.start(&client, Some(std::time::Duration::from_secs(5)))) {
+                                tokio::spawn(async move {
+                                    if let Err(err) = server.start(&client, Some(std::time::Duration::from_secs(5))).await {
                                         crate::logger::log(
                                             crate::logger::LoggerLevel::Error,
                                             format!(
-                                                "Failed to start server after restart: {}",
+                                                "Failed to start server after crash: {}",
                                                 err
                                             ),
                                         );
@@ -286,8 +289,8 @@ impl Server {
 
                                 let client = Arc::clone(&client);
                                 let server = server.clone();
-                                tokio::task::spawn_blocking(move || {
-                                    if let Err(err) = futures::executor::block_on(server.start(&client, Some(std::time::Duration::from_secs(5)))) {
+                                tokio::spawn(async move {
+                                    if let Err(err) = server.start(&client, Some(std::time::Duration::from_secs(5))).await {
                                         crate::logger::log(
                                             crate::logger::LoggerLevel::Error,
                                             format!(
@@ -307,9 +310,10 @@ impl Server {
             }
         }));
 
-        if let Some(old_sender) = old_sender {
-            old_sender.abort();
-        }
+            if let Some(old_sender) = old_sender {
+                old_sender.abort();
+            }
+        })
     }
 
     pub async fn container_stdin(&self) -> Option<tokio::sync::mpsc::Sender<String>> {

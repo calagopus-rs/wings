@@ -26,7 +26,7 @@ mod post {
         server: GetServer,
         axum::Json(data): axum::Json<Payload>,
     ) -> (StatusCode, axum::Json<serde_json::Value>) {
-        let root = match server.filesystem.safe_path(&data.root) {
+        let root = match server.filesystem.safe_path(&data.root).await {
             Some(path) => path,
             None => {
                 return (
@@ -67,14 +67,9 @@ mod post {
                 ));
 
                 for file in data.files {
-                    let source = match root.join(file).canonicalize() {
-                        Ok(path) => path,
-                        Err(_) => {
-                            continue;
-                        }
-                    };
+                    let source = root.join(file);
 
-                    if !server.filesystem.is_safe_path(&source) {
+                    if !server.filesystem.is_safe_path_sync(&source) {
                         continue;
                     }
 

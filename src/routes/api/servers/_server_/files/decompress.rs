@@ -28,7 +28,7 @@ mod post {
         server: GetServer,
         axum::Json(data): axum::Json<Payload>,
     ) -> (StatusCode, axum::Json<serde_json::Value>) {
-        let root = match server.filesystem.safe_path(&data.root) {
+        let root = match server.filesystem.safe_path(&data.root).await {
             Some(path) => path,
             None => {
                 return (
@@ -47,7 +47,7 @@ mod post {
         }
 
         let source = root.join(data.file);
-        if !server.filesystem.is_safe_path(&source) {
+        if !server.filesystem.is_safe_path(&source).await {
             return (
                 StatusCode::NOT_FOUND,
                 axum::Json(ApiError::new("file not found").to_json()),

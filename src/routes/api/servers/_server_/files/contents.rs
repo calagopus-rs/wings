@@ -39,7 +39,7 @@ mod get {
         server: GetServer,
         Query(data): Query<Params>,
     ) -> (StatusCode, HeaderMap, Body) {
-        let path = match server.filesystem.safe_path(&data.file) {
+        let path = match server.filesystem.safe_path(&data.file).await {
             Some(path) => path,
             None => {
                 return (

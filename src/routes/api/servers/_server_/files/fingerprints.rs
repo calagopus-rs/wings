@@ -53,7 +53,7 @@ mod get {
     ) -> axum::Json<serde_json::Value> {
         let mut fingerprint_handles = Vec::new();
         for path_raw in data.files {
-            let path = match server.filesystem.safe_path(&path_raw) {
+            let path = match server.filesystem.safe_path(&path_raw).await {
                 Some(path) => path,
                 None => continue,
             };

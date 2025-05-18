@@ -88,7 +88,7 @@ mod get {
             }
         };
 
-        let path = match server.filesystem.safe_path(&payload.file_path) {
+        let path = match server.filesystem.safe_path(&payload.file_path).await {
             Some(path) => path,
             None => {
                 return (

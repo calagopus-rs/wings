@@ -29,7 +29,7 @@ mod post {
         server: GetServer,
         axum::Json(data): axum::Json<Payload>,
     ) -> (StatusCode, axum::Json<serde_json::Value>) {
-        let root = match server.filesystem.safe_path(&data.root) {
+        let root = match server.filesystem.safe_path(&data.root).await {
             Some(path) => path,
             None => {
                 return (
@@ -50,7 +50,7 @@ mod post {
         let mut deleted_count = 0;
         for file in data.files {
             let destination = root.join(file);
-            if !server.filesystem.is_safe_path(&destination) || destination == root {
+            if !server.filesystem.is_safe_path(&destination).await || destination == root {
                 continue;
             }
 

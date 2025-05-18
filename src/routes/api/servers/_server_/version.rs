@@ -48,7 +48,7 @@ mod get {
                 for (key, value) in &server.configuration.read().await.environment {
                     if let Some(value_str) = value.as_str() {
                         if key.contains("JAR") && value_str.contains(".jar") {
-                            if let Some(path) = server.filesystem.safe_path(value_str) {
+                            if let Some(path) = server.filesystem.safe_path(value_str).await {
                                 jar = path;
                             }
 

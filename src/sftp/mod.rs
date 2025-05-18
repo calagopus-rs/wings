@@ -1,16 +1,22 @@
-use crate::routes::State;
-use crate::server::activity::{Activity, ActivityEvent};
-use crate::server::permissions::{Permission, Permissions};
+use crate::{
+    routes::State,
+    server::{
+        activity::{Activity, ActivityEvent},
+        permissions::{Permission, Permissions},
+    },
+};
 use russh_sftp::protocol::{
     Data, File, FileAttributes, Handle, Name, OpenFlags, Status, StatusCode,
 };
 use serde_json::json;
-use std::collections::HashMap;
-use std::fs::{Metadata, OpenOptions};
-use std::net::{IpAddr, SocketAddr};
-use std::os::unix::fs::{FileExt, PermissionsExt};
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::{
+    collections::HashMap,
+    fs::{Metadata, OpenOptions},
+    net::{IpAddr, SocketAddr},
+    os::unix::fs::{FileExt, PermissionsExt},
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use tokio::sync::Mutex;
 
 mod auth;
@@ -60,7 +66,7 @@ struct SftpSession {
 
 impl SftpSession {
     #[inline]
-    async fn convert_entry(path: &Path, metadata: Metadata) -> File {
+    fn convert_entry(path: &Path, metadata: Metadata) -> File {
         let mut attrs = FileAttributes {
             size: Some(metadata.len()),
             atime: None,
@@ -133,7 +139,14 @@ impl russh_sftp::server::Handler for SftpSession {
 
     #[inline]
     async fn realpath(&mut self, id: u32, path: String) -> Result<Name, Self::Error> {
-        if let Some(Ok(path)) = self.server.filesystem.safe_path(&path).map(|p| {
+        if path == "/.." || path == "." {
+            return Ok(Name {
+                id,
+                files: vec![File::dummy("/".to_string())],
+            });
+        }
+
+        if let Some(Ok(path)) = self.server.filesystem.safe_path(&path).await.map(|p| {
             p.strip_prefix(&self.server.filesystem.base_path)
                 .map(|p| p.to_path_buf())
         }) {
@@ -161,7 +174,7 @@ impl russh_sftp::server::Handler for SftpSession {
 
         let handle = self.next_handle_id();
 
-        if let Some(path) = self.server.filesystem.safe_path(&path) {
+        if let Some(path) = self.server.filesystem.safe_path(&path).await {
             if !path.is_dir() {
                 return Err(StatusCode::NoSuchFile);
             }
@@ -217,7 +230,7 @@ impl russh_sftp::server::Handler for SftpSession {
                 continue;
             }
 
-            files.push(Self::convert_entry(&path, metadata).await);
+            files.push(Self::convert_entry(&path, metadata));
         }
 
         handle.consumed = 1;
@@ -238,7 +251,7 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
-        if let Some(path) = self.server.filesystem.safe_path(&filename) {
+        if let Some(path) = self.server.filesystem.safe_path(&filename).await {
             let parent = match path.parent() {
                 Some(parent) => parent,
                 None => return Err(StatusCode::NoSuchFile),
@@ -298,7 +311,7 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
-        if let Some(path) = self.server.filesystem.safe_path(&path) {
+        if let Some(path) = self.server.filesystem.safe_path(&path).await {
             if !path.is_dir() {
                 return Err(StatusCode::NoSuchFile);
             }
@@ -355,7 +368,7 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
-        if let Some(path) = self.server.filesystem.safe_path(&path) {
+        if let Some(path) = self.server.filesystem.safe_path(&path).await {
             if path.exists() {
                 return Err(StatusCode::Failure);
             }
@@ -416,13 +429,13 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
-        if let Some(old_path) = self.server.filesystem.safe_path(&old_path) {
+        if let Some(old_path) = self.server.filesystem.safe_path(&old_path).await {
             let old_metadata = match tokio::fs::symlink_metadata(&old_path).await {
                 Ok(metadata) => metadata,
                 Err(_) => return Err(StatusCode::NoSuchFile),
             };
 
-            if let Some(new_path) = self.server.filesystem.safe_path(&new_path) {
+            if let Some(new_path) = self.server.filesystem.safe_path(&new_path).await {
                 if new_path.exists()
                     || self
                         .server
@@ -496,7 +509,7 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
-        if let Some(path) = self.server.filesystem.safe_path(&path) {
+        if let Some(path) = self.server.filesystem.safe_path(&path).await {
             let metadata = match tokio::fs::symlink_metadata(&path).await {
                 Ok(metadata) => metadata,
                 Err(_) => return Err(StatusCode::NoSuchFile),
@@ -554,7 +567,7 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
-        if let Some(path) = self.server.filesystem.safe_path(&path) {
+        if let Some(path) = self.server.filesystem.safe_symlink_path(&path).await {
             let metadata = match tokio::fs::symlink_metadata(&path).await {
                 Ok(metadata) => metadata,
                 Err(_) => return Err(StatusCode::NoSuchFile),
@@ -564,7 +577,7 @@ impl russh_sftp::server::Handler for SftpSession {
                 return Err(StatusCode::NoSuchFile);
             }
 
-            let file = Self::convert_entry(&path, metadata).await;
+            let file = Self::convert_entry(&path, metadata);
 
             Ok(russh_sftp::protocol::Attrs {
                 id,
@@ -598,7 +611,135 @@ impl russh_sftp::server::Handler for SftpSession {
         id: u32,
         path: String,
     ) -> Result<russh_sftp::protocol::Attrs, Self::Error> {
-        self.stat(id, path).await
+        if !self.allow_action() {
+            return Err(StatusCode::PermissionDenied);
+        }
+
+        if !self.has_permission(Permission::FileRead) {
+            return Err(StatusCode::PermissionDenied);
+        }
+
+        if let Some(path) = self.server.filesystem.safe_path(&path).await {
+            let metadata = match tokio::fs::symlink_metadata(&path).await {
+                Ok(metadata) => metadata,
+                Err(_) => return Err(StatusCode::NoSuchFile),
+            };
+
+            if self.server.filesystem.is_ignored(&path, metadata.is_dir()) {
+                return Err(StatusCode::NoSuchFile);
+            }
+
+            let file = Self::convert_entry(&path, metadata);
+
+            Ok(russh_sftp::protocol::Attrs {
+                id,
+                attrs: file.attrs,
+            })
+        } else {
+            Err(StatusCode::NoSuchFile)
+        }
+    }
+
+    async fn readlink(&mut self, id: u32, path: String) -> Result<Name, Self::Error> {
+        if !self.allow_action() {
+            return Err(StatusCode::PermissionDenied);
+        }
+
+        if !self.has_permission(Permission::FileRead) {
+            return Err(StatusCode::PermissionDenied);
+        }
+
+        if let Some(path) = self.server.filesystem.safe_symlink_path(&path).await {
+            let metadata = match tokio::fs::symlink_metadata(&path).await {
+                Ok(metadata) => metadata,
+                Err(_) => return Err(StatusCode::NoSuchFile),
+            };
+
+            if self.server.filesystem.is_ignored(&path, metadata.is_dir()) {
+                return Err(StatusCode::NoSuchFile);
+            }
+
+            let file = Self::convert_entry(&path, metadata);
+
+            Ok(Name {
+                id,
+                files: vec![file],
+            })
+        } else {
+            Err(StatusCode::NoSuchFile)
+        }
+    }
+
+    async fn symlink(
+        &mut self,
+        id: u32,
+        linkpath: String,
+        targetpath: String,
+    ) -> Result<Status, Self::Error> {
+        if !self.allow_action() {
+            return Err(StatusCode::PermissionDenied);
+        }
+
+        if self.state.config.system.sftp.read_only {
+            return Err(StatusCode::PermissionDenied);
+        }
+
+        if !self.has_permission(Permission::FileCreate) {
+            return Err(StatusCode::PermissionDenied);
+        }
+
+        if linkpath == targetpath {
+            return Err(StatusCode::NoSuchFile);
+        }
+
+        if let Some(linkpath) = self.server.filesystem.safe_symlink_path(&linkpath).await {
+            if linkpath.exists() {
+                return Err(StatusCode::NoSuchFile);
+            }
+
+            if let Some(targetpath) = self.server.filesystem.safe_path(&targetpath).await {
+                let metadata = match tokio::fs::symlink_metadata(&targetpath).await {
+                    Ok(metadata) => metadata,
+                    Err(_) => return Err(StatusCode::NoSuchFile),
+                };
+
+                if self
+                    .server
+                    .filesystem
+                    .is_ignored(&targetpath, metadata.is_dir())
+                {
+                    return Err(StatusCode::NoSuchFile);
+                }
+
+                if tokio::fs::symlink(&targetpath, &linkpath).await.is_err() {
+                    return Err(StatusCode::NoSuchFile);
+                }
+
+                self.server
+                    .activity
+                    .log_activity(Activity {
+                        event: ActivityEvent::SftpCreate,
+                        user: self.user_uuid,
+                        ip: self.user_ip,
+                        metadata: Some(json!({
+                            "files": [self.server.filesystem.relative_path(&linkpath)],
+                        })),
+                        timestamp: chrono::Utc::now(),
+                    })
+                    .await;
+
+                Ok(Status {
+                    id,
+                    status_code: StatusCode::Ok,
+                    error_message: "Ok".to_string(),
+                    language_tag: "en-US".to_string(),
+                })
+            } else {
+                Err(StatusCode::NoSuchFile)
+            }
+        } else {
+            Err(StatusCode::NoSuchFile)
+        }
     }
 
     async fn open(
@@ -633,7 +774,7 @@ impl russh_sftp::server::Handler for SftpSession {
 
         let handle = self.next_handle_id();
 
-        if let Some(path) = self.server.filesystem.safe_path(&filename) {
+        if let Some(path) = self.server.filesystem.safe_path(&filename).await {
             if path.exists() && !path.is_file() {
                 return Err(StatusCode::NoSuchFile);
             }

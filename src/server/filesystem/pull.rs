@@ -71,7 +71,7 @@ impl Download {
             }
         }
 
-        if !filesystem.is_safe_path(&real_destination) {
+        if !filesystem.is_safe_path(&real_destination).await {
             return Err("Unsafe path generated".into());
         }
 

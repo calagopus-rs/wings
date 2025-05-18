@@ -248,9 +248,28 @@ impl Filesystem {
     }
 
     #[inline]
-    pub fn safe_path(&self, path: &str) -> Option<PathBuf> {
-        let safe_path = Self::resolve_path(&self.base_path.join(path.trim_start_matches('/')));
+    pub async fn safe_path(&self, path: &str) -> Option<PathBuf> {
+        let path = self.base_path.join(path.trim_start_matches('/'));
 
+        if let Ok(safe_path) = tokio::fs::canonicalize(&path).await {
+            if safe_path.starts_with(&self.base_path) {
+                Some(safe_path)
+            } else {
+                None
+            }
+        } else {
+            let safe_path = Self::resolve_path(&path);
+            if safe_path.starts_with(&self.base_path) {
+                Some(safe_path)
+            } else {
+                None
+            }
+        }
+    }
+
+    #[inline]
+    pub async fn safe_symlink_path(&self, path: &str) -> Option<PathBuf> {
+        let safe_path = Self::resolve_path(&self.base_path.join(path.trim_start_matches('/')));
         if safe_path.starts_with(&self.base_path) {
             Some(safe_path)
         } else {
@@ -300,7 +319,7 @@ impl Filesystem {
         let old_parent = old_path.parent().unwrap().canonicalize()?;
         let new_parent = new_path.parent().unwrap().canonicalize()?;
 
-        if !self.is_safe_path(&old_parent) || !self.is_safe_path(&new_parent) {
+        if !self.is_safe_path(&old_parent).await || !self.is_safe_path(&new_parent).await {
             return Err(tokio::io::Error::new(
                 tokio::io::ErrorKind::PermissionDenied,
                 "Unsafe path",
@@ -309,7 +328,7 @@ impl Filesystem {
 
         let abs_new_path = new_parent.join(new_path.file_name().unwrap());
 
-        if !self.is_safe_path(&abs_new_path) {
+        if !self.is_safe_path(&abs_new_path).await {
             return Err(tokio::io::Error::new(
                 tokio::io::ErrorKind::PermissionDenied,
                 "Unsafe path",
@@ -396,8 +415,21 @@ impl Filesystem {
     }
 
     #[inline]
-    pub fn is_safe_path(&self, path: &Path) -> bool {
-        Self::resolve_path(path).starts_with(&self.base_path)
+    pub async fn is_safe_path(&self, path: &Path) -> bool {
+        if let Ok(path) = tokio::fs::canonicalize(path).await {
+            path.starts_with(&self.base_path)
+        } else {
+            Self::resolve_path(path).starts_with(&self.base_path)
+        }
+    }
+
+    #[inline]
+    pub fn is_safe_path_sync(&self, path: &Path) -> bool {
+        if let Ok(path) = path.canonicalize() {
+            path.starts_with(&self.base_path)
+        } else {
+            Self::resolve_path(path).starts_with(&self.base_path)
+        }
     }
 
     pub async fn truncate_root(&self) {
@@ -459,18 +491,21 @@ impl Filesystem {
     }
 
     pub async fn setup(&self) {
-        tokio::fs::create_dir_all(&self.base_path)
-            .await
-            .unwrap_or(());
-        std::os::unix::fs::chown(&self.base_path, Some(self.owner_uid), Some(self.owner_gid))
-            .unwrap();
+        let base_path = self.base_path.clone();
+        let owner_uid = self.owner_uid;
+        let owner_gid = self.owner_gid;
+
+        tokio::fs::create_dir_all(&base_path).await.unwrap_or(());
+        tokio::task::spawn_blocking(move || {
+            std::os::unix::fs::chown(&base_path, Some(owner_uid), Some(owner_gid)).unwrap();
+        })
+        .await
+        .unwrap();
     }
 
     pub async fn destroy(&self) {
         self.checker.abort();
-        tokio::fs::remove_dir_all(&self.base_path)
-            .await
-            .unwrap_or(());
+        tokio::fs::remove_dir_all(&self.base_path).await.ok();
     }
 
     #[inline]
@@ -479,19 +514,24 @@ impl Filesystem {
         path: PathBuf,
         metadata: &Metadata,
         buffer: Option<&[u8]>,
+        symlink_destination: Option<PathBuf>,
+        symlink_destination_metadata: Option<Metadata>,
     ) -> crate::models::DirectoryEntry {
-        let size = if metadata.is_dir() {
+        let real_metadata = symlink_destination_metadata.as_ref().unwrap_or(metadata);
+        let real_path = symlink_destination.as_ref().unwrap_or(&path);
+
+        let size = if real_metadata.is_dir() {
             let disk_usage = self.disk_usage.read().unwrap();
-            let components = self.path_to_components(&path);
+            let components = self.path_to_components(real_path);
 
             disk_usage.get_size(&components).unwrap_or(0)
         } else {
-            metadata.len()
+            real_metadata.len()
         };
 
-        let mime = if metadata.is_dir() {
+        let mime = if real_metadata.is_dir() {
             "inode/directory"
-        } else if metadata.is_symlink() {
+        } else if real_metadata.is_symlink() {
             "inode/symlink"
         } else if let Some(buffer) = buffer {
             if let Some(mime) = infer::get(buffer) {
@@ -555,8 +595,8 @@ impl Filesystem {
             mode: format_mode(metadata.permissions().mode()),
             mode_bits: format!("{:o}", metadata.permissions().mode() & 0o777),
             size,
-            directory: metadata.is_dir(),
-            file: metadata.is_file(),
+            directory: real_metadata.is_dir(),
+            file: real_metadata.is_file(),
             symlink: metadata.is_symlink(),
             mime,
         }
@@ -567,9 +607,43 @@ impl Filesystem {
         path: PathBuf,
         metadata: Metadata,
     ) -> crate::models::DirectoryEntry {
+        let symlink_destination = if metadata.is_symlink() {
+            match tokio::fs::read_link(&path).await {
+                Ok(link) => {
+                    let joined = self.base_path.join(link);
+
+                    if let Ok(joined) = joined.canonicalize() {
+                        if joined.starts_with(&self.base_path) {
+                            Some(joined)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                }
+                Err(_) => None,
+            }
+        } else {
+            None
+        };
+
+        let symlink_destination_metadata = if let Some(symlink_destination) = &symlink_destination {
+            tokio::fs::symlink_metadata(symlink_destination).await.ok()
+        } else {
+            None
+        };
+
         let mut buffer = [0; 128];
-        let buffer = if metadata.is_file() {
-            let mut file = tokio::fs::File::open(&path).await.unwrap();
+        let buffer = if metadata.is_file()
+            || (symlink_destination.is_some()
+                && symlink_destination_metadata
+                    .as_ref()
+                    .is_some_and(|m| m.is_file()))
+        {
+            let mut file = tokio::fs::File::open(symlink_destination.as_ref().unwrap_or(&path))
+                .await
+                .unwrap();
             let bytes_read = file.read(&mut buffer).await.unwrap_or(0);
 
             Some(&buffer[..bytes_read])
@@ -577,7 +651,13 @@ impl Filesystem {
             None
         };
 
-        self.to_api_entry_buffer(path, &metadata, buffer)
+        self.to_api_entry_buffer(
+            path,
+            &metadata,
+            buffer,
+            symlink_destination,
+            symlink_destination_metadata,
+        )
     }
 }
 

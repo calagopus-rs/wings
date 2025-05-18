@@ -22,7 +22,7 @@ mod post {
         server: GetServer,
         axum::Json(data): axum::Json<Payload>,
     ) -> (StatusCode, axum::Json<serde_json::Value>) {
-        let location = match server.filesystem.safe_path(&data.location) {
+        let location = match server.filesystem.safe_path(&data.location).await {
             Some(path) => path,
             None => {
                 return (

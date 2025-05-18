@@ -107,7 +107,7 @@ pub async fn restore_backup(
                 }
 
                 let destination_path = filesystem.base_path.join(&path);
-                if !filesystem.is_safe_path(&destination_path) {
+                if !filesystem.is_safe_path_sync(&destination_path) {
                     continue;
                 }
 

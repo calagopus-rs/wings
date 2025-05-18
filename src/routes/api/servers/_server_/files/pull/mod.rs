@@ -62,7 +62,7 @@ mod post {
         server: GetServer,
         axum::Json(data): axum::Json<Payload>,
     ) -> (StatusCode, axum::Json<serde_json::Value>) {
-        let path = match server.filesystem.safe_path(&data.root) {
+        let path = match server.filesystem.safe_path(&data.root).await {
             Some(path) => path,
             None => {
                 return (

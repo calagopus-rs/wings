@@ -232,7 +232,7 @@ impl Archive {
                         }
 
                         let destination_path = destination.join(path);
-                        if !self.filesystem.is_safe_path(&destination_path) {
+                        if !self.filesystem.is_safe_path_sync(&destination_path) {
                             continue;
                         }
 
@@ -284,7 +284,7 @@ impl Archive {
                         }
 
                         let destination_path = destination.join(path);
-                        if !self.filesystem.is_safe_path(&destination_path) {
+                        if !self.filesystem.is_safe_path_sync(&destination_path) {
                             continue;
                         }
 

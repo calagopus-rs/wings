@@ -187,7 +187,7 @@ impl ProcessConfiguration {
                         format!("Checking if parent directory exists: {}", parent_path),
                     );
 
-                    if let Some(safe_path) = server.filesystem.safe_path(&parent_path) {
+                    if let Some(safe_path) = server.filesystem.safe_path(&parent_path).await {
                         if !safe_path.exists() {
                             crate::logger::log(
                                 crate::logger::LoggerLevel::Info,
@@ -243,7 +243,7 @@ impl ProcessConfiguration {
 
             let mut file_content = String::new();
 
-            let safe_file_path = match server.filesystem.safe_path(&file_path) {
+            let safe_file_path = match server.filesystem.safe_path(&file_path).await {
                 Some(path) => path,
                 None => {
                     crate::logger::log(

@@ -100,7 +100,7 @@ mod post {
             }
         };
 
-        let directory = match server.filesystem.safe_path(&data.directory) {
+        let directory = match server.filesystem.safe_path(&data.directory).await {
             Some(path) => path,
             None => {
                 return (
@@ -132,7 +132,7 @@ mod post {
             };
             let file_path = directory.join(filename);
 
-            if !server.filesystem.is_safe_path(&file_path) {
+            if !server.filesystem.is_safe_path(&file_path).await {
                 return (
                     StatusCode::EXPECTATION_FAILED,
                     axum::Json(ApiError::new("file path is not safe").to_json()),

@@ -35,7 +35,7 @@ mod put {
         server: GetServer,
         axum::Json(data): axum::Json<Payload>,
     ) -> (StatusCode, axum::Json<serde_json::Value>) {
-        let root = match server.filesystem.safe_path(&data.root) {
+        let root = match server.filesystem.safe_path(&data.root).await {
             Some(path) => path,
             None => {
                 return (
@@ -56,11 +56,11 @@ mod put {
         let mut renamed_count = 0;
         for file in data.files {
             let from = crate::server::filesystem::Filesystem::resolve_path(&root.join(file.from));
-            if !server.filesystem.is_safe_path(&from) || from == root {
+            if !server.filesystem.is_safe_path(&from).await || from == root {
                 continue;
             }
             let to = crate::server::filesystem::Filesystem::resolve_path(&root.join(file.to));
-            if !server.filesystem.is_safe_path(&to) || to == root {
+            if !server.filesystem.is_safe_path(&to).await || to == root {
                 continue;
             }
 

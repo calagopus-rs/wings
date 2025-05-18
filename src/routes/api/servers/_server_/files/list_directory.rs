@@ -29,7 +29,7 @@ mod get {
     ) -> (StatusCode, axum::Json<serde_json::Value>) {
         let mut entries = Vec::new();
 
-        let path = match server.filesystem.safe_path(&data.directory) {
+        let path = match server.filesystem.safe_path(&data.directory).await {
             Some(path) => path,
             None => {
                 return (

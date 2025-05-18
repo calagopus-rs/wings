@@ -41,7 +41,7 @@ mod post {
         let limit = data.limit.unwrap_or(100);
         let max_size = data.max_size.unwrap_or(1024 * 512);
 
-        let root = match server.filesystem.safe_path(&data.root) {
+        let root = match server.filesystem.safe_path(&data.root).await {
             Some(path) => path,
             None => {
                 return (
@@ -118,6 +118,8 @@ mod post {
                                     path.to_path_buf(),
                                     &metadata,
                                     Some(&buffer[..bytes_read]),
+                                    None,
+                                    None,
                                 );
                                 entry.name = match path.strip_prefix(&root) {
                                     Ok(path) => path.to_string_lossy().to_string(),
@@ -157,6 +159,8 @@ mod post {
                                             path.to_path_buf(),
                                             &metadata,
                                             Some(&buffer[..bytes_read]),
+                                            None,
+                                            None,
                                         );
                                         entry.name = match path.strip_prefix(&root) {
                                             Ok(path) => path.to_string_lossy().to_string(),

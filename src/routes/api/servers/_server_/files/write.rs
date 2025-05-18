@@ -32,7 +32,7 @@ mod post {
         Query(data): Query<Params>,
         body: Body,
     ) -> (StatusCode, axum::Json<serde_json::Value>) {
-        let path = match server.filesystem.safe_path(&data.file) {
+        let path = match server.filesystem.safe_path(&data.file).await {
             Some(path) => path,
             None => {
                 return (
@@ -73,7 +73,7 @@ mod post {
         };
 
         let parent = path.parent().unwrap();
-        if !server.filesystem.is_safe_path(parent) {
+        if !server.filesystem.is_safe_path(parent).await {
             return (
                 StatusCode::NOT_FOUND,
                 axum::Json(ApiError::new("parent directory not found").to_json()),
