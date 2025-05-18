@@ -567,7 +567,7 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
-        if let Some(path) = self.server.filesystem.safe_symlink_path(&path).await {
+        if let Some(path) = self.server.filesystem.safe_path(&path).await {
             let metadata = match tokio::fs::symlink_metadata(&path).await {
                 Ok(metadata) => metadata,
                 Err(_) => return Err(StatusCode::NoSuchFile),
@@ -619,7 +619,7 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
-        if let Some(path) = self.server.filesystem.safe_path(&path).await {
+        if let Some(path) = self.server.filesystem.safe_symlink_path(&path).await {
             let metadata = match tokio::fs::symlink_metadata(&path).await {
                 Ok(metadata) => metadata,
                 Err(_) => return Err(StatusCode::NoSuchFile),
