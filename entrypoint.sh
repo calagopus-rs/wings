@@ -1,3 +1,3 @@
 cd /app/server
 
-exec ./bin
+exec ./wings-rs

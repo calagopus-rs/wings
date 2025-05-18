@@ -202,7 +202,7 @@ impl Server {
                                 let client = Arc::clone(&client);
                                 let server = server.clone();
                                 tokio::task::spawn_blocking(move || {
-                                    if let Err(err) = futures::executor::block_on(server.start(&client, None)) {
+                                    if let Err(err) = futures::executor::block_on(server.start(&client, Some(std::time::Duration::from_secs(5)))) {
                                         crate::logger::log(
                                             crate::logger::LoggerLevel::Error,
                                             format!(
@@ -287,7 +287,7 @@ impl Server {
                                 let client = Arc::clone(&client);
                                 let server = server.clone();
                                 tokio::task::spawn_blocking(move || {
-                                    if let Err(err) = futures::executor::block_on(server.start(&client, None)) {
+                                    if let Err(err) = futures::executor::block_on(server.start(&client, Some(std::time::Duration::from_secs(5)))) {
                                         crate::logger::log(
                                             crate::logger::LoggerLevel::Error,
                                             format!(
@@ -298,6 +298,8 @@ impl Server {
                                     }
                                 });
                             }
+
+                            break;
                         }
                         _ => {}
                     }
@@ -896,6 +898,7 @@ impl Server {
         } else {
             self.stopping
                 .store(true, std::sync::atomic::Ordering::Relaxed);
+
             Ok(())
         }
     }
