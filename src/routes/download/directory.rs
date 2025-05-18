@@ -120,11 +120,11 @@ mod get {
             tar.mode(tar::HeaderMode::Complete);
 
             for entry in WalkBuilder::new(&path)
-                .hidden(false)
                 .git_ignore(false)
                 .ignore(false)
                 .git_exclude(false)
                 .follow_links(false)
+                .hidden(false)
                 .build()
                 .flatten()
             {

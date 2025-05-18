@@ -56,6 +56,7 @@ pub async fn create_backup(
                         .add_custom_ignore_filename(".pteroignore")
                         .follow_links(false)
                         .git_global(false)
+                        .hidden(false)
                         .build(),
                 ),
                 Some(&filesystem.base_path),

@@ -464,11 +464,11 @@ impl Filesystem {
         fn recursive_chown(path: &Path, owner_uid: u32, owner_gid: u32) {
             let metadata = path.symlink_metadata().unwrap();
             if metadata.is_dir() {
-                for entry in path.read_dir().unwrap() {
-                    let entry = entry.unwrap();
-                    let path = entry.path();
-
-                    recursive_chown(&path, owner_uid, owner_gid);
+                if let Ok(entries) = path.read_dir() {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        recursive_chown(&path, owner_uid, owner_gid);
+                    }
                 }
 
                 std::os::unix::fs::chown(path, Some(owner_uid), Some(owner_gid)).ok();
