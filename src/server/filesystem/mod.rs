@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, RwLock, RwLockReadGuard,
-        atomic::{AtomicI64, AtomicU64},
+        atomic::{AtomicBool, AtomicI64, AtomicU64},
     },
 };
 use tokio::io::AsyncReadExt;
@@ -16,7 +16,7 @@ mod usage;
 pub mod writer;
 
 pub struct Filesystem {
-    checker: tokio::task::JoinHandle<()>,
+    checker_abort: Arc<AtomicBool>,
 
     pub base_path: PathBuf,
 
@@ -47,84 +47,93 @@ impl Filesystem {
             disk_ignored.add(entry).ok();
         }
 
-        Self {
-            checker: tokio::task::spawn_blocking({
-                let disk_usage = Arc::clone(&disk_usage);
-                let disk_usage_cached = Arc::clone(&disk_usage_cached);
-                let base_path = base_path.clone();
+        let checker_abort = Arc::new(AtomicBool::new(false));
 
-                move || {
-                    loop {
-                        crate::logger::log(
-                            crate::logger::LoggerLevel::Debug,
-                            format!("Checking disk usage for {}", base_path.display()),
-                        );
+        std::thread::spawn({
+            let disk_usage = Arc::clone(&disk_usage);
+            let disk_usage_cached = Arc::clone(&disk_usage_cached);
+            let checker_abort = Arc::clone(&checker_abort);
+            let base_path = base_path.clone();
 
-                        let mut tmp_disk_usage = usage::DiskUsage::new();
+            move || {
+                loop {
+                    if checker_abort.load(std::sync::atomic::Ordering::Relaxed) {
+                        break;
+                    }
 
-                        fn recursive_size(
-                            path: &Path,
-                            relative_path: &[String],
-                            disk_usage: &mut usage::DiskUsage,
-                        ) -> u64 {
-                            let mut total_size = 0;
-                            let metadata = match path.symlink_metadata() {
-                                Ok(metadata) => metadata,
-                                Err(_) => return 0,
-                            };
+                    crate::logger::log(
+                        crate::logger::LoggerLevel::Debug,
+                        format!("Checking disk usage for {}", base_path.display()),
+                    );
 
-                            if metadata.is_dir() {
-                                if let Ok(entries) = path.read_dir() {
-                                    for entry in entries.flatten() {
-                                        let path = entry.path();
-                                        let metadata = match path.symlink_metadata() {
-                                            Ok(metadata) => metadata,
-                                            Err(_) => continue,
-                                        };
+                    let mut tmp_disk_usage = usage::DiskUsage::new();
 
-                                        let file_name =
-                                            entry.file_name().to_string_lossy().to_string();
-                                        let mut new_path = relative_path.to_vec();
-                                        new_path.push(file_name);
+                    fn recursive_size(
+                        path: &Path,
+                        relative_path: &[String],
+                        disk_usage: &mut usage::DiskUsage,
+                    ) -> u64 {
+                        let mut total_size = 0;
+                        let metadata = match path.symlink_metadata() {
+                            Ok(metadata) => metadata,
+                            Err(_) => return 0,
+                        };
 
-                                        if metadata.is_dir() {
-                                            let size = recursive_size(&path, &new_path, disk_usage);
-                                            disk_usage.update_size(&new_path, size as i64);
-                                        } else {
-                                            total_size += metadata.len();
-                                        }
+                        if metadata.is_dir() {
+                            if let Ok(entries) = path.read_dir() {
+                                for entry in entries.flatten() {
+                                    let path = entry.path();
+                                    let metadata = match path.symlink_metadata() {
+                                        Ok(metadata) => metadata,
+                                        Err(_) => continue,
+                                    };
+
+                                    let file_name = entry.file_name().to_string_lossy().to_string();
+                                    let mut new_path = relative_path.to_vec();
+                                    new_path.push(file_name);
+
+                                    if metadata.is_dir() {
+                                        let size = recursive_size(&path, &new_path, disk_usage);
+                                        disk_usage.update_size(&new_path, size as i64);
+                                    } else {
+                                        total_size += metadata.len();
                                     }
                                 }
-                            } else {
-                                total_size += metadata.len();
                             }
-
-                            total_size
+                        } else {
+                            total_size += metadata.len();
                         }
 
-                        let total_size = recursive_size(&base_path, &[], &mut tmp_disk_usage);
-                        let total_entry_size =
-                            tmp_disk_usage.entries.values().map(|e| e.size).sum::<u64>();
-
-                        *disk_usage.write().unwrap() = tmp_disk_usage;
-                        disk_usage_cached.store(
-                            total_size + total_entry_size,
-                            std::sync::atomic::Ordering::Relaxed,
-                        );
-
-                        crate::logger::log(
-                            crate::logger::LoggerLevel::Debug,
-                            format!(
-                                "Disk usage for {}: {} bytes",
-                                base_path.display(),
-                                disk_usage_cached.load(std::sync::atomic::Ordering::Relaxed)
-                            ),
-                        );
-
-                        std::thread::sleep(std::time::Duration::from_secs(check_interval));
+                        total_size
                     }
+
+                    let total_size = recursive_size(&base_path, &[], &mut tmp_disk_usage);
+                    let total_entry_size =
+                        tmp_disk_usage.entries.values().map(|e| e.size).sum::<u64>();
+
+                    *disk_usage.write().unwrap() = tmp_disk_usage;
+                    disk_usage_cached.store(
+                        total_size + total_entry_size,
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+
+                    crate::logger::log(
+                        crate::logger::LoggerLevel::Debug,
+                        format!(
+                            "Disk usage for {}: {} bytes",
+                            base_path.display(),
+                            disk_usage_cached.load(std::sync::atomic::Ordering::Relaxed)
+                        ),
+                    );
+
+                    std::thread::sleep(std::time::Duration::from_secs(check_interval));
                 }
-            }),
+            }
+        });
+
+        Self {
+            checker_abort,
+
             base_path,
 
             disk_limit: AtomicI64::new(disk_limit as i64),
@@ -504,7 +513,8 @@ impl Filesystem {
     }
 
     pub async fn destroy(&self) {
-        self.checker.abort();
+        self.checker_abort
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         tokio::fs::remove_dir_all(&self.base_path).await.ok();
     }
 
@@ -663,6 +673,7 @@ impl Filesystem {
 
 impl Drop for Filesystem {
     fn drop(&mut self) {
-        self.checker.abort();
+        self.checker_abort
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 }
