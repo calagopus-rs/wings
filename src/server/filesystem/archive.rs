@@ -223,8 +223,7 @@ impl Archive {
                     let sync_reader = SyncIoBridge::new(reader.unwrap());
                     let mut archive = tar::Archive::new(sync_reader);
 
-                    for entry in archive.entries().unwrap() {
-                        let mut entry = entry.unwrap();
+                    for mut entry in archive.entries().unwrap().flatten() {
                         let path = entry.path().unwrap();
 
                         if path.is_absolute() {

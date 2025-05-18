@@ -1,19 +1,15 @@
-use chrono::Local;
 use colored::Colorize;
+use human_bytes::human_bytes;
 use ignore::WalkBuilder;
 use sha2::Digest;
 use std::{
     os::unix::fs::MetadataExt,
-    path::Path,
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::{Arc, atomic::AtomicU64},
 };
-use tokio::io::{AsyncReadExt, AsyncSeekExt};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 pub struct OutgoingServerTransfer {
-    pub bytes_sent: Arc<AtomicU64>,
+    pub bytes_archived: Arc<AtomicU64>,
 
     server: super::Server,
     task: Option<tokio::task::JoinHandle<()>>,
@@ -22,27 +18,27 @@ pub struct OutgoingServerTransfer {
 impl OutgoingServerTransfer {
     pub fn new(server: &super::Server) -> Self {
         Self {
-            bytes_sent: Arc::new(AtomicU64::new(0)),
+            bytes_archived: Arc::new(AtomicU64::new(0)),
             server: server.clone(),
             task: None,
         }
     }
 
     fn log(server: &super::Server, message: &str) {
-        let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S");
-        let formatted_message = format!(
-            "{} {}",
-            format!("{} [Transfer System] [Source Node]:", timestamp)
-                .yellow()
-                .bold(),
-            message
-        );
-
         server
             .websocket
             .send(super::websocket::WebsocketMessage::new(
                 super::websocket::WebsocketEvent::ServerTransferLogs,
-                &[formatted_message],
+                &[format!(
+                    "{} {}",
+                    format!(
+                        "{} [Transfer System] [Source Node]:",
+                        chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
+                    )
+                    .yellow()
+                    .bold(),
+                    message
+                )],
             ))
             .ok();
     }
@@ -54,10 +50,11 @@ impl OutgoingServerTransfer {
             .set_server_transfer(server.uuid, false)
             .await
             .ok();
-
         server.outgoing_transfer.write().await.take();
 
-        server.transferring.store(false, Ordering::SeqCst);
+        server
+            .transferring
+            .store(false, std::sync::atomic::Ordering::SeqCst);
         server
             .websocket
             .send(super::websocket::WebsocketMessage::new(
@@ -74,7 +71,7 @@ impl OutgoingServerTransfer {
         token: String,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let client = Arc::clone(client);
-        let bytes_sent = Arc::clone(&self.bytes_sent);
+        let bytes_archived = Arc::clone(&self.bytes_archived);
         let server = self.server.clone();
 
         self.task.replace(tokio::spawn(async move {
@@ -93,17 +90,15 @@ impl OutgoingServerTransfer {
                 ))
                 .ok();
 
-            let archive_path = Path::new(&server.config.system.archive_directory)
-                .join(format!("{}.tar.gz", server.uuid));
-
-            let written_bytes = Arc::new(AtomicU64::new(0));
+            let (mut checksum_writer, checksum_reader) = tokio::io::duplex(256);
+            let (checksummed_writer, mut checksummed_reader) = tokio::io::duplex(65536);
+            let (mut writer, reader) = tokio::io::duplex(65536);
             let archive_task = tokio::task::spawn_blocking({
+                let bytes_archived = Arc::clone(&bytes_archived);
                 let server = Arc::clone(&server);
-                let written_bytes = Arc::clone(&written_bytes);
-                let archive_path = archive_path.clone();
 
                 move || {
-                    let writer = std::fs::File::create(archive_path).unwrap();
+                    let writer = tokio_util::io::SyncIoBridge::new(checksummed_writer);
                     let writer = flate2::write::GzEncoder::new(writer, flate2::Compression::fast());
 
                     let mut tar = tar::Builder::new(writer);
@@ -160,8 +155,10 @@ impl OutgoingServerTransfer {
                             entry_header.set_size(metadata.len());
 
                             let file = std::fs::File::open(entry.path()).unwrap();
-                            written_bytes
-                                .fetch_add(file.metadata().unwrap().len(), Ordering::Relaxed);
+                            bytes_archived.fetch_add(
+                                file.metadata().unwrap().len(),
+                                std::sync::atomic::Ordering::Relaxed,
+                            );
 
                             if tar.append_data(&mut entry_header, path, file).is_err() {
                                 break;
@@ -185,85 +182,55 @@ impl OutgoingServerTransfer {
                 }
             });
 
-            let progress_task = tokio::task::spawn({
-                let server = server.clone();
-                let wriiten_bytes = Arc::clone(&written_bytes);
+            let checksum_task = tokio::task::spawn(async move {
+                let mut hasher = sha2::Sha256::new();
 
-                async move {
-                    let mut last_bytes_written = 0;
-
-                    loop {
-                        let bytes_written_value = wriiten_bytes.load(Ordering::SeqCst);
-                        let diff_sent = bytes_written_value - last_bytes_written;
-                        last_bytes_written = bytes_written_value;
-
-                        let formatted_size = format_bytes(bytes_written_value);
-                        let formatted_total = format_bytes(server.filesystem.cached_usage());
-                        let formatted_diff = format_bytes(diff_sent);
-
-                        Self::log(
-                            &server,
-                            &format!(
-                                "Wrote {}/{} ({}/s)",
-                                formatted_size, formatted_total, formatted_diff
-                            ),
-                        );
-                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                let mut buffer = [0; 8192];
+                loop {
+                    let bytes_read = checksummed_reader.read(&mut buffer).await.unwrap();
+                    if bytes_read == 0 {
+                        break;
                     }
+
+                    hasher.update(&buffer[..bytes_read]);
+                    writer.write_all(&buffer[..bytes_read]).await.unwrap();
                 }
+
+                checksum_writer
+                    .write_all(format!("{:x}", hasher.finalize()).as_bytes())
+                    .await
+                    .unwrap();
             });
 
-            if let Err(err) = archive_task.await {
-                crate::logger::log(
-                    crate::logger::LoggerLevel::Error,
-                    format!("Failed to create transfer archive: {}", err),
-                );
-
-                tokio::fs::remove_file(archive_path).await.ok();
-                Self::transfer_failure(&server).await;
-                progress_task.abort();
-                return;
-            }
-
-            progress_task.abort();
-
-            let mut hasher = sha2::Sha256::new();
-            let mut file = tokio::fs::File::open(&archive_path).await.unwrap();
-
-            let mut buffer = [0; 8192];
-            loop {
-                let bytes_read = file.read(&mut buffer).await.unwrap();
-                if bytes_read == 0 {
-                    break;
-                }
-
-                hasher.update(&buffer[..bytes_read]);
-            }
-
-            let checksum = format!("{:x}", hasher.finalize());
-            let formatted_file_size = format_bytes(file.metadata().await.unwrap().len());
-
-            file.seek(std::io::SeekFrom::Start(0)).await.unwrap();
-
             let progress_task = tokio::task::spawn({
                 let server = server.clone();
 
                 async move {
-                    let mut last_bytes_sent = 0;
+                    let total_bytes = server.filesystem.cached_usage();
+                    let mut last_bytes_archived = 0;
 
                     loop {
-                        let bytes_sent = bytes_sent.load(Ordering::SeqCst);
-                        let diff_sent = bytes_sent - last_bytes_sent;
-                        last_bytes_sent = bytes_sent;
+                        let bytes_archived =
+                            bytes_archived.load(std::sync::atomic::Ordering::SeqCst);
+                        let diff = bytes_archived - last_bytes_archived;
+                        last_bytes_archived = bytes_archived;
 
-                        let formatted_size = format_bytes(bytes_sent);
-                        let formatted_diff = format_bytes(diff_sent);
+                        let formatted_bytes_archived = human_bytes(bytes_archived as f64);
+                        let formatted_total_bytes = human_bytes(total_bytes as f64);
+                        let formatted_diff = human_bytes(diff as f64);
+                        let formatted_percentage = format!(
+                            "{:.2}%",
+                            (bytes_archived as f64 / total_bytes as f64) * 100.0
+                        );
 
                         Self::log(
                             &server,
                             &format!(
-                                "Transferred {}/{} ({}/s)",
-                                formatted_size, formatted_file_size, formatted_diff
+                                "Transferred {} of {} ({}/s, {})",
+                                formatted_bytes_archived,
+                                formatted_total_bytes,
+                                formatted_diff,
+                                formatted_percentage
                             ),
                         );
                         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -274,47 +241,50 @@ impl OutgoingServerTransfer {
             let form = reqwest::multipart::Form::new()
                 .part(
                     "archive",
-                    reqwest::multipart::Part::stream(file)
-                        .file_name("archive.tar.gz")
-                        .mime_str("application/gzip")
-                        .unwrap(),
+                    reqwest::multipart::Part::stream(reqwest::Body::wrap_stream(
+                        tokio_util::io::ReaderStream::new(Box::pin(reader)),
+                    ))
+                    .file_name("archive.tar.gz")
+                    .mime_str("application/gzip")
+                    .unwrap(),
                 )
                 .part(
                     "checksum",
-                    reqwest::multipart::Part::text(checksum)
-                        .file_name("checksum")
-                        .mime_str("text/plain")
-                        .unwrap(),
+                    reqwest::multipart::Part::stream(reqwest::Body::wrap_stream(
+                        tokio_util::io::ReaderStream::new(Box::pin(checksum_reader)),
+                    ))
+                    .file_name("checksum")
+                    .mime_str("text/plain")
+                    .unwrap(),
                 );
+
+            let client = reqwest::Client::new();
+            let response = client
+                .post(url)
+                .header("Authorization", token)
+                .multipart(form)
+                .send();
 
             Self::log(&server, "Streaming archive to destination...");
 
-            let client = reqwest::Client::new();
-            if let Err(err) = client
-                .post(url)
-                .timeout(std::time::Duration::MAX)
-                .header("Authorization", token)
-                .multipart(form)
-                .send()
-                .await
-            {
+            let (archive, _, _) = tokio::join!(archive_task, checksum_task, response);
+            progress_task.abort();
+
+            if let Ok(Err(err)) = archive {
                 crate::logger::log(
                     crate::logger::LoggerLevel::Error,
-                    format!("Failed to send transfer to destination: {}", err),
+                    format!("Failed to create transfer archive: {}", err),
                 );
 
-                progress_task.abort();
                 Self::transfer_failure(&server).await;
-                tokio::fs::remove_file(archive_path).await.ok();
                 return;
             }
 
-            progress_task.abort();
-            tokio::fs::remove_file(archive_path).await.ok();
-
             Self::log(&server, "Finished streaming archive to destination.");
 
-            server.transferring.store(false, Ordering::SeqCst);
+            server
+                .transferring
+                .store(false, std::sync::atomic::Ordering::SeqCst);
             server
                 .websocket
                 .send(super::websocket::WebsocketMessage::new(
@@ -325,22 +295,6 @@ impl OutgoingServerTransfer {
         }));
 
         Ok(())
-    }
-}
-
-fn format_bytes(bytes: u64) -> String {
-    const KB: u64 = 1024;
-    const MB: u64 = KB * 1024;
-    const GB: u64 = MB * 1024;
-
-    if bytes >= GB {
-        format!("{:.2} GiB", bytes as f64 / GB as f64)
-    } else if bytes >= MB {
-        format!("{:.2} MiB", bytes as f64 / MB as f64)
-    } else if bytes >= KB {
-        format!("{:.2} KiB", bytes as f64 / KB as f64)
-    } else {
-        format!("{} bytes", bytes)
     }
 }
 
