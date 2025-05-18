@@ -186,7 +186,7 @@ mod get {
                 }
             }
 
-            tar.finish().unwrap();
+            tar.finish().ok();
         });
 
         let mut folder_ascii = "".to_string();
