@@ -10,8 +10,6 @@ use std::{
     sync::Arc,
 };
 
-pub static mut DEBUG: bool = false;
-
 fn app_name() -> String {
     "Pterodactyl".to_string()
 }
@@ -507,10 +505,6 @@ impl Config {
             client,
             jwt,
         };
-
-        unsafe {
-            DEBUG = config.debug;
-        }
 
         tracing::subscriber::set_global_default(
             tracing_subscriber::fmt()

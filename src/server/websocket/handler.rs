@@ -184,7 +184,7 @@ pub async fn handle_ws(
                             _ => {}
                         }
 
-                        super::send_message(&sender, message).await;
+                        super::send_message(&sender, message).await
                     }
                 }
             }
@@ -215,12 +215,12 @@ pub async fn handle_ws(
                                             if let Some(jwt) = socket_jwt.as_ref() {
                                                 if jwt.base.validate(&state.config.jwt) {
                                                     super::send_message(
-                                                &sender,
-                                                websocket::WebsocketMessage::new(
-                                                    websocket::WebsocketEvent::ServerConsoleOutput,
-                                                    &[stdout],
-                                                ),
-                                            ).await;
+                                                        &sender,
+                                                        websocket::WebsocketMessage::new(
+                                                            websocket::WebsocketEvent::ServerConsoleOutput,
+                                                            &[stdout],
+                                                        ),
+                                                    ).await;
                                                 }
                                             }
                                         }
@@ -279,10 +279,19 @@ pub async fn handle_ws(
             }
         }));
 
-        writer.await.unwrap_or_default();
-
-        for handle in handles {
-            handle.abort();
+        tokio::select! {
+            _ = writer => {
+                tracing::debug!(
+                    server = %server.uuid,
+                    "websocket writer finished",
+                );
+            }
+            _ = futures_util::future::join_all(handles) => {
+                tracing::debug!(
+                    server = %server.uuid,
+                    "websocket handles finished",
+                );
+            }
         }
     })
 }
