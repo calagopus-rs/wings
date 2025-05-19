@@ -132,7 +132,8 @@ pub async fn handle_ws(
             }
         };
 
-        let mut futures: Vec<Pin<Box<dyn futures_util::Future<Output = ()> + Send>>> = Vec::with_capacity(4);
+        let mut futures: Vec<Pin<Box<dyn futures_util::Future<Output = ()> + Send>>> =
+            Vec::with_capacity(4);
 
         // Server Listener
         futures.push({
@@ -200,45 +201,35 @@ pub async fn handle_ws(
             Box::pin(async move {
                 loop {
                     if let Some(mut stdout) = server.container_stdout().await {
-                        let thread = tokio::spawn({
-                            let socket_jwt = Arc::clone(&socket_jwt);
-                            let sender = Arc::clone(&sender);
-                            let state = Arc::clone(&state);
-                            let server = server.clone();
+                        loop {
+                            match stdout.recv().await {
+                                Ok(stdout) => {
+                                    let socket_jwt = socket_jwt.read().await;
 
-                            async move {
-                                loop {
-                                    match stdout.recv().await {
-                                        Ok(stdout) => {
-                                            let socket_jwt = socket_jwt.read().await;
-
-                                            if let Some(jwt) = socket_jwt.as_ref() {
-                                                if jwt.base.validate(&state.config.jwt) {
-                                                    super::send_message(
-                                                        &sender,
-                                                        websocket::WebsocketMessage::new(
-                                                            websocket::WebsocketEvent::ServerConsoleOutput,
-                                                            &[stdout],
-                                                        ),
-                                                    ).await;
-                                                }
-                                            }
-                                        }
-                                        Err(RecvError::Closed) => {
-                                            break;
-                                        }
-                                        Err(RecvError::Lagged(_)) => {
-                                            tracing::debug!(
-                                                server = %server.uuid,
-                                                "stdout lagged behind, messages dropped"
-                                            );
+                                    if let Some(jwt) = socket_jwt.as_ref() {
+                                        if jwt.base.validate(&state.config.jwt) {
+                                            super::send_message(
+                                                &sender,
+                                                websocket::WebsocketMessage::new(
+                                                    websocket::WebsocketEvent::ServerConsoleOutput,
+                                                    &[stdout],
+                                                ),
+                                            )
+                                            .await;
                                         }
                                     }
                                 }
+                                Err(RecvError::Closed) => {
+                                    break;
+                                }
+                                Err(RecvError::Lagged(_)) => {
+                                    tracing::debug!(
+                                        server = %server.uuid,
+                                        "stdout lagged behind, messages dropped"
+                                    );
+                                }
                             }
-                        });
-
-                        thread.await.unwrap_or_default();
+                        }
                     }
 
                     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
