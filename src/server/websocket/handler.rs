@@ -9,7 +9,7 @@ use axum::{
     response::Response,
 };
 use futures_util::{SinkExt, StreamExt};
-use std::{net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, pin::Pin, sync::Arc};
 use tokio::sync::{Mutex, RwLock, broadcast::error::RecvError};
 
 pub async fn handle_ws(
@@ -48,7 +48,7 @@ pub async fn handle_ws(
         let sender = Arc::new(Mutex::new(sender));
         let socket_jwt = Arc::new(RwLock::new(None));
 
-        let writer = tokio::spawn({
+        let writer = {
             let state = Arc::clone(&state);
             let socket_jwt = Arc::clone(&socket_jwt);
             let sender = Arc::clone(&sender);
@@ -130,18 +130,18 @@ pub async fn handle_ws(
                     }
                 }
             }
-        });
+        };
 
-        let mut handles = Vec::with_capacity(4);
+        let mut futures: Vec<Pin<Box<dyn futures_util::Future<Output = ()> + Send>>> = Vec::with_capacity(4);
 
         // Server Listener
-        handles.push(tokio::spawn({
+        futures.push({
             let socket_jwt = Arc::clone(&socket_jwt);
             let sender = Arc::clone(&sender);
             let server = Arc::clone(&server);
             let mut reciever = server.websocket.subscribe();
 
-            async move {
+            Box::pin(async move {
                 loop {
                     if let Ok(message) = reciever.recv().await {
                         let socket_jwt = socket_jwt.read().await;
@@ -187,17 +187,17 @@ pub async fn handle_ws(
                         super::send_message(&sender, message).await
                     }
                 }
-            }
-        }));
+            })
+        });
 
         // Stdout Listener
-        handles.push(tokio::spawn({
+        futures.push({
             let state = Arc::clone(&state);
             let socket_jwt = Arc::clone(&socket_jwt);
             let sender = Arc::clone(&sender);
             let server = server.clone();
 
-            async move {
+            Box::pin(async move {
                 loop {
                     if let Some(mut stdout) = server.container_stdout().await {
                         let thread = tokio::spawn({
@@ -243,26 +243,26 @@ pub async fn handle_ws(
 
                     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                 }
-            }
-        }));
+            })
+        });
 
         // Jwt Listener
-        handles.push(tokio::spawn({
+        futures.push({
             let socket_jwt = Arc::clone(&socket_jwt);
             let sender = Arc::clone(&sender);
 
-            async move {
+            Box::pin(async move {
                 loop {
                     super::jwt::listen_jwt(&sender, &socket_jwt).await;
                 }
-            }
-        }));
+            })
+        });
 
         // Pinger
-        handles.push(tokio::spawn({
+        futures.push({
             let sender = Arc::clone(&sender);
 
-            async move {
+            Box::pin(async move {
                 loop {
                     tokio::time::sleep(std::time::Duration::from_secs(10)).await;
 
@@ -276,8 +276,8 @@ pub async fn handle_ws(
                         break;
                     }
                 }
-            }
-        }));
+            })
+        });
 
         tokio::select! {
             _ = writer => {
@@ -286,7 +286,7 @@ pub async fn handle_ws(
                     "websocket writer finished",
                 );
             }
-            _ = futures_util::future::join_all(handles) => {
+            _ = futures_util::future::join_all(futures) => {
                 tracing::debug!(
                     server = %server.uuid,
                     "websocket handles finished",
