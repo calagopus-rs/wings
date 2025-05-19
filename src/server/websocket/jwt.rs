@@ -43,12 +43,10 @@ pub async fn handle_jwt(
                                 || !jwt.permissions.has_permission(Permission::WebsocketConnect)
                                 || jwt.server_uuid != server.uuid
                             {
-                                crate::logger::log(
-                                    crate::logger::LoggerLevel::Debug,
-                                    format!(
-                                        "JWT does not have permission to connect to websocket: {:?}",
-                                        jwt.permissions
-                                    ),
+                                tracing::debug!(
+                                    server = %server.uuid,
+                                    "jwt does not have permission to connect to websocket: {:?}",
+                                    jwt.permissions
                                 );
 
                                 if jwt.permissions.has_permission(Permission::WebsocketConnect) {
@@ -92,9 +90,10 @@ pub async fn handle_jwt(
                             Ok(None)
                         }
                         Err(err) => {
-                            crate::logger::log(
-                                crate::logger::LoggerLevel::Debug,
-                                format!("Failed to verify JWT: {}", err),
+                            tracing::debug!(
+                                server = %server.uuid,
+                                "failed to verify jwt when connecting to websocket: {}",
+                                err
                             );
 
                             Err(JwtError::CloseSocket)
@@ -106,12 +105,10 @@ pub async fn handle_jwt(
                         if !jwt.base.validate(&state.config.jwt)
                             || !jwt.permissions.has_permission(Permission::WebsocketConnect)
                         {
-                            crate::logger::log(
-                                crate::logger::LoggerLevel::Debug,
-                                format!(
-                                    "JWT does not have permission to connect to websocket: {:?}",
-                                    jwt.permissions
-                                ),
+                            tracing::debug!(
+                                server = %server.uuid,
+                                "jwt does not have permission to connect to websocket: {:?}",
+                                jwt.permissions
                             );
 
                             return Err(JwtError::CloseSocket);
@@ -119,9 +116,9 @@ pub async fn handle_jwt(
 
                         Ok(Some((message, Arc::clone(jwt))))
                     } else {
-                        crate::logger::log(
-                            crate::logger::LoggerLevel::Debug,
-                            "JWT is not set".to_string(),
+                        tracing::debug!(
+                            server = %server.uuid,
+                            "jwt is not set when connecting to websocket",
                         );
 
                         Err(JwtError::CloseSocket)
@@ -160,10 +157,7 @@ pub async fn listen_jwt(
                 }
             }
         } else {
-            crate::logger::log(
-                crate::logger::LoggerLevel::Debug,
-                "JWT is not set".to_string(),
-            );
+            tracing::debug!("jwt is not set when connecting to websocket");
         }
     }
 }

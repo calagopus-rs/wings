@@ -1,3 +1,4 @@
+use anyhow::Context;
 use axum::{extract::ConnectInfo, http::HeaderMap};
 use serde::{Deserialize, Serialize};
 use serde_default::DefaultFromSerde;
@@ -490,10 +491,12 @@ unsafe impl Send for Config {}
 unsafe impl Sync for Config {}
 
 impl Config {
-    pub fn open(path: &str) -> Result<Arc<Self>, Box<dyn std::error::Error>> {
-        let file = std::fs::File::open(path)?;
+    pub fn open(path: &str) -> Result<Arc<Self>, anyhow::Error> {
+        let file =
+            std::fs::File::open(path).context(format!("failed to open config file {}", path))?;
         let reader = std::io::BufReader::new(file);
-        let config: InnerConfig = serde_yml::from_reader(reader)?;
+        let config: InnerConfig = serde_yml::from_reader(reader)
+            .context(format!("failed to parse config file {}", path))?;
 
         let client = crate::remote::client::Client::new(&config);
         let jwt = crate::remote::jwt::JwtClient::new(&config.token);
@@ -509,6 +512,23 @@ impl Config {
             DEBUG = config.debug;
         }
 
+        tracing::subscriber::set_global_default(
+            tracing_subscriber::fmt()
+                .with_target(false)
+                .with_level(true)
+                .with_file(true)
+                .with_line_number(true)
+                .with_max_level(if config.debug {
+                    tracing::Level::DEBUG
+                } else {
+                    tracing::Level::INFO
+                })
+                .finish(),
+        )
+        .unwrap();
+
+        tracing::info!("config loaded from {}", path);
+
         config.ensure_directories()?;
         config.ensure_user()?;
         config.ensure_passwd()?;
@@ -517,15 +537,17 @@ impl Config {
         Ok(Arc::new(config))
     }
 
-    pub fn save(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let file = std::fs::File::create(&self.path)?;
+    pub fn save(&self) -> Result<(), anyhow::Error> {
+        let file = std::fs::File::create(&self.path)
+            .context(format!("failed to create config file {}", self.path))?;
         let writer = std::io::BufWriter::new(file);
-        serde_yml::to_writer(writer, unsafe { &*self.inner.get() })?;
+        serde_yml::to_writer(writer, unsafe { &*self.inner.get() })
+            .context(format!("failed to write config file {}", self.path))?;
 
         Ok(())
     }
 
-    pub fn update(&self, new_config: InnerConfig) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn update(&self, new_config: InnerConfig) -> Result<(), anyhow::Error> {
         let config = unsafe { &mut *self.inner.get() };
         let _ = std::mem::replace(config, new_config);
 
@@ -596,8 +618,9 @@ impl Config {
         Ok(())
     }
 
-    fn ensure_user(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let release = std::fs::read_to_string("/etc/os-release")?;
+    fn ensure_user(&mut self) -> Result<(), anyhow::Error> {
+        let release =
+            std::fs::read_to_string("/etc/os-release").unwrap_or_else(|_| "unknown".to_string());
 
         if release.contains("distroless") {
             self.system.username =
@@ -635,7 +658,8 @@ impl Config {
             std::process::Command::new("addgroup")
                 .arg("-S")
                 .arg(&self.system.username)
-                .output()?;
+                .output()
+                .context("failed to create group")?;
 
             format!(
                 "adduser -S -D -H -G {} -s /sbin/nologin {}",
@@ -651,18 +675,20 @@ impl Config {
         let split = command.split_whitespace().collect::<Vec<_>>();
         let output = std::process::Command::new(split[0])
             .args(&split[1..])
-            .output()?;
+            .output()
+            .context(format!("failed to create user {}", self.system.username))?;
         if !output.status.success() {
-            return Err(format!(
-                "Failed to create user {}: {}",
-                self.system.username,
-                String::from_utf8_lossy(&output.stderr)
-            )
-            .into());
+            return Err(
+                anyhow::anyhow!("failed to create user {}", self.system.username).context(format!(
+                    "failed to create user {}: {}",
+                    self.system.username,
+                    String::from_utf8_lossy(&output.stderr)
+                )),
+            );
         }
 
         let user = users::get_user_by_name(&self.system.username)
-            .ok_or_else(|| format!("User {} not found", self.system.username))?;
+            .ok_or_else(|| anyhow::anyhow!("failed to get user {}", self.system.username))?;
 
         self.system.user.uid = user.uid();
         self.system.user.gid = user.primary_group_id();
@@ -670,7 +696,7 @@ impl Config {
         Ok(())
     }
 
-    fn ensure_passwd(&self) -> Result<(), Box<dyn std::error::Error>> {
+    fn ensure_passwd(&self) -> Result<(), anyhow::Error> {
         if self.system.passwd.enabled {
             let v = format!(
                 "root:x:0:\ncontainer:x:{}:\nnogroup:x:65534:",
@@ -679,11 +705,23 @@ impl Config {
             std::fs::write(
                 std::path::Path::new(&self.system.passwd.directory).join("group"),
                 v,
-            )?;
+            )
+            .context(format!(
+                "failed to write group file {}",
+                std::path::Path::new(&self.system.passwd.directory)
+                    .join("group")
+                    .display()
+            ))?;
             std::fs::set_permissions(
                 std::path::Path::new(&self.system.passwd.directory).join("group"),
                 std::fs::Permissions::from_mode(0o644),
-            )?;
+            )
+            .context(format!(
+                "failed to set permissions for group file {}",
+                std::path::Path::new(&self.system.passwd.directory)
+                    .join("group")
+                    .display()
+            ))?;
 
             let v = format!(
                 "root:x:0:0::/root:/bin/sh\ncontainer:x:{}:{}::/home/container:/bin/sh\nnobody:x:65534:65534::/var/empty:/bin/sh\n",
@@ -692,20 +730,29 @@ impl Config {
             std::fs::write(
                 std::path::Path::new(&self.system.passwd.directory).join("passwd"),
                 v,
-            )?;
+            )
+            .context(format!(
+                "failed to write passwd file {}",
+                std::path::Path::new(&self.system.passwd.directory)
+                    .join("passwd")
+                    .display()
+            ))?;
             std::fs::set_permissions(
                 std::path::Path::new(&self.system.passwd.directory).join("passwd"),
                 std::fs::Permissions::from_mode(0o644),
-            )?;
+            )
+            .context(format!(
+                "failed to set permissions for passwd file {}",
+                std::path::Path::new(&self.system.passwd.directory)
+                    .join("passwd")
+                    .display()
+            ))?;
         }
 
         Ok(())
     }
 
-    pub async fn ensure_network(
-        &self,
-        client: &bollard::Docker,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn ensure_network(&self, client: &bollard::Docker) -> Result<(), anyhow::Error> {
         let network = client
             .inspect_network::<String>(&self.docker.network.name, None)
             .await;
@@ -761,7 +808,11 @@ impl Config {
                     ]),
                     ..Default::default()
                 })
-                .await?;
+                .await
+                .context(format!(
+                    "failed to create network {}",
+                    self.docker.network.name
+                ))?;
 
             let driver = &self.docker.network.driver;
             if driver != "host" && driver != "overlay" && driver != "weavemesh" {

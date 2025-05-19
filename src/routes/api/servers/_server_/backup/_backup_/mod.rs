@@ -27,9 +27,12 @@ mod delete {
             )
             .await
             {
-                crate::logger::log(
-                    crate::logger::LoggerLevel::Error,
-                    format!("Failed to delete backup ({}_local): {}", backup_id, err),
+                tracing::error!(
+                    "failed to delete backup {} (adapter = {:?}) for {}: {}",
+                    backup_id,
+                    crate::server::backup::BackupAdapter::Wings,
+                    server.uuid,
+                    err
                 );
             }
 
@@ -40,9 +43,12 @@ mod delete {
             )
             .await
             {
-                crate::logger::log(
-                    crate::logger::LoggerLevel::Error,
-                    format!("Failed to delete backup ({}_ddup): {}", backup_id, err),
+                tracing::error!(
+                    "failed to delete backup {} (adapter = {:?}) for {}: {}",
+                    backup_id,
+                    crate::server::backup::BackupAdapter::DdupBak,
+                    server.uuid,
+                    err
                 );
             }
         });

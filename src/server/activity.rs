@@ -2,7 +2,7 @@ use serde::Serialize;
 use std::{collections::VecDeque, net::IpAddr, sync::Arc};
 use tokio::sync::Mutex;
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub enum ActivityEvent {
     #[serde(rename = "server:power.start")]
     PowerStart,
@@ -31,7 +31,7 @@ pub enum ActivityEvent {
     FileUploaded,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct ApiActivity {
     user: Option<uuid::Uuid>,
     server: uuid::Uuid,
@@ -82,10 +82,7 @@ impl ActivityManager {
                             continue;
                         }
 
-                        crate::logger::log(
-                            crate::logger::LoggerLevel::Debug,
-                            format!("Sending {} activities ({})", activities.len(), server),
-                        );
+                        let len = activities.len();
 
                         if let Err(err) = config
                             .client
@@ -104,10 +101,12 @@ impl ActivityManager {
                             )
                             .await
                         {
-                            crate::logger::log(
-                                crate::logger::LoggerLevel::Error,
-                                format!("Failed to send activities ({}): {}", server, err),
-                            )
+                            tracing::error!(
+                                server = %server,
+                                "failed to send {} activities to remote: {}",
+                                len,
+                                err
+                            );
                         }
                     }
                 }

@@ -1,3 +1,4 @@
+use anyhow::Context;
 use axum::{
     body::Body,
     extract::{DefaultBodyLimit, Request},
@@ -14,7 +15,6 @@ use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityScheme};
 use utoipa_axum::router::OpenApiRouter;
 
 mod config;
-mod logger;
 mod models;
 mod remote;
 mod routes;
@@ -25,10 +25,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 const GIT_COMMIT: &str = env!("CARGO_GIT_COMMIT");
 
 fn handle_panic(_err: Box<dyn std::any::Any + Send + 'static>) -> Response<Body> {
-    logger::log(
-        logger::LoggerLevel::Error,
-        "a request panic has occurred".bright_red().to_string(),
-    );
+    tracing::error!("a request panic has occurred");
 
     let body = serde_json::to_string(&ApiError::new("internal server error")).unwrap();
 
@@ -40,19 +37,16 @@ fn handle_panic(_err: Box<dyn std::any::Any + Send + 'static>) -> Response<Body>
 }
 
 async fn handle_request(req: Request<Body>, next: Next) -> Result<Response<Body>, StatusCode> {
-    logger::log(
-        logger::LoggerLevel::Info,
-        format!(
-            "{} {}{}",
-            format!("HTTP {}", req.method()).green().bold(),
-            req.uri().path().cyan(),
-            if let Some(query) = req.uri().query() {
-                format!("?{}", query)
-            } else {
-                "".to_string()
-            }
-            .bright_cyan()
-        ),
+    tracing::info!(
+        "http {} {}{}",
+        req.method().to_string().to_lowercase(),
+        req.uri().path().cyan(),
+        if let Some(query) = req.uri().query() {
+            format!("?{}", query)
+        } else {
+            "".to_string()
+        }
+        .bright_cyan()
     );
 
     Ok(next.run(req).await)
@@ -117,9 +111,20 @@ async fn handle_cors(
 #[tokio::main]
 async fn main() {
     let config = config::Config::open("/etc/pterodactyl/config.yml").unwrap();
-    let docker = Arc::new(Docker::connect_with_local_defaults().unwrap());
-    config.ensure_network(&docker).await.unwrap();
+    tracing::info!("connecting to docker");
+    let docker = Arc::new(
+        Docker::connect_with_local_defaults()
+            .context("failed to connect to docker")
+            .unwrap(),
+    );
+    tracing::info!("ensuring docker network exists");
+    config
+        .ensure_network(&docker)
+        .await
+        .context("failed to ensure docker network")
+        .unwrap();
 
+    tracing::info!("creating server manager");
     let server_manager = server::manager::Manager::new(
         Arc::clone(&config),
         Arc::clone(&docker),
@@ -169,6 +174,8 @@ async fn main() {
         axum::routing::get(|| async move { axum::Json(openapi) }),
     );
 
+    tracing::info!("starting server");
+
     rustls::crypto::ring::default_provider()
         .install_default()
         .expect("Failed to install rustls crypto provider");
@@ -188,8 +195,12 @@ async fn main() {
                 .await
                 .map(russh::keys::PrivateKey::from_openssh)
             {
-                Ok(Ok(key)) => key,
+                Ok(Ok(key)) => {
+                    tracing::info!("loaded existing sftp host key");
+                    key
+                }
                 _ => {
+                    tracing::info!("generating new sftp host key");
                     let key = russh::keys::PrivateKey::random(
                         &mut OsRng,
                         russh::keys::Algorithm::Ed25519,
@@ -230,19 +241,16 @@ async fn main() {
                 state.config.system.sftp.port,
             ));
 
-            logger::log(
-                logger::LoggerLevel::Info,
+            tracing::info!(
+                "{} listening on {} {}",
+                "sftp server".yellow(),
+                address.to_string().cyan(),
                 format!(
-                    "{} listening on {} {}",
-                    "sftp server".yellow(),
-                    address.to_string().cyan(),
-                    format!(
-                        "(app@{}, {}ms)",
-                        VERSION,
-                        state.start_time.elapsed().as_millis()
-                    )
-                    .bright_black()
-                ),
+                    "(app@{}, {}ms)",
+                    VERSION,
+                    state.start_time.elapsed().as_millis()
+                )
+                .bright_black()
             );
 
             server
@@ -258,20 +266,7 @@ async fn main() {
     ));
 
     if config.api.ssl.enabled {
-        logger::log(
-            logger::LoggerLevel::Info,
-            format!(
-                "{} listening on {} {}",
-                "https server".bright_red(),
-                address.to_string().cyan(),
-                format!(
-                    "(app@{}, {}ms)",
-                    VERSION,
-                    state.start_time.elapsed().as_millis()
-                )
-                .bright_black()
-            ),
-        );
+        tracing::info!("loading ssl certs");
 
         let config = axum_server::tls_rustls::RustlsConfig::from_pem_file(
             config.api.ssl.cert.as_str(),
@@ -280,24 +275,21 @@ async fn main() {
         .await
         .unwrap();
 
+        tracing::info!(
+            "{} listening on {}",
+            "https server".bright_red(),
+            address.to_string().cyan(),
+        );
+
         axum_server::bind_rustls(address, config)
             .serve(router.into_make_service_with_connect_info::<SocketAddr>())
             .await
             .unwrap();
     } else {
-        logger::log(
-            logger::LoggerLevel::Info,
-            format!(
-                "{} listening on {} {}",
-                "http server".bright_red(),
-                address.to_string().cyan(),
-                format!(
-                    "(app@{}, {}ms)",
-                    VERSION,
-                    state.start_time.elapsed().as_millis()
-                )
-                .bright_black()
-            ),
+        tracing::info!(
+            "{} listening on {}",
+            "http server".bright_red(),
+            address.to_string().cyan(),
         );
 
         let listener = tokio::net::TcpListener::bind(address).await.unwrap();

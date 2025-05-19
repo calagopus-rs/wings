@@ -45,9 +45,12 @@ mod post {
                 crate::server::backup::create_backup(data.adapter, &server, data.uuid, data.ignore)
                     .await
             {
-                crate::logger::log(
-                    crate::logger::LoggerLevel::Error,
-                    format!("Failed to create backup ({}): {}", data.uuid, err),
+                tracing::error!(
+                    "failed to create backup {} (adapter = {:?}) for {}: {}",
+                    data.uuid,
+                    data.adapter,
+                    server.uuid,
+                    err
                 );
             }
         });

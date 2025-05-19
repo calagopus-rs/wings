@@ -3,13 +3,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use utoipa::ToSchema;
 
-#[derive(ToSchema, Serialize)]
+#[derive(Debug, ToSchema, Serialize)]
 pub struct RawServerBackupPart {
     pub etag: String,
     pub part_number: usize,
 }
 
-#[derive(ToSchema, Serialize)]
+#[derive(Debug, ToSchema, Serialize)]
 pub struct RawServerBackup {
     pub checksum: String,
     pub checksum_type: String,

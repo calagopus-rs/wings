@@ -42,9 +42,10 @@ impl Manager {
                     let server = server.clone();
 
                     async move {
-                        crate::logger::log(
-                            crate::logger::LoggerLevel::Info,
-                            format!("Restoring server {} state: {:?}", server.uuid, state),
+                        tracing::info!(
+                            server = %server.uuid,
+                            "restoring server state {:?}",
+                            state
                         );
 
                         server.attach_container(&client).await.unwrap();
@@ -121,10 +122,7 @@ impl Manager {
                     if let Err(err) =
                         crate::server::installation::install_server(&server, &client, false).await
                     {
-                        crate::logger::log(
-                            crate::logger::LoggerLevel::Error,
-                            format!("Failed to reinstall server: {}", err),
-                        );
+                        tracing::error!("failed to reinstall server {}: {}", server.uuid, err);
                     } else if server
                         .configuration
                         .read()
@@ -133,9 +131,10 @@ impl Manager {
                         .is_some_and(|s| s)
                     {
                         if let Err(err) = server.start(&client, None).await {
-                            crate::logger::log(
-                                crate::logger::LoggerLevel::Error,
-                                format!("Failed to start server: {}", err),
+                            tracing::error!(
+                                server = %server.uuid,
+                                "failed to start server on boot: {}",
+                                err
                             );
                         }
                     }

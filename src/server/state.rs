@@ -105,10 +105,7 @@ impl ServerStateLock {
 
         self.set_state(state);
         if let Err(err) = action(aquired).await {
-            crate::logger::log(
-                crate::logger::LoggerLevel::Error,
-                format!("Failed to execute action: {}", err),
-            );
+            tracing::error!("failed to execute power action: {}", err);
 
             self.set_state(old_state);
             self.locked

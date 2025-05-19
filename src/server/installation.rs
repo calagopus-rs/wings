@@ -206,6 +206,11 @@ pub async fn install_server(
             &[],
         ))?;
 
+    tracing::info!(
+        server = %server.uuid,
+        "starting installation process"
+    );
+
     server
         .log_daemon("Starting installation process, this could take a few minutes...".to_string())
         .await;
@@ -223,9 +228,11 @@ pub async fn install_server(
                 if let Err(err) =
                     cleanup_container(server, client, &container_id, &script, environment).await
                 {
-                    crate::logger::log(
-                        crate::logger::LoggerLevel::Error,
-                        format!("Failed to clean up container: {}", err),
+                    tracing::error!(
+                        server = %server.uuid,
+                        container = %container_id,
+                        "failed to clean up container: {}",
+                        err
                     );
                 }
             } else if let Err(err) = cleanup_container(
@@ -241,9 +248,11 @@ pub async fn install_server(
             )
             .await
             {
-                crate::logger::log(
-                    crate::logger::LoggerLevel::Error,
-                    format!("Failed to clean up container: {}", err),
+                tracing::error!(
+                    server = %server.uuid,
+                    container = %container_id,
+                    "failed to clean up container: {}",
+                    err
                 );
             }
         }
@@ -259,9 +268,10 @@ pub async fn install_server(
             .set_server_install(server.uuid, successful, reinstall)
             .await
         {
-            crate::logger::log(
-                crate::logger::LoggerLevel::Error,
-                format!("Failed to set server install status: {}", err),
+            tracing::error!(
+                server = %server.uuid,
+                "failed to set server install status: {}",
+                err
             );
         }
 

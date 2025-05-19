@@ -67,21 +67,20 @@ pub async fn handle_message(
                         .permissions
                         .has_permission(Permission::ControlStart)
                     {
-                        crate::logger::log(
-                            crate::logger::LoggerLevel::Debug,
-                            format!(
-                                "JWT does not have permission to start server: {:?}",
-                                socket_jwt.permissions
-                            ),
+                        tracing::debug!(
+                            server = %server.uuid,
+                            "jwt does not have permission to start server: {:?}",
+                            socket_jwt.permissions
                         );
 
                         return Ok(());
                     }
 
                     if let Err(err) = server.start(&state.docker, None).await {
-                        crate::logger::log(
-                            crate::logger::LoggerLevel::Error,
-                            format!("Failed to start server: {}", err),
+                        tracing::error!(
+                            server = %server.uuid,
+                            "failed to start server: {}",
+                            err,
                         );
                     } else {
                         server
@@ -96,32 +95,31 @@ pub async fn handle_message(
                             .await;
                     }
                 }
-                crate::models::ServerPowerAction::Kill => {
+                crate::models::ServerPowerAction::Restart => {
                     if !socket_jwt
                         .permissions
-                        .has_permission(Permission::ControlStop)
+                        .has_permission(Permission::ControlRestart)
                     {
-                        crate::logger::log(
-                            crate::logger::LoggerLevel::Debug,
-                            format!(
-                                "JWT does not have permission to start server: {:?}",
-                                socket_jwt.permissions
-                            ),
+                        tracing::debug!(
+                            server = %server.uuid,
+                            "jwt does not have permission to start server: {:?}",
+                            socket_jwt.permissions
                         );
 
                         return Ok(());
                     }
 
-                    if let Err(err) = server.kill(&state.docker).await {
-                        crate::logger::log(
-                            crate::logger::LoggerLevel::Error,
-                            format!("Failed to kill server: {}", err),
+                    if let Err(err) = server.restart(&state.docker, None).await {
+                        tracing::error!(
+                            server = %server.uuid,
+                            "failed to restart server: {}",
+                            err
                         );
                     } else {
                         server
                             .activity
                             .log_activity(Activity {
-                                event: ActivityEvent::PowerKill,
+                                event: ActivityEvent::PowerRestart,
                                 user: Some(socket_jwt.user_uuid),
                                 ip: user_ip,
                                 metadata: None,
@@ -135,21 +133,20 @@ pub async fn handle_message(
                         .permissions
                         .has_permission(Permission::ControlStop)
                     {
-                        crate::logger::log(
-                            crate::logger::LoggerLevel::Debug,
-                            format!(
-                                "JWT does not have permission to start server: {:?}",
-                                socket_jwt.permissions
-                            ),
+                        tracing::debug!(
+                            server = %server.uuid,
+                            "jwt does not have permission to start server: {:?}",
+                            socket_jwt.permissions
                         );
 
                         return Ok(());
                     }
 
                     if let Err(err) = server.stop(&state.docker, None).await {
-                        crate::logger::log(
-                            crate::logger::LoggerLevel::Error,
-                            format!("Failed to stop server: {}", err),
+                        tracing::error!(
+                            server = %server.uuid,
+                            "failed to stop server: {}",
+                            err
                         );
                     } else {
                         server
@@ -164,32 +161,31 @@ pub async fn handle_message(
                             .await;
                     }
                 }
-                crate::models::ServerPowerAction::Restart => {
+                crate::models::ServerPowerAction::Kill => {
                     if !socket_jwt
                         .permissions
-                        .has_permission(Permission::ControlRestart)
+                        .has_permission(Permission::ControlStop)
                     {
-                        crate::logger::log(
-                            crate::logger::LoggerLevel::Debug,
-                            format!(
-                                "JWT does not have permission to start server: {:?}",
-                                socket_jwt.permissions
-                            ),
+                        tracing::debug!(
+                            server = %server.uuid,
+                            "jwt does not have permission to start server: {:?}",
+                            socket_jwt.permissions,
                         );
 
                         return Ok(());
                     }
 
-                    if let Err(err) = server.restart(&state.docker, None).await {
-                        crate::logger::log(
-                            crate::logger::LoggerLevel::Error,
-                            format!("Failed to restart server: {}", err),
+                    if let Err(err) = server.kill(&state.docker).await {
+                        tracing::error!(
+                            server = %server.uuid,
+                            "failed to kill server: {}",
+                            err
                         );
                     } else {
                         server
                             .activity
                             .log_activity(Activity {
-                                event: ActivityEvent::PowerRestart,
+                                event: ActivityEvent::PowerKill,
                                 user: Some(socket_jwt.user_uuid),
                                 ip: user_ip,
                                 metadata: None,
@@ -205,12 +201,10 @@ pub async fn handle_message(
                 .permissions
                 .has_permission(Permission::ControlConsole)
             {
-                crate::logger::log(
-                    crate::logger::LoggerLevel::Debug,
-                    format!(
-                        "JWT does not have permission to send command: {:?}",
-                        socket_jwt.permissions
-                    ),
+                tracing::debug!(
+                    server = %server.uuid,
+                    "jwt does not have permission to send command to server: {:?}",
+                    socket_jwt.permissions
                 );
 
                 return Ok(());
@@ -222,9 +216,10 @@ pub async fn handle_message(
                 command.push('\n');
 
                 if let Err(err) = stdin.send(command).await {
-                    crate::logger::log(
-                        crate::logger::LoggerLevel::Debug,
-                        format!("Failed to send command to docker: {}", err),
+                    tracing::error!(
+                        server = %server.uuid,
+                        "failed to send command to server: {}",
+                        err
                     );
                 } else {
                     server
@@ -243,9 +238,9 @@ pub async fn handle_message(
             }
         }
         _ => {
-            crate::logger::log(
-                crate::logger::LoggerLevel::Debug,
-                format!("Received message that will not be handled: {:?}", message),
+            tracing::debug!(
+                "received websocket message that will not be handled: {:?}",
+                message
             );
         }
     }

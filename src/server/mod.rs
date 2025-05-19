@@ -64,6 +64,10 @@ impl Server {
         process_configuration: configuration::process::ProcessConfiguration,
         config: Arc<crate::config::Config>,
     ) -> Self {
+        tracing::info!(
+            server = %configuration.uuid,
+            "creating server instance"
+        );
         let filesystem = Arc::new(filesystem::Filesystem::new(
             PathBuf::from(&config.system.data_directory).join(configuration.uuid.to_string()),
             configuration.build.disk_space * 1024 * 1024,
@@ -115,6 +119,10 @@ impl Server {
         container: Arc<container::Container>,
         client: Arc<bollard::Docker>,
     ) -> Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
+        tracing::debug!(
+            server = %self.uuid,
+            "setting up websocket sender"
+        );
         let server = self.clone();
 
         Box::pin(async move {
@@ -124,9 +132,9 @@ impl Server {
             let mut container_channel = match container.update_reciever.lock().await.take() {
                 Some(channel) => channel,
                 None => {
-                    crate::logger::log(
-                        crate::logger::LoggerLevel::Error,
-                        "Container channel is None, skipping update (uh oh)".to_string(),
+                    tracing::error!(
+                        server = %server.uuid,
+                        "failed to get container channel"
                     );
                     return;
                 }
@@ -144,10 +152,11 @@ impl Server {
                         &[serde_json::to_string(&usage).unwrap()],
                     );
 
-                    if let Err(e) = server.websocket.send(message) {
-                        crate::logger::log(
-                            crate::logger::LoggerLevel::Error,
-                            format!("Failed to send message: {}", e),
+                    if let Err(err) = server.websocket.send(message) {
+                        tracing::error!(
+                            server = %server.uuid,
+                            "failed to send websocket message: {}",
+                            err
                         );
                     }
 
@@ -206,12 +215,10 @@ impl Server {
                                 let server = server.clone();
                                 tokio::spawn(async move {
                                     if let Err(err) = server.start(&client, Some(std::time::Duration::from_secs(5))).await {
-                                        crate::logger::log(
-                                            crate::logger::LoggerLevel::Error,
-                                            format!(
-                                                "Failed to start server after crash: {}",
-                                                err
-                                            ),
+                                        tracing::error!(
+                                            server = %server.uuid,
+                                            "failed to start server after stopping to restart: {}",
+                                            err
                                         );
                                     }
                                 });
@@ -240,10 +247,10 @@ impl Server {
                                         .crash_detection
                                         .detect_clean_exit_as_crash
                                 {
-                                    crate::logger::log(
-                                    crate::logger::LoggerLevel::Debug,
-                                    "Container exited cleanly, not restarting due to crash detection settings".to_string(),
-                                );
+                                    tracing::debug!(
+                                        server = %server.uuid,
+                                        "container exited cleanly, not restarting due to crash detection settings"
+                                    );
                                     return;
                                 }
 
@@ -291,12 +298,10 @@ impl Server {
                                 let server = server.clone();
                                 tokio::spawn(async move {
                                     if let Err(err) = server.start(&client, Some(std::time::Duration::from_secs(5))).await {
-                                        crate::logger::log(
-                                            crate::logger::LoggerLevel::Error,
-                                            format!(
-                                                "Failed to start server after crash: {}",
-                                                err
-                                            ),
+                                        tracing::error!(
+                                            server = %server.uuid,
+                                            "failed to start server after crash: {}",
+                                            err
                                         );
                                     }
                                 });
@@ -355,9 +360,10 @@ impl Server {
         *self.process_configuration.write().await = process_configuration;
 
         if let Err(err) = self.sync_container(client).await {
-            crate::logger::log(
-                crate::logger::LoggerLevel::Error,
-                format!("Failed to sync container: {}", err),
+            tracing::error!(
+                server = %self.uuid,
+                "failed to sync container: {}",
+                err
             );
         }
     }
@@ -373,22 +379,20 @@ impl Server {
                 .await;
             }
             Err(err) => {
-                crate::logger::log(
-                    crate::logger::LoggerLevel::Debug,
-                    format!(
-                        "Failed to sync server configuration for {}: {}",
-                        self.uuid, err
-                    ),
+                tracing::error!(
+                    server = %self.uuid,
+                    "failed to sync server configuration: {}",
+                    err
                 );
             }
         }
     }
 
-    /// Only use if you are sure that this will not cause any issues.
     pub fn reset_state(&self) {
         self.state.set_state(state::ServerState::Offline);
     }
 
+    #[inline]
     pub fn is_locked_state(&self) -> bool {
         self.suspended.load(std::sync::atomic::Ordering::SeqCst)
             || self.installing.load(std::sync::atomic::Ordering::SeqCst)
@@ -406,6 +410,11 @@ impl Server {
         if self.container.read().await.is_some() {
             return Ok(());
         }
+
+        tracing::info!(
+            server = %self.uuid,
+            "setting up container"
+        );
 
         let container = client
             .create_container(
@@ -446,6 +455,11 @@ impl Server {
         if self.container.read().await.is_some() {
             return Ok(());
         }
+
+        tracing::info!(
+            server = %self.uuid,
+            "attaching to container"
+        );
 
         if let Ok(containers) = client
             .list_containers(Some(bollard::container::ListContainersOptions {
@@ -571,6 +585,12 @@ impl Server {
         client: &Arc<bollard::Docker>,
         image: String,
     ) -> Result<(), bollard::errors::Error> {
+        tracing::info!(
+            server = %self.uuid,
+            image = %image,
+            "pulling image"
+        );
+
         self.log_daemon_with_prelude(
             "Pulling Docker container image, this could take a few minutes to complete...",
         )
@@ -615,9 +635,11 @@ impl Server {
                         }
                     }
                     Err(err) => {
-                        crate::logger::log(
-                            crate::logger::LoggerLevel::Error,
-                            format!("Failed to pull image: {}", err),
+                        tracing::error!(
+                            server = %self.uuid,
+                            image = %image,
+                            "failed to pull image: {}",
+                            err
                         );
 
                         if let Ok(images) = client
@@ -634,9 +656,11 @@ impl Server {
                             if images.is_empty() {
                                 return Err(err);
                             } else {
-                                crate::logger::log(
-                                    crate::logger::LoggerLevel::Debug,
-                                    format!("Image already exists, ignoring error: {}", err),
+                                tracing::error!(
+                                    server = %self.uuid,
+                                    image = %image,
+                                    "image already exists, ignoring error: {}",
+                                    err
                                 );
                             }
                         } else {
@@ -675,6 +699,11 @@ impl Server {
             return Err("disk space is full, cannot start the server".into());
         }
 
+        tracing::info!(
+            server = %self.uuid,
+            "starting server"
+        );
+
         let success = self
             .state
             .execute_action(
@@ -692,13 +721,18 @@ impl Server {
                         .await
                         .update_files(self)
                         .await {
-                        crate::logger::log(
-                            crate::logger::LoggerLevel::Error,
-                            format!("Failed to update process configuration files: {}", err),
+                        tracing::error!(
+                            server = %self.uuid,
+                            "failed to update process configuration files: {}",
+                            err
                         );
                     }
 
                     if self.config.system.check_permissions_on_boot {
+                        tracing::debug!(
+                            server = %self.uuid,
+                            "checking permissions on boot"
+                        );
                         self.log_daemon_with_prelude(
                             "Ensuring file permissions are set correctly, this could take a few seconds...",
                         )
@@ -748,6 +782,11 @@ impl Server {
             }
         };
 
+        tracing::info!(
+            server = %self.uuid,
+            "killing server"
+        );
+
         self.stopping
             .store(true, std::sync::atomic::Ordering::Relaxed);
         if client
@@ -788,6 +827,11 @@ impl Server {
             }
         };
 
+        tracing::info!(
+            server = %self.uuid,
+            "stopping server"
+        );
+
         let success = self
             .state
             .execute_action(
@@ -801,6 +845,7 @@ impl Server {
                                 let client = Arc::clone(client);
                                 let container = container.clone();
                                 let value = stop.value.clone();
+                                let server = self.clone();
 
                                 async move {
                                     client
@@ -816,12 +861,10 @@ impl Server {
                                                             "SIGQUIT" => "SIGQUIT".to_string(),
                                                             "SIGKILL" => "SIGKILL".to_string(),
                                                             _ => {
-                                                                crate::logger::log(
-                                                                    crate::logger::LoggerLevel::Debug,
-                                                                    format!(
-                                                                        "Invalid signal: {}, defaulting to SIGKILL",
-                                                                        signal
-                                                                    ),
+                                                                tracing::error!(
+                                                                    server = %server.uuid,
+                                                                    "invalid signal: {}, defaulting to SIGKILL",
+                                                                    signal
                                                                 );
 
                                                                 "SIGKILL".to_string()
@@ -846,28 +889,26 @@ impl Server {
                                 command.push('\n');
 
                                 if let Err(err) = stdin.send(command).await {
-                                    crate::logger::log(
-                                        crate::logger::LoggerLevel::Debug,
-                                        format!("Failed to send stop command to docker: {}", err),
+                                    tracing::error!(
+                                        server = %self.uuid,
+                                        "failed to send command to container stdin: {}",
+                                        err
                                     );
                                 }
                             } else {
-                                crate::logger::log(
-                                    crate::logger::LoggerLevel::Debug,
-                                    "Container stdin is not available for stopping (what)"
-                                        .to_string(),
+                                tracing::error!(
+                                    server = %self.uuid,
+                                    "failed to get container stdin"
                                 );
                             }
 
                             Ok(())
                         }
                         _ => {
-                            crate::logger::log(
-                                crate::logger::LoggerLevel::Debug,
-                                format!(
-                                    "Invalid stop type: {}, defaulting to docker stop",
-                                    stop.r#type
-                                ),
+                            tracing::error!(
+                                server = %self.uuid,
+                                "invalid stop type: {}, defaulting to docker stop",
+                                stop.r#type
                             );
 
                             tokio::spawn({
@@ -917,6 +958,11 @@ impl Server {
             return Err("server is already restarting".into());
         }
 
+        tracing::info!(
+            server = %self.uuid,
+            "restarting server"
+        );
+
         if self.state.get_state() != state::ServerState::Offline {
             self.stop(client, aquire_timeout).await?;
             self.restarting
@@ -937,6 +983,12 @@ impl Server {
             return;
         }
 
+        tracing::info!(
+            server = %self.uuid,
+            "stopping server with kill timeout {}s",
+            timeout.as_secs()
+        );
+
         let mut stream = client.wait_container::<String>(
             &self.container.read().await.as_ref().unwrap().docker_id,
             None,
@@ -945,11 +997,21 @@ impl Server {
         self.stop(client, None).await.ok();
 
         if tokio::time::timeout(timeout, stream.next()).await.is_err() {
+            tracing::info!(
+                server = %self.uuid,
+                "kill timeout reached, killing server"
+            );
+
             self.kill(client).await.ok();
         }
     }
 
     pub async fn destroy_container(&self, client: &bollard::Docker) {
+        tracing::info!(
+            server = %self.uuid,
+            "destroying container"
+        );
+
         if let Ok(containers) = client
             .list_containers(Some(bollard::container::ListContainersOptions {
                 all: true,
@@ -964,7 +1026,7 @@ impl Server {
             if let Some(container) = containers.first() {
                 let container = container.id.clone().unwrap();
 
-                if let Err(e) = client
+                if let Err(err) = client
                     .remove_container(
                         &container,
                         Some(bollard::container::RemoveContainerOptions {
@@ -974,9 +1036,11 @@ impl Server {
                     )
                     .await
                 {
-                    crate::logger::log(
-                        crate::logger::LoggerLevel::Error,
-                        format!("Failed to remove container {}: {}", container, e),
+                    tracing::error!(
+                        server = %self.uuid,
+                        container = %container,
+                        "failed to remove container: {}",
+                        err
                     );
                 }
             }
@@ -987,6 +1051,11 @@ impl Server {
     }
 
     pub async fn destroy(&self, client: &bollard::Docker) {
+        tracing::info!(
+            server = %self.uuid,
+            "destroying server"
+        );
+
         self.kill(client).await.ok();
         self.destroy_container(client).await;
         self.filesystem.destroy().await;

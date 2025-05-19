@@ -59,9 +59,10 @@ pub async fn handle_ws(
                     let ws_data = match reciever.next().await {
                         Some(Ok(data)) => data,
                         Some(Err(err)) => {
-                            crate::logger::log(
-                                crate::logger::LoggerLevel::Debug,
-                                format!("Error receiving message: {}", err),
+                            tracing::debug!(
+                                server = %server.uuid,
+                                "error receiving websocket message: {}",
+                                err
                             );
                             break;
                         }
@@ -69,9 +70,9 @@ pub async fn handle_ws(
                     };
 
                     if let Message::Close(_) = ws_data {
-                        crate::logger::log(
-                            crate::logger::LoggerLevel::Debug,
-                            "Client disconnected".to_string(),
+                        tracing::debug!(
+                            server = %server.uuid,
+                            "websocket closed",
                         );
                         break;
                     }
@@ -101,9 +102,10 @@ pub async fn handle_ws(
                                     {
                                         Ok(_) => {}
                                         Err(err) => {
-                                            crate::logger::log(
-                                                crate::logger::LoggerLevel::Debug,
-                                                format!("Error handling message: {}", err),
+                                            tracing::error!(
+                                                server = %server.uuid,
+                                                "error handling websocket message: {}",
+                                                err
                                             );
                                         }
                                     }
@@ -112,16 +114,17 @@ pub async fn handle_ws(
                         }
                         Ok(None) => {}
                         Err(websocket::jwt::JwtError::CloseSocket) => {
-                            crate::logger::log(
-                                crate::logger::LoggerLevel::Debug,
-                                "Closing socket due to JWT error".to_string(),
+                            tracing::debug!(
+                                server = %server.uuid,
+                                "closing websocket due to jwt error",
                             );
                             break;
                         }
                         Err(websocket::jwt::JwtError::Misc(err)) => {
-                            crate::logger::log(
-                                crate::logger::LoggerLevel::Debug,
-                                format!("Error handling JWT: {}", err),
+                            tracing::error!(
+                                server = %server.uuid,
+                                "error handling jwt: {}",
+                                err,
                             );
                         }
                     }
@@ -145,9 +148,9 @@ pub async fn handle_ws(
                         let socket_jwt = match socket_jwt.as_ref() {
                             Some(jwt) => jwt,
                             None => {
-                                crate::logger::log(
-                                    crate::logger::LoggerLevel::Debug,
-                                    "No Socket JWT found, ignoring message".to_string(),
+                                tracing::debug!(
+                                    server = %server.uuid,
+                                    "no socket jwt found, ignoring websocket message",
                                 );
                                 continue;
                             }
@@ -201,6 +204,7 @@ pub async fn handle_ws(
                             let socket_jwt = Arc::clone(&socket_jwt);
                             let sender = Arc::clone(&sender);
                             let state = Arc::clone(&state);
+                            let server = server.clone();
 
                             async move {
                                 loop {
@@ -224,9 +228,9 @@ pub async fn handle_ws(
                                             break;
                                         }
                                         Err(RecvError::Lagged(_)) => {
-                                            crate::logger::log(
-                                                crate::logger::LoggerLevel::Debug,
-                                                "Lagged on stdout reciever".to_string(),
+                                            tracing::debug!(
+                                                server = %server.uuid,
+                                                "stdout lagged behind, messages dropped"
                                             );
                                         }
                                     }

@@ -156,9 +156,12 @@ pub async fn create_backup(
                 return Err("Failed to upload part after 50 attempts".into());
             }
 
-            crate::logger::log(
-                crate::logger::LoggerLevel::Debug,
-                format!("Uploading s3 backup part {} of size {}", i + 1, part_size),
+            tracing::debug!(
+                "uploading s3 backup part {} of size {} for backup {} for {}",
+                i + 1,
+                part_size,
+                uuid,
+                server.uuid
             );
 
             match CLIENT
@@ -186,9 +189,12 @@ pub async fn create_backup(
                     }
                 }
                 Err(err) => {
-                    crate::logger::log(
-                        crate::logger::LoggerLevel::Error,
-                        format!("Failed to upload s3 backup part({}): {}", i + 1, err),
+                    tracing::error!(
+                        "failed to upload s3 backup part {} for backup {} for {}: {}",
+                        i + 1,
+                        uuid,
+                        server.uuid,
+                        err
                     );
 
                     tokio::time::sleep(std::time::Duration::from_secs(attempts * 2)).await;

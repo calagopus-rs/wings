@@ -27,6 +27,13 @@ pub async fn create_backup(
     uuid: uuid::Uuid,
     ignore: String,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    tracing::info!(
+        server = %server.uuid,
+        backup = %uuid,
+        adapter = ?adapter,
+        "creating backup",
+    );
+
     let mut override_builder = OverrideBuilder::new(&server.filesystem.base_path);
 
     for line in ignore.lines() {
@@ -104,6 +111,13 @@ pub async fn create_backup(
             &[uuid.to_string()],
         ))?;
 
+    tracing::info!(
+        "completed backup {} (adapter = {:?}) for server {}",
+        uuid,
+        adapter,
+        server.uuid
+    );
+
     Ok(())
 }
 
@@ -125,6 +139,13 @@ pub async fn restore_backup(
     server
         .stop_with_kill_timeout(client, std::time::Duration::from_secs(30))
         .await;
+
+    tracing::info!(
+        server = %server.uuid,
+        backup = %uuid,
+        adapter = ?adapter,
+        "restoring backup",
+    );
 
     if truncate_directory {
         server.filesystem.truncate_root().await;
@@ -157,6 +178,13 @@ pub async fn restore_backup(
                     &[],
                 ))?;
 
+            tracing::info!(
+                server = %server.uuid,
+                backup = %uuid,
+                adapter = ?adapter,
+                "completed restore of backup",
+            );
+
             Ok(())
         }
         Err(e) => {
@@ -179,6 +207,13 @@ pub async fn download_backup(
     server: &crate::server::Server,
     uuid: uuid::Uuid,
 ) -> Result<(StatusCode, HeaderMap, Body), Box<dyn std::error::Error + Send + Sync>> {
+    tracing::info!(
+        server = %server.uuid,
+        backup = %uuid,
+        adapter = ?adapter,
+        "downloading backup",
+    );
+
     match adapter {
         BackupAdapter::Wings => wings::download_backup(server, uuid).await,
         BackupAdapter::S3 => unimplemented!(),
@@ -191,6 +226,13 @@ pub async fn delete_backup(
     server: &crate::server::Server,
     uuid: uuid::Uuid,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    tracing::info!(
+        server = %server.uuid,
+        backup = %uuid,
+        adapter = ?adapter,
+        "deleting backup",
+    );
+
     match adapter {
         BackupAdapter::Wings => wings::delete_backup(server, uuid).await,
         BackupAdapter::S3 => s3::delete_backup(server, uuid).await,

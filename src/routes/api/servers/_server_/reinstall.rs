@@ -34,10 +34,7 @@ mod post {
             if let Err(err) =
                 crate::server::installation::install_server(&server, &state.docker, true).await
             {
-                crate::logger::log(
-                    crate::logger::LoggerLevel::Error,
-                    format!("Failed to reinstall server: {}", err),
-                );
+                tracing::error!("failed to reinstall server for {}: {}", server.uuid, err);
             }
         });
 

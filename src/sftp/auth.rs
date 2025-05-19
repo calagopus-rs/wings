@@ -58,12 +58,10 @@ impl russh::server::Handler for SshSession {
         {
             Ok((user, server, permissions)) => (user, server, permissions),
             Err(err) => {
-                crate::logger::log(
-                    crate::logger::LoggerLevel::Debug,
-                    format!(
-                        "Failed to authenticate user {} (password): {}",
-                        username, err
-                    ),
+                tracing::debug!(
+                    "failed to authenticate user {} (password): {}",
+                    username,
+                    err
                 );
 
                 return Ok(Auth::reject());
@@ -118,10 +116,7 @@ impl russh::server::Handler for SshSession {
         {
             Ok((user, server, permissions)) => (user, server, permissions),
             Err(err) => {
-                crate::logger::log(
-                    crate::logger::LoggerLevel::Debug,
-                    format!("Failed to authenticate user {} (public_key): {}", user, err),
-                );
+                tracing::debug!("failed to authenticate user {} (public_key): {}", user, err);
 
                 return Ok(Auth::Reject {
                     proceed_with_methods: Some(AUTH_METHODS.clone()),

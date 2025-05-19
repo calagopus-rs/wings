@@ -61,9 +61,12 @@ mod post {
             )
             .await
             {
-                crate::logger::log(
-                    crate::logger::LoggerLevel::Error,
-                    format!("Failed to restore backup ({}): {}", backup_id, err),
+                tracing::error!(
+                    "failed to restore backup {} (adapter = {:?}) for {}: {}",
+                    backup_id,
+                    data.adapter,
+                    server.uuid,
+                    err
                 );
             }
         });

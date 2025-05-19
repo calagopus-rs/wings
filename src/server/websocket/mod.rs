@@ -130,9 +130,6 @@ async fn send_message(sender: &Mutex<SplitSink<WebSocket, Message>>, message: We
 
     let mut sender = sender.lock().await;
     if let Err(err) = sender.send(message).await {
-        crate::logger::log(
-            crate::logger::LoggerLevel::Debug,
-            format!("Failed to send message: {}", err),
-        );
+        tracing::error!("failed to send websocket message: {}", err);
     }
 }

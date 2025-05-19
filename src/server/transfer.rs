@@ -71,6 +71,11 @@ impl OutgoingServerTransfer {
         let bytes_archived = Arc::clone(&self.bytes_archived);
         let server = self.server.clone();
 
+        tracing::info!(
+            server = %server.uuid,
+            "starting outgoing server transfer"
+        );
+
         self.task.replace(tokio::spawn(async move {
             if server.state.get_state() != super::state::ServerState::Offline {
                 server
@@ -197,6 +202,15 @@ impl OutgoingServerTransfer {
                                 formatted_percentage
                             ),
                         );
+                        tracing::debug!(
+                            server = %server.uuid,
+                            "transferred {} of {} ({}/s, {})",
+                            formatted_bytes_archived,
+                            formatted_total_bytes,
+                            formatted_diff,
+                            formatted_percentage
+                        );
+
                         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                     }
                 }
@@ -235,9 +249,10 @@ impl OutgoingServerTransfer {
             progress_task.abort();
 
             if let Ok(Err(err)) = archive {
-                crate::logger::log(
-                    crate::logger::LoggerLevel::Error,
-                    format!("Failed to create transfer archive: {}", err),
+                tracing::error!(
+                    server = %server.uuid,
+                    "failed to create transfer archive: {}",
+                    err
                 );
 
                 Self::transfer_failure(&server).await;
@@ -256,6 +271,11 @@ impl OutgoingServerTransfer {
                     &["completed".to_string()],
                 ))
                 .ok();
+
+            tracing::info!(
+                server = %server.uuid,
+                "finished outgoing server transfer"
+            );
         }));
 
         Ok(())

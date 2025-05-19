@@ -18,7 +18,7 @@ pub struct Pagination {
     total: usize,
 }
 
-#[derive(Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AuthenticationType {
     Password,

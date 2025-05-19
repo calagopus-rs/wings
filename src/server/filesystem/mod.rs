@@ -61,9 +61,9 @@ impl Filesystem {
                         break;
                     }
 
-                    crate::logger::log(
-                        crate::logger::LoggerLevel::Debug,
-                        format!("Checking disk usage for {}", base_path.display()),
+                    tracing::debug!(
+                        path = %base_path.display(),
+                        "checking disk usage"
                     );
 
                     let mut tmp_disk_usage = usage::DiskUsage::new();
@@ -117,13 +117,10 @@ impl Filesystem {
                         std::sync::atomic::Ordering::Relaxed,
                     );
 
-                    crate::logger::log(
-                        crate::logger::LoggerLevel::Debug,
-                        format!(
-                            "Disk usage for {}: {} bytes",
-                            base_path.display(),
-                            disk_usage_cached.load(std::sync::atomic::Ordering::Relaxed)
-                        ),
+                    tracing::debug!(
+                        path = %base_path.display(),
+                        "{} bytes disk usage",
+                        disk_usage_cached.load(std::sync::atomic::Ordering::Relaxed)
                     );
 
                     std::thread::sleep(std::time::Duration::from_secs(check_interval));
@@ -516,12 +513,10 @@ impl Filesystem {
         self.checker_abort
             .store(true, std::sync::atomic::Ordering::Relaxed);
         if let Err(err) = tokio::fs::remove_dir_all(&self.base_path).await {
-            crate::logger::log(
-                crate::logger::LoggerLevel::Error,
-                format!(
-                    "Failed to delete server base directory (attempt 1): {}",
-                    err
-                ),
+            tracing::error!(
+                path = %self.base_path.display(),
+                "failed to delete server base directory for: {}",
+                err
             );
         }
     }

@@ -30,34 +30,22 @@ mod post {
             match data.action {
                 crate::models::ServerPowerAction::Start => {
                     if let Err(err) = server.start(&state.docker, aquire_timeout).await {
-                        crate::logger::log(
-                            crate::logger::LoggerLevel::Error,
-                            format!("Failed to start server: {}", err),
-                        );
+                        tracing::error!("failed to start server for {}: {}", server.uuid, err);
                     }
                 }
                 crate::models::ServerPowerAction::Stop => {
                     if let Err(err) = server.stop(&state.docker, aquire_timeout).await {
-                        crate::logger::log(
-                            crate::logger::LoggerLevel::Error,
-                            format!("Failed to stop server: {}", err),
-                        );
+                        tracing::error!("failed to stop server for {}: {}", server.uuid, err);
                     }
                 }
                 crate::models::ServerPowerAction::Restart => {
                     if let Err(err) = server.restart(&state.docker, aquire_timeout).await {
-                        crate::logger::log(
-                            crate::logger::LoggerLevel::Error,
-                            format!("Failed to restart server: {}", err),
-                        );
+                        tracing::error!("failed to restart server for {}: {}", server.uuid, err);
                     }
                 }
                 crate::models::ServerPowerAction::Kill => {
                     if let Err(err) = server.kill(&state.docker).await {
-                        crate::logger::log(
-                            crate::logger::LoggerLevel::Error,
-                            format!("Failed to kill server: {}", err),
-                        );
+                        tracing::error!("failed to kill server for {}: {}", server.uuid, err);
                     }
                 }
             }

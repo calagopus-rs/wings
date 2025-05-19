@@ -1,9 +1,12 @@
 [package]
 name = "wings-rs"
-version = "0.6.3"
+version = "0.6.4"
 edition = "2024"
 
 [dependencies]
+tracing = "0.1.41"
+tracing-subscriber = "0.3.19"
+anyhow = "1.0.98"
 axum = { version = "0.8.1", features = ["ws", "multipart"] }
 axum-server = { version = "0.7.2", features = ["tls-rustls"] }
 bollard = "0.18.1"

@@ -324,12 +324,11 @@ impl ServerConfiguration {
                     })
                     .await
                 {
-                    crate::logger::log(
-                        crate::logger::LoggerLevel::Error,
-                        format!(
-                            "Failed to create container network {}: {}",
-                            network_name, err
-                        ),
+                    tracing::error!(
+                        server = %self.uuid,
+                        "failed to create container network {}: {}",
+                        network_name,
+                        err
                     );
                 }
             }
