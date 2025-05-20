@@ -39,10 +39,18 @@ mod get {
             }
         };
 
-        if !path.symlink_metadata().unwrap().is_dir() {
+        let metadata = tokio::fs::symlink_metadata(&path).await;
+        if let Ok(metadata) = metadata {
+            if !metadata.is_dir() || server.filesystem.is_ignored(&path, metadata.is_dir()).await {
+                return (
+                    StatusCode::NOT_FOUND,
+                    axum::Json(ApiError::new("path not").to_json()),
+                );
+            }
+        } else {
             return (
-                StatusCode::EXPECTATION_FAILED,
-                axum::Json(ApiError::new("path is not a directory").to_json()),
+                StatusCode::NOT_FOUND,
+                axum::Json(ApiError::new("path not found").to_json()),
             );
         }
 
