@@ -54,16 +54,17 @@ mod get {
         };
 
         let metadata = tokio::fs::symlink_metadata(&path).await;
-        if !metadata.is_ok_and(|m| m.is_file() && !server.filesystem.is_ignored(&path, m.is_dir()))
-        {
-            return (
-                StatusCode::NOT_FOUND,
-                HeaderMap::from_iter([(
-                    "Content-Type".parse().unwrap(),
-                    "application/json".parse().unwrap(),
-                )]),
-                Body::from(serde_json::to_string(&ApiError::new("file not found")).unwrap()),
-            );
+        if let Ok(metadata) = metadata {
+            if !metadata.is_file() || server.filesystem.is_ignored(&path, metadata.is_dir()).await {
+                return (
+                    StatusCode::NOT_FOUND,
+                    HeaderMap::from_iter([(
+                        "Content-Type".parse().unwrap(),
+                        "application/json".parse().unwrap(),
+                    )]),
+                    Body::from(serde_json::to_string(&ApiError::new("file not found")).unwrap()),
+                );
+            }
         }
 
         let mut file = match crate::server::filesystem::archive::Archive::open(

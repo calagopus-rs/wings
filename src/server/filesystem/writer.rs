@@ -53,10 +53,10 @@ impl FileSystemWriter {
 
     fn allocate_accumulated(&mut self) -> std::io::Result<()> {
         if self.accumulated_bytes > 0 {
-            if !self
-                .filesystem
-                .allocate_in_path_raw(&self.parent, self.accumulated_bytes)
-            {
+            if !futures::executor::block_on(
+                self.filesystem
+                    .allocate_in_path_raw(&self.parent, self.accumulated_bytes),
+            ) {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::StorageFull,
                     "Failed to allocate space",
@@ -138,6 +138,7 @@ pub struct AsyncFileSystemWriter {
     parent: Vec<String>,
     writer: tokio::io::BufWriter<tokio::fs::File>,
     accumulated_bytes: i64,
+    allocation_in_progress: Option<Pin<Box<dyn Future<Output = bool> + Send>>>,
 }
 
 impl AsyncFileSystemWriter {
@@ -168,24 +169,43 @@ impl AsyncFileSystemWriter {
             parent,
             writer: tokio::io::BufWriter::with_capacity(ALLOCATION_THRESHOLD as usize, file),
             accumulated_bytes: 0,
+            allocation_in_progress: None,
         })
     }
 
-    fn allocate_accumulated(&mut self) -> std::io::Result<()> {
-        if self.accumulated_bytes > 0 {
-            if !self
-                .filesystem
-                .allocate_in_path_raw(&self.parent, self.accumulated_bytes)
-            {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::StorageFull,
-                    "Failed to allocate space",
-                ));
-            }
+    fn start_allocation(&mut self) {
+        if self.accumulated_bytes > 0 && self.allocation_in_progress.is_none() {
+            let filesystem = self.filesystem.clone();
+            let parent = self.parent.clone();
+            let bytes = self.accumulated_bytes;
+
+            self.allocation_in_progress = Some(Box::pin(async move {
+                filesystem.allocate_in_path_raw(&parent, bytes).await
+            }));
 
             self.accumulated_bytes = 0;
         }
-        Ok(())
+    }
+
+    fn poll_allocation(&mut self, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        if let Some(fut) = &mut self.allocation_in_progress {
+            match fut.as_mut().poll(cx) {
+                Poll::Ready(true) => {
+                    self.allocation_in_progress = None;
+                    Poll::Ready(Ok(()))
+                }
+                Poll::Ready(false) => {
+                    self.allocation_in_progress = None;
+                    Poll::Ready(Err(std::io::Error::new(
+                        std::io::ErrorKind::StorageFull,
+                        "Failed to allocate space",
+                    )))
+                }
+                Poll::Pending => Poll::Pending,
+            }
+        } else {
+            Poll::Ready(Ok(()))
+        }
     }
 }
 
@@ -195,12 +215,22 @@ impl AsyncWrite for AsyncFileSystemWriter {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
-        let size = buf.len() as i64;
+        match self.poll_allocation(cx) {
+            Poll::Ready(Ok(())) => {}
+            Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+            Poll::Pending => return Poll::Pending,
+        }
 
+        let size = buf.len() as i64;
         self.accumulated_bytes += size;
+
         if self.accumulated_bytes >= ALLOCATION_THRESHOLD {
-            if let Err(e) = self.allocate_accumulated() {
-                return Poll::Ready(Err(e));
+            self.start_allocation();
+
+            match self.poll_allocation(cx) {
+                Poll::Ready(Ok(())) => {}
+                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                Poll::Pending => return Poll::Pending,
             }
         }
 
@@ -208,16 +238,40 @@ impl AsyncWrite for AsyncFileSystemWriter {
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        if let Err(e) = self.allocate_accumulated() {
-            return Poll::Ready(Err(e));
+        match self.poll_allocation(cx) {
+            Poll::Ready(Ok(())) => {}
+            Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+            Poll::Pending => return Poll::Pending,
+        }
+
+        if self.accumulated_bytes > 0 {
+            self.start_allocation();
+
+            match self.poll_allocation(cx) {
+                Poll::Ready(Ok(())) => {}
+                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                Poll::Pending => return Poll::Pending,
+            }
         }
 
         Pin::new(&mut self.writer).poll_flush(cx)
     }
 
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        if let Err(e) = self.allocate_accumulated() {
-            return Poll::Ready(Err(e));
+        match self.poll_allocation(cx) {
+            Poll::Ready(Ok(())) => {}
+            Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+            Poll::Pending => return Poll::Pending,
+        }
+
+        if self.accumulated_bytes > 0 {
+            self.start_allocation();
+
+            match self.poll_allocation(cx) {
+                Poll::Ready(Ok(())) => {}
+                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                Poll::Pending => return Poll::Pending,
+            }
         }
 
         Pin::new(&mut self.writer).poll_shutdown(cx)
@@ -226,11 +280,20 @@ impl AsyncWrite for AsyncFileSystemWriter {
 
 impl AsyncSeek for AsyncFileSystemWriter {
     fn start_seek(mut self: Pin<&mut Self>, position: SeekFrom) -> std::io::Result<()> {
-        self.allocate_accumulated()?;
+        if self.accumulated_bytes > 0 {
+            self.start_allocation();
+        }
+
         Pin::new(&mut self.writer).start_seek(position)
     }
 
     fn poll_complete(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<u64>> {
+        match self.poll_allocation(cx) {
+            Poll::Ready(Ok(())) => {}
+            Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+            Poll::Pending => return Poll::Pending,
+        }
+
         Pin::new(&mut self.writer).poll_complete(cx)
     }
 }
@@ -238,9 +301,13 @@ impl AsyncSeek for AsyncFileSystemWriter {
 impl Drop for AsyncFileSystemWriter {
     fn drop(&mut self) {
         if self.accumulated_bytes > 0 {
-            let _ = self
-                .filesystem
-                .allocate_in_path_raw(&self.parent, self.accumulated_bytes);
+            let filesystem = self.filesystem.clone();
+            let parent = self.parent.clone();
+            let bytes = self.accumulated_bytes;
+
+            tokio::spawn(async move {
+                filesystem.allocate_in_path_raw(&parent, bytes).await;
+            });
         }
     }
 }

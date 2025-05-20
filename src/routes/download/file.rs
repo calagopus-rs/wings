@@ -101,7 +101,7 @@ mod get {
 
         let metadata = match tokio::fs::symlink_metadata(&path).await {
             Ok(metadata) => {
-                if !metadata.is_file() || server.filesystem.is_ignored(&path, metadata.is_dir()) {
+                if !metadata.is_file() || server.filesystem.is_ignored(&path, metadata.is_dir()).await {
                     return (
                         StatusCode::NOT_FOUND,
                         HeaderMap::new(),

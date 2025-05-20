@@ -139,7 +139,7 @@ mod post {
                 );
             }
 
-            if server.filesystem.is_ignored(&file_path, false) {
+            if server.filesystem.is_ignored(&file_path, false).await {
                 return (
                     StatusCode::NOT_FOUND,
                     axum::Json(ApiError::new("file not found").to_json()),

@@ -68,7 +68,11 @@ mod post {
                 }
             };
 
-            if server.filesystem.is_ignored(&source, metadata.is_dir()) {
+            if server
+                .filesystem
+                .is_ignored(&source, metadata.is_dir())
+                .await
+            {
                 continue;
             }
 

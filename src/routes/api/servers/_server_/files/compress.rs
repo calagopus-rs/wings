@@ -81,10 +81,11 @@ mod post {
                     };
 
                     let source_metadata = source.symlink_metadata().unwrap();
-                    if server
-                        .filesystem
-                        .is_ignored(&source, source_metadata.is_dir())
-                    {
+                    if futures::executor::block_on(
+                        server
+                            .filesystem
+                            .is_ignored(&source, source_metadata.is_dir()),
+                    ) {
                         continue;
                     }
 

@@ -75,7 +75,7 @@ impl Download {
             return Err("Unsafe path generated".into());
         }
 
-        if filesystem.is_ignored(&real_destination, false) {
+        if filesystem.is_ignored(&real_destination, false).await {
             return Err("File is ignored".into());
         }
 

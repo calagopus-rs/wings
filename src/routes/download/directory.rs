@@ -100,12 +100,14 @@ mod get {
         };
 
         let metadata = tokio::fs::symlink_metadata(&path).await;
-        if !metadata.is_ok_and(|m| m.is_dir() && !server.filesystem.is_ignored(&path, m.is_dir())) {
-            return (
-                StatusCode::NOT_FOUND,
-                HeaderMap::new(),
-                Body::from("Folder not found"),
-            );
+        if let Ok(metadata) = metadata {
+            if !metadata.is_dir() || server.filesystem.is_ignored(&path, metadata.is_dir()).await {
+                return (
+                    StatusCode::NOT_FOUND,
+                    HeaderMap::new(),
+                    Body::from("Folder not found"),
+                );
+            }
         }
 
         let file_name = path.file_name().unwrap().to_string_lossy().to_string();
@@ -140,10 +142,11 @@ mod get {
                     }
                 };
 
-                if server
-                    .filesystem
-                    .is_ignored(entry.path(), metadata.is_dir())
-                {
+                if futures::executor::block_on(
+                    server
+                        .filesystem
+                        .is_ignored(entry.path(), metadata.is_dir()),
+                ) {
                     continue;
                 }
 

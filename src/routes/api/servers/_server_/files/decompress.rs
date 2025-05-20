@@ -54,12 +54,16 @@ mod post {
             );
         }
 
-        if server.filesystem.is_ignored(
-            &source,
-            tokio::fs::symlink_metadata(&source)
-                .await
-                .is_ok_and(|m| m.is_dir()),
-        ) {
+        if server
+            .filesystem
+            .is_ignored(
+                &source,
+                tokio::fs::symlink_metadata(&source)
+                    .await
+                    .is_ok_and(|m| m.is_dir()),
+            )
+            .await
+        {
             return (
                 StatusCode::NOT_FOUND,
                 axum::Json(ApiError::new("file not found").to_json()),

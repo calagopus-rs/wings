@@ -74,8 +74,14 @@ mod put {
             };
 
             if to.exists()
-                || server.filesystem.is_ignored(&from, from_metadata.is_dir())
-                || server.filesystem.is_ignored(&to, from_metadata.is_dir())
+                || server
+                    .filesystem
+                    .is_ignored(&from, from_metadata.is_dir())
+                    .await
+                || server
+                    .filesystem
+                    .is_ignored(&to, from_metadata.is_dir())
+                    .await
             {
                 continue;
             }

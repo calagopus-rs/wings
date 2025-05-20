@@ -355,7 +355,8 @@ impl Server {
         client: &Arc<bollard::Docker>,
     ) {
         self.filesystem
-            .update_ignored(&configuration.egg.file_denylist);
+            .update_ignored(&configuration.egg.file_denylist)
+            .await;
         *self.configuration.write().await = configuration;
         *self.process_configuration.write().await = process_configuration;
 

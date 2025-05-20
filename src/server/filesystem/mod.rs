@@ -4,11 +4,14 @@ use std::{
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     sync::{
-        Arc, RwLock, RwLockReadGuard,
+        Arc,
         atomic::{AtomicBool, AtomicI64, AtomicU64},
     },
 };
-use tokio::io::AsyncReadExt;
+use tokio::{
+    io::AsyncReadExt,
+    sync::{RwLock, RwLockReadGuard},
+};
 
 pub mod archive;
 pub mod pull;
@@ -111,7 +114,7 @@ impl Filesystem {
                     let total_entry_size =
                         tmp_disk_usage.entries.values().map(|e| e.size).sum::<u64>();
 
-                    *disk_usage.write().unwrap() = tmp_disk_usage;
+                    *futures::executor::block_on(disk_usage.write()) = tmp_disk_usage;
                     disk_usage_cached.store(
                         total_size + total_entry_size,
                         std::sync::atomic::Ordering::Relaxed,
@@ -145,31 +148,33 @@ impl Filesystem {
         }
     }
 
-    pub fn update_ignored(&self, deny_list: &[String]) {
+    pub async fn update_ignored(&self, deny_list: &[String]) {
         let mut disk_ignored = ignore::overrides::OverrideBuilder::new(&self.base_path);
         for entry in deny_list {
             disk_ignored.add(entry).ok();
         }
 
-        *self.disk_ignored.write().unwrap() = disk_ignored.build().unwrap();
+        *self.disk_ignored.write().await = disk_ignored.build().unwrap();
     }
 
-    pub fn is_ignored(&self, path: &Path, is_dir: bool) -> bool {
+    pub async fn is_ignored(&self, path: &Path, is_dir: bool) -> bool {
         self.disk_ignored
             .read()
-            .unwrap()
+            .await
             .matched(path, is_dir)
             .invert()
             .is_ignore()
     }
 
-    pub fn pulls(&self) -> RwLockReadGuard<'_, HashMap<uuid::Uuid, Arc<RwLock<pull::Download>>>> {
+    pub async fn pulls(
+        &self,
+    ) -> RwLockReadGuard<'_, HashMap<uuid::Uuid, Arc<RwLock<pull::Download>>>> {
         if let Ok(mut pulls) = self.pulls.try_write() {
             for key in pulls.keys().cloned().collect::<Vec<_>>() {
                 if let Some(download) = pulls.get(&key) {
                     if download
                         .read()
-                        .unwrap()
+                        .await
                         .task
                         .as_ref()
                         .map(|t| t.is_finished())
@@ -181,7 +186,7 @@ impl Filesystem {
             }
         }
 
-        self.pulls.read().unwrap()
+        self.pulls.read().await
     }
 
     #[inline]
@@ -288,16 +293,16 @@ impl Filesystem {
 
         let components = self.path_to_components(path);
         let size = if metadata.is_dir() {
-            let disk_usage = self.disk_usage.read().unwrap();
+            let disk_usage = self.disk_usage.read().await;
             disk_usage.get_size(&components).unwrap_or(0)
         } else {
             metadata.len()
         };
 
-        self.allocate_in_path(path, -(size as i64));
+        self.allocate_in_path(path, -(size as i64)).await;
 
         if metadata.is_dir() && size > 0 {
-            let mut disk_usage = self.disk_usage.write().unwrap();
+            let mut disk_usage = self.disk_usage.write().await;
             disk_usage.remove_path(&components);
         }
 
@@ -342,7 +347,7 @@ impl Filesystem {
         }
 
         if is_dir {
-            let mut disk_usage = self.disk_usage.write().unwrap();
+            let mut disk_usage = self.disk_usage.write().await;
 
             let path = disk_usage.remove_path(&self.path_to_components(old_path));
             if let Some(path) = path {
@@ -359,8 +364,8 @@ impl Filesystem {
         } else {
             let size = metadata.len() as i64;
 
-            self.allocate_in_path(&old_parent, -size);
-            self.allocate_in_path(&new_parent, size);
+            self.allocate_in_path(&old_parent, -size).await;
+            self.allocate_in_path(&new_parent, size).await;
         }
 
         tokio::fs::rename(old_path, new_path).await?;
@@ -375,7 +380,7 @@ impl Filesystem {
     /// - `size`: The amount of space to allocate (positive) or deallocate (negative)
     ///
     /// Returns `true` if allocation was successful, `false` if it would exceed disk limit
-    pub fn allocate_in_path_raw(&self, path: &[String], delta: i64) -> bool {
+    pub async fn allocate_in_path_raw(&self, path: &[String], delta: i64) -> bool {
         if delta == 0 {
             return true;
         }
@@ -408,16 +413,16 @@ impl Filesystem {
             }
         }
 
-        self.disk_usage.write().unwrap().update_size(path, delta);
+        self.disk_usage.write().await.update_size(path, delta);
 
         true
     }
 
     #[inline]
-    pub fn allocate_in_path(&self, path: &Path, delta: i64) -> bool {
+    pub async fn allocate_in_path(&self, path: &Path, delta: i64) -> bool {
         let components = self.path_to_components(path);
 
-        self.allocate_in_path_raw(&components, delta)
+        self.allocate_in_path_raw(&components, delta).await
     }
 
     #[inline]
@@ -439,7 +444,7 @@ impl Filesystem {
     }
 
     pub async fn truncate_root(&self) {
-        self.disk_usage.write().unwrap().clear();
+        self.disk_usage.write().await.clear();
         self.disk_usage_cached
             .store(0, std::sync::atomic::Ordering::Relaxed);
 
@@ -522,7 +527,7 @@ impl Filesystem {
     }
 
     #[inline]
-    pub fn to_api_entry_buffer(
+    pub async fn to_api_entry_buffer(
         &self,
         path: PathBuf,
         metadata: &Metadata,
@@ -534,7 +539,7 @@ impl Filesystem {
         let real_path = symlink_destination.as_ref().unwrap_or(&path);
 
         let size = if real_metadata.is_dir() {
-            let disk_usage = self.disk_usage.read().unwrap();
+            let disk_usage = self.disk_usage.read().await;
             let components = self.path_to_components(real_path);
 
             disk_usage.get_size(&components).unwrap_or(0)
@@ -671,6 +676,7 @@ impl Filesystem {
             symlink_destination,
             symlink_destination_metadata,
         )
+        .await
     }
 }
 

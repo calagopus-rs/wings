@@ -59,7 +59,7 @@ mod post {
                 tokio::fs::symlink_metadata(&destination)
                     .await
                     .is_ok_and(|m| m.is_dir()),
-            ) {
+            ).await {
                 continue;
             }
 

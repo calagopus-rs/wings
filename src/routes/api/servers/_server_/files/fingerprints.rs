@@ -62,7 +62,7 @@ mod get {
                 Err(_) => continue,
             };
 
-            if !metadata.is_file() || server.filesystem.is_ignored(&path, metadata.is_dir()) {
+            if !metadata.is_file() || server.filesystem.is_ignored(&path, metadata.is_dir()).await {
                 continue;
             }
 

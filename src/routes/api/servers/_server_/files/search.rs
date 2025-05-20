@@ -90,7 +90,9 @@ mod post {
                                 Err(_) => return WalkState::Continue,
                             };
 
-                            if server.filesystem.is_ignored(path, metadata.is_dir()) {
+                            if futures::executor::block_on(
+                                server.filesystem.is_ignored(path, metadata.is_dir()),
+                            ) {
                                 return WalkState::Continue;
                             }
 
@@ -114,12 +116,14 @@ mod post {
                                     return WalkState::Quit;
                                 }
 
-                                let mut entry = server.filesystem.to_api_entry_buffer(
-                                    path.to_path_buf(),
-                                    &metadata,
-                                    Some(&buffer[..bytes_read]),
-                                    None,
-                                    None,
+                                let mut entry = futures::executor::block_on(
+                                    server.filesystem.to_api_entry_buffer(
+                                        path.to_path_buf(),
+                                        &metadata,
+                                        Some(&buffer[..bytes_read]),
+                                        None,
+                                        None,
+                                    ),
                                 );
                                 entry.name = match path.strip_prefix(&root) {
                                     Ok(path) => path.to_string_lossy().to_string(),
@@ -155,12 +159,14 @@ mod post {
                                             return WalkState::Quit;
                                         }
 
-                                        let mut entry = server.filesystem.to_api_entry_buffer(
-                                            path.to_path_buf(),
-                                            &metadata,
-                                            Some(&buffer[..bytes_read]),
-                                            None,
-                                            None,
+                                        let mut entry = futures::executor::block_on(
+                                            server.filesystem.to_api_entry_buffer(
+                                                path.to_path_buf(),
+                                                &metadata,
+                                                Some(&buffer[..bytes_read]),
+                                                None,
+                                                None,
+                                            ),
                                         );
                                         entry.name = match path.strip_prefix(&root) {
                                             Ok(path) => path.to_string_lossy().to_string(),

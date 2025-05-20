@@ -34,7 +34,11 @@ mod post {
 
         let metadata = match tokio::fs::symlink_metadata(&location).await {
             Ok(metadata) => {
-                if !metadata.is_file() || server.filesystem.is_ignored(&location, metadata.is_dir())
+                if !metadata.is_file()
+                    || server
+                        .filesystem
+                        .is_ignored(&location, metadata.is_dir())
+                        .await
                 {
                     return (
                         StatusCode::NOT_FOUND,
@@ -55,6 +59,7 @@ mod post {
         if !server
             .filesystem
             .allocate_in_path(location.parent().unwrap(), metadata.len() as i64)
+            .await
         {
             return (
                 StatusCode::EXPECTATION_FAILED,

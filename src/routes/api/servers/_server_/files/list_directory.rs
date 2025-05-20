@@ -56,6 +56,7 @@ mod get {
             if server
                 .filesystem
                 .is_ignored(&entry.path(), metadata.is_dir())
+                .await
             {
                 continue;
             }

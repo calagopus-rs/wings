@@ -179,7 +179,7 @@ impl russh_sftp::server::Handler for SftpSession {
                 return Err(StatusCode::NoSuchFile);
             }
 
-            if self.server.filesystem.is_ignored(&path, false) {
+            if self.server.filesystem.is_ignored(&path, false).await {
                 return Err(StatusCode::NoSuchFile);
             }
 
@@ -226,7 +226,12 @@ impl russh_sftp::server::Handler for SftpSession {
                 Err(_) => continue,
             };
 
-            if self.server.filesystem.is_ignored(&path, metadata.is_dir()) {
+            if self
+                .server
+                .filesystem
+                .is_ignored(&path, metadata.is_dir())
+                .await
+            {
                 continue;
             }
 
@@ -262,7 +267,12 @@ impl russh_sftp::server::Handler for SftpSession {
                     return Err(StatusCode::NoSuchFile);
                 }
 
-                if self.server.filesystem.is_ignored(&path, metadata.is_dir()) {
+                if self
+                    .server
+                    .filesystem
+                    .is_ignored(&path, metadata.is_dir())
+                    .await
+                {
                     return Err(StatusCode::NoSuchFile);
                 }
 
@@ -272,7 +282,8 @@ impl russh_sftp::server::Handler for SftpSession {
 
                 self.server
                     .filesystem
-                    .allocate_in_path(parent, -(metadata.len() as i64));
+                    .allocate_in_path(parent, -(metadata.len() as i64))
+                    .await;
                 self.server
                     .activity
                     .log_activity(Activity {
@@ -316,7 +327,7 @@ impl russh_sftp::server::Handler for SftpSession {
                 return Err(StatusCode::NoSuchFile);
             }
 
-            if self.server.filesystem.is_ignored(&path, true) {
+            if self.server.filesystem.is_ignored(&path, true).await {
                 return Err(StatusCode::NoSuchFile);
             }
 
@@ -441,10 +452,12 @@ impl russh_sftp::server::Handler for SftpSession {
                         .server
                         .filesystem
                         .is_ignored(&old_path, old_metadata.is_dir())
+                        .await
                     || self
                         .server
                         .filesystem
                         .is_ignored(&new_path, old_metadata.is_dir())
+                        .await
                 {
                     return Err(StatusCode::NoSuchFile);
                 }
@@ -515,7 +528,12 @@ impl russh_sftp::server::Handler for SftpSession {
                 Err(_) => return Err(StatusCode::NoSuchFile),
             };
 
-            if self.server.filesystem.is_ignored(&path, metadata.is_dir()) {
+            if self
+                .server
+                .filesystem
+                .is_ignored(&path, metadata.is_dir())
+                .await
+            {
                 return Err(StatusCode::NoSuchFile);
             }
 
@@ -573,7 +591,12 @@ impl russh_sftp::server::Handler for SftpSession {
                 Err(_) => return Err(StatusCode::NoSuchFile),
             };
 
-            if self.server.filesystem.is_ignored(&path, metadata.is_dir()) {
+            if self
+                .server
+                .filesystem
+                .is_ignored(&path, metadata.is_dir())
+                .await
+            {
                 return Err(StatusCode::NoSuchFile);
             }
 
@@ -625,7 +648,12 @@ impl russh_sftp::server::Handler for SftpSession {
                 Err(_) => return Err(StatusCode::NoSuchFile),
             };
 
-            if self.server.filesystem.is_ignored(&path, metadata.is_dir()) {
+            if self
+                .server
+                .filesystem
+                .is_ignored(&path, metadata.is_dir())
+                .await
+            {
                 return Err(StatusCode::NoSuchFile);
             }
 
@@ -655,7 +683,12 @@ impl russh_sftp::server::Handler for SftpSession {
                 Err(_) => return Err(StatusCode::NoSuchFile),
             };
 
-            if self.server.filesystem.is_ignored(&path, metadata.is_dir()) {
+            if self
+                .server
+                .filesystem
+                .is_ignored(&path, metadata.is_dir())
+                .await
+            {
                 return Err(StatusCode::NoSuchFile);
             }
 
@@ -707,6 +740,7 @@ impl russh_sftp::server::Handler for SftpSession {
                     .server
                     .filesystem
                     .is_ignored(&targetpath, metadata.is_dir())
+                    .await
                 {
                     return Err(StatusCode::NoSuchFile);
                 }
@@ -779,7 +813,7 @@ impl russh_sftp::server::Handler for SftpSession {
                 return Err(StatusCode::NoSuchFile);
             }
 
-            if self.server.filesystem.is_ignored(&path, false) {
+            if self.server.filesystem.is_ignored(&path, false).await {
                 return Err(StatusCode::NoSuchFile);
             }
 
@@ -912,26 +946,28 @@ impl russh_sftp::server::Handler for SftpSession {
             }
         };
 
-        let success = tokio::task::spawn_blocking({
+        if !self
+            .server
+            .filesystem
+            .allocate_in_path_raw(
+                &handle.path_components[0..handle.path_components.len() - 1],
+                data.len() as i64,
+            )
+            .await
+        {
+            return Err(StatusCode::Failure);
+        }
+
+        tokio::task::spawn_blocking({
             let file = Arc::clone(file);
-            let filesystem = Arc::clone(&self.server.filesystem);
-            let components = handle.path_components[0..handle.path_components.len() - 1].to_vec();
 
             move || {
-                if !filesystem.allocate_in_path_raw(&components, data.len() as i64) {
-                    return false;
-                }
-
                 file.write_all_at(&data, offset).unwrap();
                 true
             }
         })
         .await
         .unwrap();
-
-        if !success {
-            return Err(StatusCode::Failure);
-        }
 
         Ok(Status {
             id,

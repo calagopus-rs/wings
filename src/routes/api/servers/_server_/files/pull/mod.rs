@@ -19,8 +19,8 @@ mod get {
     pub async fn route(server: GetServer) -> axum::Json<serde_json::Value> {
         let mut downloads = Vec::new();
 
-        for download in server.filesystem.pulls().values() {
-            downloads.push(download.read().unwrap().to_api_response());
+        for download in server.filesystem.pulls().await.values() {
+            downloads.push(download.read().await.to_api_response());
         }
 
         axum::Json(serde_json::to_value(&Response { downloads }).unwrap())
@@ -31,7 +31,8 @@ mod post {
     use crate::routes::{ApiError, GetState, api::servers::_server_::GetServer};
     use axum::http::StatusCode;
     use serde::{Deserialize, Serialize};
-    use std::sync::{Arc, RwLock};
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
     use utoipa::ToSchema;
 
     #[derive(ToSchema, Deserialize)]
@@ -104,7 +105,7 @@ mod post {
             );
         }
 
-        if server.filesystem.pulls().len() >= 3 {
+        if server.filesystem.pulls().await.len() >= 3 {
             return (
                 StatusCode::EXPECTATION_FAILED,
                 axum::Json(ApiError::new("too many concurrent downloads").to_json()),
@@ -124,21 +125,21 @@ mod post {
             .unwrap(),
         ));
 
-        let identifier = download.read().unwrap().identifier;
+        let identifier = download.read().await.identifier;
 
         server
             .filesystem
             .pulls
             .write()
-            .unwrap()
+            .await
             .insert(identifier, Arc::clone(&download));
 
-        download.write().unwrap().start();
+        download.write().await.start();
 
         if data.foreground {
             while download
                 .read()
-                .unwrap()
+                .await
                 .task
                 .as_ref()
                 .is_some_and(|t| !t.is_finished())

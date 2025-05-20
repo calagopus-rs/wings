@@ -49,10 +49,14 @@ mod post {
             .unwrap_or(0);
         let metadata = path.symlink_metadata().ok();
 
-        if server.filesystem.is_ignored(
-            &path,
-            metadata.as_ref().map(|m| m.is_dir()).unwrap_or(false),
-        ) {
+        if server
+            .filesystem
+            .is_ignored(
+                &path,
+                metadata.as_ref().map(|m| m.is_dir()).unwrap_or(false),
+            )
+            .await
+        {
             return (
                 StatusCode::NOT_FOUND,
                 axum::Json(ApiError::new("file not found").to_json()),
@@ -85,6 +89,7 @@ mod post {
         if !server
             .filesystem
             .allocate_in_path(parent, content_size - old_content_size)
+            .await
         {
             return (
                 StatusCode::EXPECTATION_FAILED,

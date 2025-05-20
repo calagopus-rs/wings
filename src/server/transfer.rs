@@ -128,10 +128,11 @@ impl OutgoingServerTransfer {
                             }
                         };
 
-                        if server
-                            .filesystem
-                            .is_ignored(entry.path(), metadata.is_dir())
-                        {
+                        if futures::executor::block_on(
+                            server
+                                .filesystem
+                                .is_ignored(entry.path(), metadata.is_dir()),
+                        ) {
                             continue;
                         }
 

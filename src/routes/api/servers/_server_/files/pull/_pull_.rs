@@ -18,7 +18,7 @@ mod delete {
         server: GetServer,
         Path((_server, pull_id)): Path<(uuid::Uuid, uuid::Uuid)>,
     ) -> (StatusCode, axum::Json<serde_json::Value>) {
-        let pull = server.filesystem.pulls();
+        let pull = server.filesystem.pulls().await;
         let pull = match pull.iter().find(|p| p.0 == &pull_id) {
             Some(pull) => pull.1,
             None => {
@@ -29,11 +29,11 @@ mod delete {
             }
         };
 
-        if let Some(download) = pull.write().unwrap().task.take() {
+        if let Some(download) = pull.write().await.task.take() {
             download.abort();
         }
 
-        server.filesystem.pulls.write().unwrap().remove(&pull_id);
+        server.filesystem.pulls.write().await.remove(&pull_id);
 
         (
             StatusCode::OK,
