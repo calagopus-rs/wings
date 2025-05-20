@@ -112,11 +112,13 @@ pub async fn restore_backup(
     let repository = get_repository(server).await;
 
     let server = server.clone();
+    let runtime = tokio::runtime::Handle::current();
     tokio::task::spawn_blocking(
         move || -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             let archive = repository.get_archive(&uuid.to_string())?;
 
             fn recursive_restore(
+                runtime: &tokio::runtime::Handle,
                 repository: &Arc<ddup_bak::repository::Repository>,
                 entry: Entry,
                 path: &Path,
@@ -131,7 +133,7 @@ pub async fn restore_backup(
 
                 match entry {
                     Entry::File(file) => {
-                        futures::executor::block_on(
+                        runtime.block_on(
                             server.log_daemon(format!("(restoring): {}", path.display())),
                         );
 
@@ -165,7 +167,7 @@ pub async fn restore_backup(
                         .unwrap();
 
                         for entry in directory.entries {
-                            recursive_restore(repository, entry, &path, server);
+                            recursive_restore(runtime, repository, entry, &path, server);
                         }
                     }
                     Entry::Symlink(_) => {}
@@ -173,7 +175,7 @@ pub async fn restore_backup(
             }
 
             for entry in archive.into_entries() {
-                recursive_restore(&repository, entry, Path::new("."), &server);
+                recursive_restore(&runtime, &repository, entry, Path::new("."), &server);
             }
 
             Ok(())

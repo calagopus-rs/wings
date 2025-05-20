@@ -98,6 +98,7 @@ pub async fn restore_backup(
 
     let filesystem = Arc::clone(&server.filesystem);
     let server = server.clone();
+    let runtime = tokio::runtime::Handle::current();
     tokio::task::spawn_blocking(
         move || -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(file));
@@ -132,7 +133,7 @@ pub async fn restore_backup(
                         .unwrap();
                     }
                     tar::EntryType::Regular => {
-                        futures::executor::block_on(
+                        runtime.block_on(
                             server.log_daemon(format!("(restoring): {}", path.display())),
                         );
 

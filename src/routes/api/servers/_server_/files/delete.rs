@@ -54,12 +54,16 @@ mod post {
                 continue;
             }
 
-            if server.filesystem.is_ignored(
-                &destination,
-                tokio::fs::symlink_metadata(&destination)
-                    .await
-                    .is_ok_and(|m| m.is_dir()),
-            ).await {
+            if server
+                .filesystem
+                .is_ignored(
+                    &destination,
+                    tokio::fs::symlink_metadata(&destination)
+                        .await
+                        .is_ok_and(|m| m.is_dir()),
+                )
+                .await
+            {
                 continue;
             }
 

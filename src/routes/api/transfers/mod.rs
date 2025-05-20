@@ -103,13 +103,14 @@ mod post {
             .transferring
             .store(true, std::sync::atomic::Ordering::SeqCst);
 
+        let runtime = tokio::runtime::Handle::current();
         server
             .clone()
             .incoming_transfer
             .write()
             .await
             .replace(tokio::task::spawn_blocking(move || {
-                while let Ok(Some(field)) = futures::executor::block_on(multipart.next_field()) {
+                while let Ok(Some(field)) = runtime.block_on(multipart.next_field()) {
                     if let Some("archive") = field.name() {
                         let sync_reader = SyncIoBridge::new(tokio_util::io::StreamReader::new(
                             field.into_stream().map_err(|err| {

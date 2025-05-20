@@ -554,7 +554,7 @@ impl Server {
                 websocket::WebsocketEvent::ServerDaemonMessage,
                 &[message],
             ))
-            .unwrap_or_default();
+            .ok();
     }
 
     pub async fn log_daemon_install(&self, message: String) {
@@ -563,7 +563,7 @@ impl Server {
                 websocket::WebsocketEvent::ServerInstallOutput,
                 &[message],
             ))
-            .unwrap_or_default();
+            .ok();
     }
 
     pub async fn log_daemon_with_prelude(&self, message: &str) {
@@ -574,7 +574,7 @@ impl Server {
                 websocket::WebsocketEvent::ServerConsoleOutput,
                 &[format!("{}{}", prelude, message).bold().to_string()],
             ))
-            .unwrap_or_default();
+            .ok();
     }
 
     pub async fn log_daemon_error(&self, message: &str) {

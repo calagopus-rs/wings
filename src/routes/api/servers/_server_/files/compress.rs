@@ -59,6 +59,7 @@ mod post {
 
         tokio::task::spawn_blocking({
             let server = Arc::clone(&server);
+            let runtime = tokio::runtime::Handle::current();
 
             move || {
                 let mut archive = tar::Builder::new(flate2::write::GzEncoder::new(
@@ -81,7 +82,7 @@ mod post {
                     };
 
                     let source_metadata = source.symlink_metadata().unwrap();
-                    if futures::executor::block_on(
+                    if runtime.block_on(
                         server
                             .filesystem
                             .is_ignored(&source, source_metadata.is_dir()),

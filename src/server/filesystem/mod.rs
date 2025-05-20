@@ -114,7 +114,7 @@ impl Filesystem {
                     let total_entry_size =
                         tmp_disk_usage.entries.values().map(|e| e.size).sum::<u64>();
 
-                    *futures::executor::block_on(disk_usage.write()) = tmp_disk_usage;
+                    *disk_usage.blocking_write() = tmp_disk_usage;
                     disk_usage_cached.store(
                         total_size + total_entry_size,
                         std::sync::atomic::Ordering::Relaxed,
@@ -211,6 +211,7 @@ impl Filesystem {
     }
 
     #[inline]
+    #[tracing::instrument]
     pub fn resolve_path(path: &Path) -> PathBuf {
         let mut result = PathBuf::new();
 
@@ -228,6 +229,11 @@ impl Filesystem {
                 }
             }
         }
+
+        tracing::debug!(
+            safe_path = %result.display(),
+            "resolved filesystem path"
+        );
 
         result
     }
@@ -259,13 +265,24 @@ impl Filesystem {
     }
 
     #[inline]
+    #[tracing::instrument(skip(self))]
     pub async fn safe_path(&self, path: &str) -> Option<PathBuf> {
         let path = self.base_path.join(path.trim_start_matches('/'));
 
         if let Ok(safe_path) = tokio::fs::canonicalize(&path).await {
             if safe_path.starts_with(&self.base_path) {
+                tracing::debug!(
+                    safe_path = %safe_path.display(),
+                    "resolved filesystem path"
+                );
+
                 Some(safe_path)
             } else {
+                tracing::debug!(
+                    safe_path = %safe_path.display(),
+                    "resolved filesystem path, but it is out of bounds"
+                );
+
                 None
             }
         } else {
@@ -273,6 +290,11 @@ impl Filesystem {
             if safe_path.starts_with(&self.base_path) {
                 Some(safe_path)
             } else {
+                tracing::debug!(
+                    safe_path = %safe_path.display(),
+                    "resolved filesystem path, but it is out of bounds"
+                );
+
                 None
             }
         }

@@ -38,7 +38,7 @@ mod post {
         server: GetServer,
         axum::Json(data): axum::Json<Payload>,
     ) -> (StatusCode, axum::Json<serde_json::Value>) {
-        let limit = data.limit.unwrap_or(100);
+        let limit = data.limit.unwrap_or(100).min(500);
         let max_size = data.max_size.unwrap_or(1024 * 512);
 
         let root = match server.filesystem.safe_path(&data.root).await {
@@ -63,6 +63,7 @@ mod post {
 
         tokio::task::spawn_blocking({
             let results = Arc::clone(&results);
+            let runtime = tokio::runtime::Handle::current();
 
             move || {
                 WalkBuilder::new(&root)
@@ -77,6 +78,7 @@ mod post {
                         let results = Arc::clone(&results);
                         let query = data.query.clone();
                         let root = root.clone();
+                        let runtime = runtime.clone();
 
                         Box::new(move |entry| {
                             let entry = match entry {
@@ -90,9 +92,9 @@ mod post {
                                 Err(_) => return WalkState::Continue,
                             };
 
-                            if futures::executor::block_on(
-                                server.filesystem.is_ignored(path, metadata.is_dir()),
-                            ) {
+                            if runtime
+                                .block_on(server.filesystem.is_ignored(path, metadata.is_dir()))
+                            {
                                 return WalkState::Continue;
                             }
 
@@ -116,15 +118,14 @@ mod post {
                                     return WalkState::Quit;
                                 }
 
-                                let mut entry = futures::executor::block_on(
-                                    server.filesystem.to_api_entry_buffer(
+                                let mut entry =
+                                    runtime.block_on(server.filesystem.to_api_entry_buffer(
                                         path.to_path_buf(),
                                         &metadata,
                                         Some(&buffer[..bytes_read]),
                                         None,
                                         None,
-                                    ),
-                                );
+                                    ));
                                 entry.name = match path.strip_prefix(&root) {
                                     Ok(path) => path.to_string_lossy().to_string(),
                                     Err(_) => return WalkState::Continue,
@@ -159,7 +160,7 @@ mod post {
                                             return WalkState::Quit;
                                         }
 
-                                        let mut entry = futures::executor::block_on(
+                                        let mut entry = runtime.block_on(
                                             server.filesystem.to_api_entry_buffer(
                                                 path.to_path_buf(),
                                                 &metadata,

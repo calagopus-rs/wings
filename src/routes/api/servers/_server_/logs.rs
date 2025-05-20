@@ -9,7 +9,7 @@ mod get {
 
     #[derive(ToSchema, Deserialize)]
     pub struct Params {
-        size: Option<u8>,
+        size: Option<usize>,
     }
 
     #[derive(ToSchema, Serialize)]
@@ -25,13 +25,8 @@ mod get {
         server: GetServer,
         Query(data): Query<Params>,
     ) -> axum::Json<serde_json::Value> {
-        let size = if data.size.unwrap_or_default() > 0 && data.size.unwrap_or_default() <= 100 {
-            data.size.unwrap_or_default()
-        } else {
-            100
-        };
-
-        let log = server.read_log(&state.docker, size as usize).await.unwrap();
+        let size = data.size.unwrap_or(100).min(100);
+        let log = server.read_log(&state.docker, size).await.unwrap();
 
         axum::Json(serde_json::to_value(&Response { data: log }).unwrap())
     }

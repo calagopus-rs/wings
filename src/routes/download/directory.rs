@@ -121,6 +121,8 @@ mod get {
             tar.mode(tar::HeaderMode::Complete);
             tar.follow_symlinks(false);
 
+            let runtime = tokio::runtime::Handle::current();
+
             for entry in WalkBuilder::new(&path)
                 .git_ignore(false)
                 .ignore(false)
@@ -142,7 +144,7 @@ mod get {
                     }
                 };
 
-                if futures::executor::block_on(
+                if runtime.block_on(
                     server
                         .filesystem
                         .is_ignored(entry.path(), metadata.is_dir()),
