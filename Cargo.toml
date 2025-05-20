@@ -46,3 +46,4 @@ russh-sftp = "2.1.1"
 md5 = "0.7.0"
 axum-extra = { version = "0.10.1", features = ["query"] }
 human_bytes = "0.4.3"
+ansi_term = "0.12.1"

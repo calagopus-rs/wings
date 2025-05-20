@@ -1,5 +1,4 @@
 use bollard::secret::ContainerStateStatusEnum;
-use colored::Colorize;
 use futures_util::StreamExt;
 use serde_json::json;
 use std::{
@@ -567,18 +566,28 @@ impl Server {
     }
 
     pub async fn log_daemon_with_prelude(&self, message: &str) {
-        let prelude = format!("[{} Daemon]: ", self.config.app_name).yellow();
+        let prelude = ansi_term::Color::Yellow.paint(format!("[{} Daemon]:", self.config.app_name));
 
         self.websocket
             .send(websocket::WebsocketMessage::new(
                 websocket::WebsocketEvent::ServerConsoleOutput,
-                &[format!("{}{}", prelude, message).bold().to_string()],
+                &[ansi_term::Style::new()
+                    .bold()
+                    .paint(format!("{} {}", prelude, message))
+                    .to_string()],
             ))
             .ok();
     }
 
     pub async fn log_daemon_error(&self, message: &str) {
-        self.log_daemon(message.bold().on_red().to_string()).await
+        self.log_daemon(
+            ansi_term::Style::new()
+                .bold()
+                .on(ansi_term::Color::Red)
+                .paint(message)
+                .to_string(),
+        )
+        .await
     }
 
     pub async fn pull_image(
@@ -1049,6 +1058,7 @@ impl Server {
 
         self.container.write().await.take();
         self.websocket_sender.write().await.take();
+        self.reset_state();
     }
 
     pub async fn destroy(&self, client: &bollard::Docker) {
