@@ -67,11 +67,11 @@ mod post {
             );
         }
 
-        let mut extension = location
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .unwrap_or("")
-            .to_string();
+        let mut extension = ".".to_string()
+            + location
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .unwrap_or("");
         let mut base_name = location
             .file_stem()
             .and_then(|stem| stem.to_str())
@@ -79,7 +79,7 @@ mod post {
             .to_string();
 
         if base_name.ends_with(".tar") {
-            extension = format!("tar.{}", extension);
+            extension = format!("tar{}", extension);
             base_name = base_name.trim_end_matches(".tar").to_string();
         }
 
@@ -97,7 +97,7 @@ mod post {
                     suffix = format!(" copy {}", i);
                 }
 
-                let new_name = format!("{}{}.{}", base_name, suffix, extension);
+                let new_name = format!("{}{}{}", base_name, suffix, extension);
                 let new_path = parent.join(&new_name);
 
                 if !new_path.exists() {
@@ -105,15 +105,15 @@ mod post {
                 }
 
                 if i == 50 {
-                    use chrono::prelude::*;
-                    let timestamp = Utc::now().to_rfc3339();
+                    let timestamp = chrono::Utc::now().to_rfc3339();
                     suffix = format!("copy.{}", timestamp);
-                    let final_name = format!("{}{}.{}", base_name, suffix, extension);
+
+                    let final_name = format!("{}{}{}", base_name, suffix, extension);
                     return final_name;
                 }
             }
 
-            format!("{}{}.{}", base_name, suffix, extension)
+            format!("{}{}{}", base_name, suffix, extension)
         }
 
         let new_name = find_copy_suffix(&location, &base_name, &extension);
