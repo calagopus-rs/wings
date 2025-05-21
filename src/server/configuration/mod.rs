@@ -181,6 +181,10 @@ impl ServerConfiguration {
             if let Some(binds) = binds_option {
                 let mut i = 0;
                 while i < binds.len() {
+                    if config.docker.network.disable_interface_binding {
+                        binds[i].host_ip = None;
+                    }
+
                     if binds[i].host_ip.as_deref() == Some("127.0.0.1") {
                         if config.docker.network.ispn {
                             binds.remove(i);

@@ -1056,8 +1056,9 @@ impl Server {
         }
 
         self.container.write().await.take();
-        self.websocket_sender.write().await.take();
-        self.reset_state();
+        if let Some(handle) = self.websocket_sender.write().await.take() {
+            handle.abort();
+        }
     }
 
     pub async fn destroy(&self, client: &bollard::Docker) {

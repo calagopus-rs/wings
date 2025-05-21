@@ -40,20 +40,24 @@ pub async fn handle_message(
             .await;
         }
         WebsocketEvent::SendServerLogs => {
-            let logs = server
-                .read_log(&state.docker, state.config.system.websocket_log_count)
-                .await
-                .unwrap();
+            if server.state.get_state() != crate::server::state::ServerState::Offline
+                || state.config.api.send_offline_server_logs
+            {
+                let logs = server
+                    .read_log(&state.docker, state.config.system.websocket_log_count)
+                    .await
+                    .unwrap();
 
-            for line in logs.lines() {
-                super::send_message(
-                    sender,
-                    WebsocketMessage::new(
-                        WebsocketEvent::ServerConsoleOutput,
-                        &[line.trim().to_string()],
-                    ),
-                )
-                .await;
+                for line in logs.lines() {
+                    super::send_message(
+                        sender,
+                        WebsocketMessage::new(
+                            WebsocketEvent::ServerConsoleOutput,
+                            &[line.trim().to_string()],
+                        ),
+                    )
+                    .await;
+                }
             }
         }
         WebsocketEvent::SetState => {

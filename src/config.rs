@@ -72,6 +72,9 @@ fn system_sftp_bind_address() -> String {
 fn system_sftp_bind_port() -> u16 {
     2022
 }
+fn system_sftp_key_algorithm() -> String {
+    "ssh-ed25519".to_string()
+}
 
 fn system_crash_detection_enabled() -> bool {
     true
@@ -196,6 +199,8 @@ nestify::nest! {
 
             #[serde(default)]
             pub disable_remote_download: bool,
+            #[serde(default)]
+            pub send_offline_server_logs: bool,
             #[serde(default = "api_upload_limit")]
             /// MB
             pub upload_limit: usize,
@@ -267,6 +272,10 @@ nestify::nest! {
 
                 #[serde(default)]
                 pub read_only: bool,
+                #[serde(default = "system_sftp_key_algorithm")]
+                pub key_algorithm: String,
+                #[serde(default)]
+                pub disable_password_auth: bool,
             },
 
             #[serde(default)]
@@ -306,6 +315,8 @@ nestify::nest! {
             pub network: #[derive(Deserialize, Serialize, DefaultFromSerde)] #[serde(default)] pub struct DockerNetwork {
                 #[serde(default = "docker_network_interface")]
                 pub interface: String,
+                #[serde(default)]
+                pub disable_interface_binding: bool,
                 #[serde(default = "docker_network_dns")]
                 pub dns: Vec<String>,
 
@@ -784,7 +795,7 @@ impl Config {
                         ),
                         (
                             "com.docker.network.bridge.name".to_string(),
-                            "pterodactyl0".to_string(),
+                            self.docker.network.name.clone(),
                         ),
                         (
                             "com.docker.network.driver.mtu".to_string(),

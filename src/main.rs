@@ -189,25 +189,42 @@ async fn main() {
 
             let key_file = Path::new(&state.config.system.data_directory)
                 .join(".sftp")
-                .join("id_ed25519");
+                .join(format!(
+                    "id_{}",
+                    state.config.system.sftp.key_algorithm.replace("-", "_")
+                ));
             let key = match tokio::fs::read(&key_file)
                 .await
                 .map(russh::keys::PrivateKey::from_openssh)
             {
                 Ok(Ok(key)) => {
-                    tracing::info!("loaded existing sftp host key");
+                    tracing::info!(
+                        algorithm = %key.algorithm().to_string(),
+                        "loaded existing sftp host key"
+                    );
                     key
                 }
                 _ => {
-                    tracing::info!("generating new sftp host key");
+                    tracing::info!(
+                        algorithm = %state.config.system.sftp.key_algorithm,
+                        "generating new sftp host key"
+                    );
                     let key = russh::keys::PrivateKey::random(
                         &mut OsRng,
-                        russh::keys::Algorithm::Ed25519,
+                        state
+                            .config
+                            .system
+                            .sftp
+                            .key_algorithm
+                            .parse()
+                            .context("failed to parse sftp key algorithm")
+                            .unwrap(),
                     )
                     .unwrap();
 
                     tokio::fs::create_dir_all(key_file.parent().unwrap())
                         .await
+                        .context("failed to create sftp host key directory")
                         .unwrap();
                     tokio::fs::write(
                         key_file,
@@ -215,6 +232,7 @@ async fn main() {
                             .unwrap(),
                     )
                     .await
+                    .context("failed to write sftp host key")
                     .unwrap();
 
                     key

@@ -4,20 +4,8 @@ use russh::{
     server::{Auth, Msg, Session},
 };
 use russh_sftp::protocol::StatusCode;
-use std::{
-    collections::HashMap,
-    net::IpAddr,
-    sync::{Arc, LazyLock},
-};
+use std::{collections::HashMap, net::IpAddr, sync::Arc};
 use tokio::sync::Mutex;
-
-static AUTH_METHODS: LazyLock<MethodSet> = LazyLock::new(|| {
-    let mut methods = MethodSet::empty();
-    methods.push(russh::MethodKind::Password);
-    methods.push(russh::MethodKind::PublicKey);
-
-    methods
-});
 
 pub struct SshSession {
     pub state: State,
@@ -31,6 +19,16 @@ pub struct SshSession {
 }
 
 impl SshSession {
+    fn get_auth_methods(&self) -> MethodSet {
+        let mut methods = MethodSet::empty();
+        if !self.state.config.system.sftp.disable_password_auth {
+            methods.push(russh::MethodKind::Password);
+        }
+        methods.push(russh::MethodKind::PublicKey);
+
+        methods
+    }
+
     pub async fn get_channel(&mut self, channel_id: ChannelId) -> Channel<Msg> {
         let mut clients = self.clients.lock().await;
 
@@ -43,12 +41,19 @@ impl russh::server::Handler for SshSession {
 
     async fn auth_none(&mut self, _user: &str) -> Result<Auth, Self::Error> {
         Ok(Auth::Reject {
-            proceed_with_methods: Some(AUTH_METHODS.clone()),
+            proceed_with_methods: Some(self.get_auth_methods()),
             partial_success: false,
         })
     }
 
     async fn auth_password(&mut self, username: &str, password: &str) -> Result<Auth, Self::Error> {
+        if self.state.config.system.sftp.disable_password_auth {
+            return Ok(Auth::Reject {
+                proceed_with_methods: Some(self.get_auth_methods()),
+                partial_success: false,
+            });
+        }
+
         let (user, server, permissions) = match self
             .state
             .config
@@ -83,7 +88,7 @@ impl russh::server::Handler for SshSession {
             Some(server) => server,
             None => {
                 return Ok(Auth::Reject {
-                    proceed_with_methods: Some(AUTH_METHODS.clone()),
+                    proceed_with_methods: Some(self.get_auth_methods()),
                     partial_success: false,
                 });
             }
@@ -119,7 +124,7 @@ impl russh::server::Handler for SshSession {
                 tracing::debug!("failed to authenticate user {} (public_key): {}", user, err);
 
                 return Ok(Auth::Reject {
-                    proceed_with_methods: Some(AUTH_METHODS.clone()),
+                    proceed_with_methods: Some(self.get_auth_methods()),
                     partial_success: false,
                 });
             }
