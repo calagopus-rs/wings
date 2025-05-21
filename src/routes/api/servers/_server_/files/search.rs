@@ -98,7 +98,7 @@ mod post {
                                 return WalkState::Continue;
                             }
 
-                            if !metadata.is_file() || metadata.len() > max_size {
+                            if !metadata.is_file() {
                                 return WalkState::Continue;
                             }
 
@@ -134,7 +134,7 @@ mod post {
                                 results.push(entry);
                             }
 
-                            if data.include_content {
+                            if data.include_content && metadata.len() <= max_size {
                                 let mut buffer = [0; 8192];
                                 let mut file = match File::open(path) {
                                     Ok(file) => file,

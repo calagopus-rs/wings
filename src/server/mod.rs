@@ -699,7 +699,6 @@ impl Server {
         }
 
         if self.state.get_state() != state::ServerState::Offline {
-            self.log_daemon_error("server is already running").await;
             return Err("server is already running".into());
         }
 

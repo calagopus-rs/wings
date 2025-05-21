@@ -1,5 +1,9 @@
 use super::State;
-use utoipa_axum::{router::OpenApiRouter, routes};
+use axum::extract::DefaultBodyLimit;
+use utoipa_axum::{
+    router::{OpenApiRouter, UtoipaMethodRouterExt},
+    routes,
+};
 
 mod post {
     use crate::{
@@ -199,6 +203,6 @@ mod post {
 
 pub fn router(state: &State) -> OpenApiRouter<State> {
     OpenApiRouter::new()
-        .routes(routes!(post::route))
+        .routes(routes!(post::route).layer(DefaultBodyLimit::disable()))
         .with_state(state.clone())
 }

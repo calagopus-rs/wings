@@ -43,8 +43,8 @@ mod get {
         if let Ok(metadata) = metadata {
             if !metadata.is_dir() || server.filesystem.is_ignored(&path, metadata.is_dir()).await {
                 return (
-                    StatusCode::NOT_FOUND,
-                    axum::Json(ApiError::new("path not").to_json()),
+                    StatusCode::EXPECTATION_FAILED,
+                    axum::Json(ApiError::new("path not a directory").to_json()),
                 );
             }
         } else {

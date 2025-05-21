@@ -66,10 +66,10 @@ fn system_websocket_log_count() -> usize {
     150
 }
 
-fn system_sftp_address() -> String {
+fn system_sftp_bind_address() -> String {
     "0.0.0.0".to_string()
 }
-fn system_sftp_port() -> u16 {
+fn system_sftp_bind_port() -> u16 {
     2022
 }
 
@@ -260,10 +260,10 @@ nestify::nest! {
 
             #[serde(default)]
             pub sftp: #[derive(Deserialize, Serialize, DefaultFromSerde)] #[serde(default)] pub struct SystemSftp {
-                #[serde(default = "system_sftp_address")]
-                pub address: String,
-                #[serde(default = "system_sftp_port")]
-                pub port: u16,
+                #[serde(default = "system_sftp_bind_address")]
+                pub bind_address: String,
+                #[serde(default = "system_sftp_bind_port")]
+                pub bind_port: u16,
 
                 #[serde(default)]
                 pub read_only: bool,
@@ -445,7 +445,7 @@ impl DockerOverhead {
             return 1.05;
         }
 
-        let mut multipliers = self.multipliers.keys().cloned().collect::<Vec<i64>>();
+        let mut multipliers = self.multipliers.keys().copied().collect::<Vec<i64>>();
         multipliers.sort();
         multipliers.reverse();
 
@@ -541,15 +541,6 @@ impl Config {
         Ok(())
     }
 
-    pub fn update(&self, new_config: InnerConfig) -> Result<(), anyhow::Error> {
-        let config = unsafe { &mut *self.inner.get() };
-        let _ = std::mem::replace(config, new_config);
-
-        self.save()?;
-
-        Ok(())
-    }
-
     #[inline]
     pub fn find_ip(
         &self,
@@ -578,7 +569,7 @@ impl Config {
     }
 
     #[allow(clippy::mut_from_ref)]
-    fn unsafe_mut(&self) -> &mut InnerConfig {
+    pub fn unsafe_mut(&self) -> &mut InnerConfig {
         unsafe { &mut *self.inner.get() }
     }
 

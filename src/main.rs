@@ -1,7 +1,7 @@
 use anyhow::Context;
 use axum::{
     body::Body,
-    extract::{DefaultBodyLimit, Request},
+    extract::Request,
     http::{HeaderMap, Method, Response, StatusCode},
     middleware::Next,
 };
@@ -155,7 +155,6 @@ async fn main() {
             handle_cors,
         ))
         .layer(axum::middleware::from_fn(handle_request))
-        .layer(DefaultBodyLimit::max(config.api.upload_limit * 1000 * 1000))
         .with_state(state.clone());
 
     let (router, mut openapi) = app.split_for_parts();
@@ -235,10 +234,10 @@ async fn main() {
                     .config
                     .system
                     .sftp
-                    .address
+                    .bind_address
                     .parse::<std::net::IpAddr>()
                     .unwrap(),
-                state.config.system.sftp.port,
+                state.config.system.sftp.bind_port,
             ));
 
             tracing::info!(
