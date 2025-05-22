@@ -653,6 +653,9 @@ impl Server {
                             err
                         );
 
+                        self.log_daemon_error(&format!("failed to pull image: {}", err))
+                            .await;
+
                         if let Ok(images) = client
                             .list_images(Some(bollard::image::ListImagesOptions {
                                 all: true,
