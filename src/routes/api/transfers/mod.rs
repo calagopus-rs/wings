@@ -114,10 +114,10 @@ mod post {
                     if let Some("archive") = field.name() {
                         let sync_reader = SyncIoBridge::new(tokio_util::io::StreamReader::new(
                             field.into_stream().map_err(|err| {
-                                std::io::Error::new(
-                                    std::io::ErrorKind::Other,
-                                    format!("failed to read multipart field: {}", err),
-                                )
+                                std::io::Error::other(format!(
+                                    "failed to read multipart field: {}",
+                                    err
+                                ))
                             }),
                         ));
                         let reader = flate2::read::GzDecoder::new(sync_reader);

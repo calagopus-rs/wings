@@ -86,10 +86,7 @@ impl Write for FileSystemWriter {
         if let Some(writer) = self.writer.as_mut() {
             writer.write(buf)
         } else {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "Writer is not available",
-            ))
+            Err(std::io::Error::other("Writer is not available"))
         }
     }
 
@@ -100,10 +97,7 @@ impl Write for FileSystemWriter {
         if let Some(writer) = self.writer.as_mut() {
             writer.flush()
         } else {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "Writer is not available",
-            ))
+            Err(std::io::Error::other("Writer is not available"))
         }
     }
 }
@@ -115,10 +109,7 @@ impl Seek for FileSystemWriter {
         if let Some(writer) = self.writer.as_mut() {
             writer.seek(pos)
         } else {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "Writer is not available",
-            ))
+            Err(std::io::Error::other("Writer is not available"))
         }
     }
 }

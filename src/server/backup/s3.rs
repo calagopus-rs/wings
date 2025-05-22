@@ -234,9 +234,8 @@ pub async fn restore_backup(
         .send()
         .await?
         .bytes_stream();
-    let reader = tokio_util::io::StreamReader::new(Box::pin(
-        response.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)),
-    ));
+    let reader =
+        tokio_util::io::StreamReader::new(Box::pin(response.map_err(std::io::Error::other)));
     let reader = BufReader::with_capacity(1024 * 1024, reader);
 
     let runtime = tokio::runtime::Handle::current();
