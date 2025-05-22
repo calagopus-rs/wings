@@ -311,7 +311,7 @@ impl Filesystem {
     }
 
     pub async fn truncate_path(&self, path: &PathBuf) -> tokio::io::Result<()> {
-        let metadata = path.symlink_metadata()?;
+        let metadata = tokio::fs::symlink_metadata(path).await?;
 
         let components = self.path_to_components(path);
         let size = if metadata.is_dir() {

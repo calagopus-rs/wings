@@ -11,7 +11,7 @@ mod post {
     };
     use futures::TryStreamExt;
     use serde::Serialize;
-    use std::{fs::Permissions, io::Write, os::unix::fs::PermissionsExt, sync::Arc};
+    use std::{fs::Permissions, io::Write, os::unix::fs::PermissionsExt};
     use tokio_util::io::SyncIoBridge;
     use utoipa::ToSchema;
 
@@ -147,7 +147,7 @@ mod post {
 
                                     let mut writer =
                                         crate::server::filesystem::writer::FileSystemWriter::new(
-                                            Arc::clone(&server.filesystem),
+                                            server.clone(),
                                             destination_path,
                                             header.mode().map(Permissions::from_mode).ok(),
                                             header

@@ -82,7 +82,7 @@ impl ServerStateLock {
     ) -> bool
     where
         F: FnOnce(bool) -> Fut,
-        Fut: Future<Output = Result<(), Box<dyn std::error::Error>>>,
+        Fut: Future<Output = Result<(), anyhow::Error>>,
     {
         let old_state = self.get_state();
 

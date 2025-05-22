@@ -7,18 +7,18 @@ use tokio::sync::{Mutex, RwLock};
 
 pub enum JwtError {
     CloseSocket,
-    Misc(Box<dyn std::error::Error>),
+    Misc(anyhow::Error),
 }
 
-impl From<Box<dyn std::error::Error>> for JwtError {
-    fn from(err: Box<dyn std::error::Error>) -> Self {
+impl From<anyhow::Error> for JwtError {
+    fn from(err: anyhow::Error) -> Self {
         JwtError::Misc(err)
     }
 }
 
 impl From<serde_json::Error> for JwtError {
     fn from(err: serde_json::Error) -> Self {
-        JwtError::Misc(Box::new(err))
+        JwtError::Misc(err.into())
     }
 }
 
@@ -56,10 +56,7 @@ pub async fn handle_jwt(
                                     )
                                     .await;
 
-                                    return Err(JwtError::Misc(Box::new(std::io::Error::new(
-                                        std::io::ErrorKind::PermissionDenied,
-                                        "JWT expired",
-                                    ))));
+                                    return Err(JwtError::Misc(anyhow::anyhow!("JWT expired")));
                                 }
 
                                 return Err(JwtError::CloseSocket);
@@ -126,10 +123,7 @@ pub async fn handle_jwt(
                 }
             }
         }
-        _ => Err(JwtError::Misc(Box::new(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "Invalid message type",
-        )))),
+        _ => Err(JwtError::Misc(anyhow::anyhow!("invalid message type"))),
     }
 }
 

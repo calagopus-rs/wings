@@ -23,7 +23,7 @@ pub mod state;
 pub mod transfer;
 pub mod websocket;
 
-pub struct ServerInner {
+pub struct InnerServer {
     pub uuid: uuid::Uuid,
     config: Arc<crate::config::Config>,
 
@@ -35,10 +35,10 @@ pub struct ServerInner {
     _websocket_receiver: tokio::sync::broadcast::Receiver<websocket::WebsocketMessage>,
     websocket_sender: RwLock<Option<tokio::task::JoinHandle<()>>>,
 
-    pub container: Arc<RwLock<Option<Arc<container::Container>>>>,
+    pub container: RwLock<Option<Arc<container::Container>>>,
     pub activity: activity::ActivityManager,
 
-    pub state: Arc<state::ServerStateLock>,
+    pub state: state::ServerStateLock,
     pub outgoing_transfer: RwLock<Option<transfer::OutgoingServerTransfer>>,
     pub incoming_transfer: RwLock<Option<tokio::task::JoinHandle<()>>>,
 
@@ -52,10 +52,10 @@ pub struct ServerInner {
     last_crash: RwLock<Option<std::time::Instant>>,
     crash_handled: AtomicBool,
 
-    pub filesystem: Arc<filesystem::Filesystem>,
+    pub filesystem: filesystem::Filesystem,
 }
 
-pub struct Server(pub Arc<ServerInner>);
+pub struct Server(pub Arc<InnerServer>);
 
 impl Server {
     pub fn new(
@@ -67,20 +67,20 @@ impl Server {
             server = %configuration.uuid,
             "creating server instance"
         );
-        let filesystem = Arc::new(filesystem::Filesystem::new(
+        let filesystem = filesystem::Filesystem::new(
             PathBuf::from(&config.system.data_directory).join(configuration.uuid.to_string()),
             configuration.build.disk_space * 1024 * 1024,
             config.system.disk_check_interval,
             &config,
             &configuration.egg.file_denylist,
-        ));
+        );
 
         let (rx, tx) = tokio::sync::broadcast::channel(128);
 
-        let state = Arc::new(state::ServerStateLock::new(rx.clone()));
+        let state = state::ServerStateLock::new(rx.clone());
         let activity = activity::ActivityManager::new(configuration.uuid, &config);
 
-        Self(Arc::new(ServerInner {
+        Self(Arc::new(InnerServer {
             uuid: configuration.uuid,
 
             config,
@@ -92,7 +92,7 @@ impl Server {
             _websocket_receiver: tx,
             websocket_sender: RwLock::new(None),
 
-            container: Arc::new(RwLock::new(None)),
+            container: RwLock::new(None),
             activity,
 
             state,
@@ -435,8 +435,7 @@ impl Server {
                 container.id.clone(),
                 self.process_configuration.read().await.startup.clone(),
                 Arc::clone(client),
-                Arc::clone(&self.state),
-                Arc::clone(&self.filesystem),
+                self.clone(),
             )
             .await?,
         );
@@ -476,8 +475,7 @@ impl Server {
                         container.to_string(),
                         self.process_configuration.read().await.startup.clone(),
                         Arc::clone(client),
-                        Arc::clone(&self.state),
-                        Arc::clone(&self.filesystem),
+                        self.clone(),
                     )
                     .await?,
                 );
@@ -566,15 +564,18 @@ impl Server {
     }
 
     pub async fn log_daemon_with_prelude(&self, message: &str) {
-        let prelude = ansi_term::Color::Yellow.paint(format!("[{} Daemon]:", self.config.app_name));
+        let prelude = ansi_term::Color::Yellow
+            .bold()
+            .paint(format!("[{} Daemon]:", self.config.app_name));
 
         self.websocket
             .send(websocket::WebsocketMessage::new(
                 websocket::WebsocketEvent::ServerConsoleOutput,
-                &[ansi_term::Style::new()
-                    .bold()
-                    .paint(format!("{} {}", prelude, message))
-                    .to_string()],
+                &[format!(
+                    "{} {}",
+                    prelude,
+                    ansi_term::Style::new().bold().paint(message)
+                )],
             ))
             .ok();
     }
@@ -1089,7 +1090,7 @@ impl Clone for Server {
 }
 
 impl Deref for Server {
-    type Target = Arc<ServerInner>;
+    type Target = Arc<InnerServer>;
 
     fn deref(&self) -> &Self::Target {
         &self.0

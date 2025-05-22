@@ -10,7 +10,6 @@ use std::{
     io::Write,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
-    sync::Arc,
 };
 use tokio::io::AsyncReadExt;
 
@@ -20,14 +19,13 @@ fn get_file_name(server: &crate::server::Server, uuid: uuid::Uuid) -> PathBuf {
 }
 
 pub async fn create_backup(
-    server: &crate::server::Server,
+    server: crate::server::Server,
     uuid: uuid::Uuid,
     overrides: ignore::overrides::Override,
 ) -> Result<RawServerBackup, Box<dyn std::error::Error + Send + Sync>> {
-    let file_name = get_file_name(server, uuid);
+    let file_name = get_file_name(&server, uuid);
     let writer = std::io::BufWriter::new(std::fs::File::create(&file_name)?);
 
-    let filesystem = Arc::clone(&server.filesystem);
     let compression_level = server.config.system.backups.compression_level;
     tokio::task::spawn_blocking(
         move || -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -39,7 +37,7 @@ pub async fn create_backup(
             tar.mode(tar::HeaderMode::Complete);
             tar.follow_symlinks(false);
 
-            for entry in WalkBuilder::new(&filesystem.base_path)
+            for entry in WalkBuilder::new(&server.filesystem.base_path)
                 .overrides(overrides)
                 .add_custom_ignore_filename(".pteroignore")
                 .follow_links(false)
@@ -51,7 +49,7 @@ pub async fn create_backup(
                 let path = entry.path().canonicalize()?;
                 let metadata = entry.metadata()?;
 
-                if let Ok(relative) = path.strip_prefix(&filesystem.base_path) {
+                if let Ok(relative) = path.strip_prefix(&server.filesystem.base_path) {
                     if metadata.is_dir() {
                         tar.append_dir(relative, &path).ok();
                     } else {
@@ -90,13 +88,12 @@ pub async fn create_backup(
 }
 
 pub async fn restore_backup(
-    server: &crate::server::Server,
+    server: crate::server::Server,
     uuid: uuid::Uuid,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let file_name = get_file_name(server, uuid);
+    let file_name = get_file_name(&server, uuid);
     let file = std::fs::File::open(&file_name)?;
 
-    let filesystem = Arc::clone(&server.filesystem);
     let server = server.clone();
     let runtime = tokio::runtime::Handle::current();
     tokio::task::spawn_blocking(
@@ -111,8 +108,8 @@ pub async fn restore_backup(
                     continue;
                 }
 
-                let destination_path = filesystem.base_path.join(&path);
-                if !filesystem.is_safe_path_sync(&destination_path) {
+                let destination_path = server.filesystem.base_path.join(&path);
+                if !server.filesystem.is_safe_path_sync(&destination_path) {
                     continue;
                 }
 
@@ -140,7 +137,7 @@ pub async fn restore_backup(
                         std::fs::create_dir_all(destination_path.parent().unwrap()).unwrap();
 
                         let mut writer = crate::server::filesystem::writer::FileSystemWriter::new(
-                            Arc::clone(&filesystem),
+                            server.clone(),
                             destination_path,
                             Some(Permissions::from_mode(header.mode().unwrap_or(0o644))),
                             header

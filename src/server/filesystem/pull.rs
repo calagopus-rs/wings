@@ -1,3 +1,4 @@
+use anyhow::Context;
 use rand::Rng;
 use std::{
     path::{Path, PathBuf},
@@ -18,7 +19,7 @@ pub struct Download {
     pub progress: Arc<AtomicU64>,
     pub total: u64,
     pub destination: PathBuf,
-    pub filesystem: Arc<crate::server::filesystem::Filesystem>,
+    pub server: crate::server::Server,
     pub response: Option<reqwest::Response>,
 
     pub task: Option<tokio::task::JoinHandle<()>>,
@@ -26,17 +27,24 @@ pub struct Download {
 
 impl Download {
     pub async fn new(
+        server: crate::server::Server,
         destination: &Path,
         file_name: Option<String>,
         url: String,
         use_header: bool,
-        filesystem: Arc<crate::server::filesystem::Filesystem>,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        let response = DOWNLOAD_CLIENT.get(&url).send().await?;
+    ) -> Result<Self, anyhow::Error> {
+        let response = DOWNLOAD_CLIENT
+            .get(&url)
+            .send()
+            .await
+            .context("failed to send request")?;
         let mut real_destination = destination.to_path_buf();
 
         if !response.status().is_success() {
-            return Err(format!("Failed to download file: code {}", response.status()).into());
+            return Err(anyhow::anyhow!(
+                "Failed to download file: code {}",
+                response.status()
+            ));
         }
 
         'header_check: {
@@ -71,12 +79,12 @@ impl Download {
             }
         }
 
-        if !filesystem.is_safe_path(&real_destination).await {
-            return Err("Unsafe path generated".into());
+        if !server.filesystem.is_safe_path(&real_destination).await {
+            return Err(anyhow::anyhow!("unsafe path for pull"));
         }
 
-        if filesystem.is_ignored(&real_destination, false).await {
-            return Err("File is ignored".into());
+        if server.filesystem.is_ignored(&real_destination, false).await {
+            return Err(anyhow::anyhow!("file is ignored"));
         }
 
         Ok(Self {
@@ -84,7 +92,7 @@ impl Download {
             progress: Arc::new(AtomicU64::new(0)),
             total: response.content_length().unwrap_or(0),
             destination: real_destination,
-            filesystem,
+            server,
             response: Some(response),
             task: None,
         })
@@ -93,17 +101,13 @@ impl Download {
     pub fn start(&mut self) {
         let progress = Arc::clone(&self.progress);
         let destination = self.destination.clone();
-        let filesystem = Arc::clone(&self.filesystem);
+        let server = self.server.clone();
         let mut response = self.response.take().unwrap();
 
         let task = tokio::task::spawn(async move {
-            let mut writer = super::writer::AsyncFileSystemWriter::new(
-                Arc::clone(&filesystem),
-                destination,
-                None,
-            )
-            .await
-            .unwrap();
+            let mut writer = super::writer::AsyncFileSystemWriter::new(server, destination, None)
+                .await
+                .unwrap();
 
             while let Ok(Some(chunk)) = response.chunk().await {
                 writer.write_all(&chunk).await.unwrap();

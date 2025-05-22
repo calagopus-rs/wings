@@ -35,8 +35,7 @@ impl Container {
         docker_id: String,
         startup_configuration: ProcessConfigurationStartup,
         client: Arc<bollard::Docker>,
-        parent_state: Arc<super::state::ServerStateLock>,
-        filesystem: Arc<super::filesystem::Filesystem>,
+        server: crate::server::Server,
     ) -> Result<Self, bollard::errors::Error> {
         let (stdin, mut stdin_reciever) = tokio::sync::mpsc::channel(150);
         let (stdout_sender, stdout) = tokio::sync::broadcast::channel(150);
@@ -113,7 +112,7 @@ impl Container {
                 let docker_id = docker_id.clone();
                 let client = Arc::clone(&client);
                 let resource_usage = Arc::clone(&resource_usage);
-                let filesystem = Arc::clone(&filesystem);
+                let server = server.clone();
 
                 async move {
                     loop {
@@ -127,7 +126,7 @@ impl Container {
 
                             usage.memory_bytes = stats.memory_stats.usage.unwrap_or(0);
                             usage.memory_limit_bytes = stats.memory_stats.limit.unwrap_or(0);
-                            usage.disk_bytes = filesystem.cached_usage();
+                            usage.disk_bytes = server.filesystem.cached_usage();
 
                             if let Some(networks) = stats.networks {
                                 if let Some(network) = networks.values().next() {
@@ -202,7 +201,7 @@ impl Container {
                             let newline_pos = search_start + pos;
 
                             let check_startup = |line: &String| {
-                                if parent_state.get_state() != super::state::ServerState::Starting {
+                                if server.state.get_state() != super::state::ServerState::Starting {
                                     return;
                                 }
 
@@ -227,7 +226,8 @@ impl Container {
 
                                         for done in done_vec {
                                             if result_line.contains(done) {
-                                                parent_state
+                                                server
+                                                    .state
                                                     .set_state(super::state::ServerState::Running);
                                                 break;
                                             }
@@ -235,7 +235,8 @@ impl Container {
                                     } else {
                                         for done in done_vec {
                                             if line.contains(done) {
-                                                parent_state
+                                                server
+                                                    .state
                                                     .set_state(super::state::ServerState::Running);
                                                 break;
                                             }

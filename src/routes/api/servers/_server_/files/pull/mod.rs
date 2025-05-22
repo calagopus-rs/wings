@@ -115,11 +115,11 @@ mod post {
         tokio::fs::create_dir_all(&path).await.unwrap();
         let download = Arc::new(RwLock::new(
             crate::server::filesystem::pull::Download::new(
+                server.0.clone(),
                 &path,
                 data.file_name,
                 data.url,
                 data.use_header,
-                Arc::clone(&server.filesystem),
             )
             .await
             .unwrap(),

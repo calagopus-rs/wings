@@ -38,20 +38,19 @@ async fn get_repository(server: &crate::server::Server) -> Arc<ddup_bak::reposit
 }
 
 pub async fn create_backup(
-    server: &crate::server::Server,
+    server: crate::server::Server,
     uuid: uuid::Uuid,
     overrides: ignore::overrides::Override,
 ) -> Result<RawServerBackup, Box<dyn std::error::Error + Send + Sync>> {
-    let repository = get_repository(server).await;
+    let repository = get_repository(&server).await;
     let path = repository.archive_path(&uuid.to_string());
 
-    let filesystem = Arc::clone(&server.filesystem);
     let size = tokio::task::spawn_blocking(
         move || -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
             let archive = repository.create_archive(
                 &uuid.to_string(),
                 Some(
-                    WalkBuilder::new(&filesystem.base_path)
+                    WalkBuilder::new(&server.filesystem.base_path)
                         .overrides(overrides)
                         .add_custom_ignore_filename(".pteroignore")
                         .follow_links(false)
@@ -59,7 +58,7 @@ pub async fn create_backup(
                         .hidden(false)
                         .build(),
                 ),
-                Some(&filesystem.base_path),
+                Some(&server.filesystem.base_path),
                 None,
                 None,
                 None,
@@ -106,12 +105,11 @@ pub async fn create_backup(
 }
 
 pub async fn restore_backup(
-    server: &crate::server::Server,
+    server: crate::server::Server,
     uuid: uuid::Uuid,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let repository = get_repository(server).await;
+    let repository = get_repository(&server).await;
 
-    let server = server.clone();
     let runtime = tokio::runtime::Handle::current();
     tokio::task::spawn_blocking(
         move || -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -144,7 +142,7 @@ pub async fn restore_backup(
                         }
 
                         let mut writer = crate::server::filesystem::writer::FileSystemWriter::new(
-                            Arc::clone(&server.filesystem),
+                            server.clone(),
                             destination_path,
                             Some(file.mode.into()),
                             Some(file.mtime),

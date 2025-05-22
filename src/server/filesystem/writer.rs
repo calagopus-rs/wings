@@ -3,7 +3,6 @@ use std::{
     io::{BufWriter, Seek, SeekFrom, Write},
     path::PathBuf,
     pin::Pin,
-    sync::Arc,
     task::{Context, Poll},
     time::SystemTime,
 };
@@ -12,7 +11,7 @@ use tokio::io::{AsyncSeek, AsyncWrite};
 const ALLOCATION_THRESHOLD: i64 = 1_024_000; // 1 MB
 
 pub struct FileSystemWriter {
-    filesystem: Arc<super::Filesystem>,
+    server: crate::server::Server,
     parent: Vec<String>,
     writer: Option<BufWriter<File>>,
     accumulated_bytes: i64,
@@ -21,12 +20,14 @@ pub struct FileSystemWriter {
 
 impl FileSystemWriter {
     pub fn new(
-        filesystem: Arc<super::Filesystem>,
+        server: crate::server::Server,
         destination: PathBuf,
         permissions: Option<Permissions>,
         modified: Option<SystemTime>,
     ) -> std::io::Result<Self> {
-        let parent = filesystem.path_to_components(&destination.parent().unwrap().canonicalize()?);
+        let parent = server
+            .filesystem
+            .path_to_components(&destination.parent().unwrap().canonicalize()?);
         let file = File::create(&destination)?;
 
         if let Some(permissions) = permissions {
@@ -35,12 +36,12 @@ impl FileSystemWriter {
 
         std::os::unix::fs::chown(
             destination,
-            Some(filesystem.owner_uid),
-            Some(filesystem.owner_gid),
+            Some(server.filesystem.owner_uid),
+            Some(server.filesystem.owner_gid),
         )?;
 
         Ok(Self {
-            filesystem,
+            server,
             parent,
             writer: Some(BufWriter::with_capacity(
                 ALLOCATION_THRESHOLD as usize,
@@ -54,7 +55,8 @@ impl FileSystemWriter {
     fn allocate_accumulated(&mut self) -> std::io::Result<()> {
         if self.accumulated_bytes > 0 {
             if !futures::executor::block_on(
-                self.filesystem
+                self.server
+                    .filesystem
                     .allocate_in_path_raw(&self.parent, self.accumulated_bytes),
             ) {
                 return Err(std::io::Error::new(
@@ -134,7 +136,7 @@ impl Drop for FileSystemWriter {
 }
 
 pub struct AsyncFileSystemWriter {
-    filesystem: Arc<super::Filesystem>,
+    server: crate::server::Server,
     parent: Vec<String>,
     writer: tokio::io::BufWriter<tokio::fs::File>,
     accumulated_bytes: i64,
@@ -143,7 +145,7 @@ pub struct AsyncFileSystemWriter {
 
 impl AsyncFileSystemWriter {
     pub async fn new(
-        filesystem: Arc<super::Filesystem>,
+        server: crate::server::Server,
         destination: PathBuf,
         permissions: Option<Permissions>,
     ) -> std::io::Result<Self> {
@@ -155,17 +157,17 @@ impl AsyncFileSystemWriter {
         })?;
 
         let canonicalized = tokio::fs::canonicalize(parent_path).await?;
-        let parent = filesystem.path_to_components(&canonicalized);
+        let parent = server.filesystem.path_to_components(&canonicalized);
         let file = tokio::fs::File::create(&destination).await?;
 
         if let Some(permissions) = permissions {
             tokio::fs::set_permissions(&destination, permissions).await?;
         }
 
-        filesystem.chown_path(&destination).await;
+        server.filesystem.chown_path(&destination).await;
 
         Ok(Self {
-            filesystem,
+            server,
             parent,
             writer: tokio::io::BufWriter::with_capacity(ALLOCATION_THRESHOLD as usize, file),
             accumulated_bytes: 0,
@@ -175,12 +177,12 @@ impl AsyncFileSystemWriter {
 
     fn start_allocation(&mut self) {
         if self.accumulated_bytes > 0 && self.allocation_in_progress.is_none() {
-            let filesystem = self.filesystem.clone();
+            let server = self.server.clone();
             let parent = self.parent.clone();
             let bytes = self.accumulated_bytes;
 
             self.allocation_in_progress = Some(Box::pin(async move {
-                filesystem.allocate_in_path_raw(&parent, bytes).await
+                server.filesystem.allocate_in_path_raw(&parent, bytes).await
             }));
 
             self.accumulated_bytes = 0;
@@ -301,12 +303,12 @@ impl AsyncSeek for AsyncFileSystemWriter {
 impl Drop for AsyncFileSystemWriter {
     fn drop(&mut self) {
         if self.accumulated_bytes > 0 {
-            let filesystem = self.filesystem.clone();
+            let server = self.server.clone();
             let parent = self.parent.clone();
             let bytes = self.accumulated_bytes;
 
             tokio::spawn(async move {
-                filesystem.allocate_in_path_raw(&parent, bytes).await;
+                server.filesystem.allocate_in_path_raw(&parent, bytes).await;
             });
         }
     }

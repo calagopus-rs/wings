@@ -76,7 +76,7 @@ impl OutgoingServerTransfer {
             "starting outgoing server transfer"
         );
 
-        self.task.replace(tokio::spawn(async move {
+        let old_task = self.task.replace(tokio::spawn(async move {
             if server.state.get_state() != super::state::ServerState::Offline {
                 server
                     .stop_with_kill_timeout(&client, std::time::Duration::from_secs(15))
@@ -279,6 +279,10 @@ impl OutgoingServerTransfer {
                 "finished outgoing server transfer"
             );
         }));
+
+        if let Some(old_task) = old_task {
+            old_task.abort();
+        }
 
         Ok(())
     }

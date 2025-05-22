@@ -5,7 +5,6 @@ mod post {
     use crate::routes::{ApiError, api::servers::_server_::GetServer};
     use axum::http::StatusCode;
     use serde::{Deserialize, Serialize};
-    use std::sync::Arc;
     use utoipa::ToSchema;
 
     #[derive(ToSchema, Deserialize)]
@@ -70,20 +69,17 @@ mod post {
             );
         }
 
-        let mut archive = match crate::server::filesystem::archive::Archive::open(
-            Arc::clone(&server.filesystem),
-            source,
-        )
-        .await
-        {
-            Some(archive) => archive,
-            None => {
-                return (
-                    StatusCode::EXPECTATION_FAILED,
-                    axum::Json(ApiError::new("failed to open archive").to_json()),
-                );
-            }
-        };
+        let mut archive =
+            match crate::server::filesystem::archive::Archive::open(server.0.clone(), source).await
+            {
+                Some(archive) => archive,
+                None => {
+                    return (
+                        StatusCode::EXPECTATION_FAILED,
+                        axum::Json(ApiError::new("failed to open archive").to_json()),
+                    );
+                }
+            };
 
         let reader = archive.reader().await;
         archive.extract(root.clone(), reader).await.unwrap();

@@ -50,7 +50,7 @@ mod post {
         );
         let file_name = root.join(file_name);
         let writer = crate::server::filesystem::writer::FileSystemWriter::new(
-            Arc::clone(&server.filesystem),
+            server.0.clone(),
             file_name.clone(),
             None,
             None,

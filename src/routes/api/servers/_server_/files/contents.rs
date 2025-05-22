@@ -9,7 +9,6 @@ mod get {
         http::{HeaderMap, StatusCode},
     };
     use serde::Deserialize;
-    use std::sync::Arc;
     use utoipa::ToSchema;
 
     #[derive(ToSchema, Deserialize)]
@@ -67,24 +66,24 @@ mod get {
             }
         }
 
-        let mut file = match crate::server::filesystem::archive::Archive::open(
-            Arc::clone(&server.filesystem),
-            path.clone(),
-        )
-        .await
-        {
-            Some(file) => file,
-            None => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    HeaderMap::from_iter([(
-                        "Content-Type".parse().unwrap(),
-                        "application/json".parse().unwrap(),
-                    )]),
-                    Body::from(serde_json::to_string(&ApiError::new("file not found")).unwrap()),
-                );
-            }
-        };
+        let mut file =
+            match crate::server::filesystem::archive::Archive::open(server.0.clone(), path.clone())
+                .await
+            {
+                Some(file) => file,
+                None => {
+                    return (
+                        StatusCode::NOT_FOUND,
+                        HeaderMap::from_iter([(
+                            "Content-Type".parse().unwrap(),
+                            "application/json".parse().unwrap(),
+                        )]),
+                        Body::from(
+                            serde_json::to_string(&ApiError::new("file not found")).unwrap(),
+                        ),
+                    );
+                }
+            };
 
         let size = match file.estimated_size().await {
             Some(size) => size,

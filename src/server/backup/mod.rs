@@ -71,10 +71,14 @@ pub async fn create_backup(
     }
 
     let backup = match match adapter {
-        BackupAdapter::Wings => wings::create_backup(server, uuid, override_builder.build()?).await,
-        BackupAdapter::S3 => s3::create_backup(server, uuid, override_builder.build()?).await,
+        BackupAdapter::Wings => {
+            wings::create_backup(server.clone(), uuid, override_builder.build()?).await
+        }
+        BackupAdapter::S3 => {
+            s3::create_backup(server.clone(), uuid, override_builder.build()?).await
+        }
         BackupAdapter::DdupBak => {
-            ddup_bak::create_backup(server, uuid, override_builder.build()?).await
+            ddup_bak::create_backup(server.clone(), uuid, override_builder.build()?).await
         }
     } {
         Ok(backup) => backup,
@@ -152,9 +156,9 @@ pub async fn restore_backup(
     }
 
     match match adapter {
-        BackupAdapter::Wings => wings::restore_backup(server, uuid).await,
-        BackupAdapter::S3 => s3::restore_backup(server, download_url).await,
-        BackupAdapter::DdupBak => ddup_bak::restore_backup(server, uuid).await,
+        BackupAdapter::Wings => wings::restore_backup(server.clone(), uuid).await,
+        BackupAdapter::S3 => s3::restore_backup(server.clone(), download_url).await,
+        BackupAdapter::DdupBak => ddup_bak::restore_backup(server.clone(), uuid).await,
     } {
         Ok(_) => {
             server

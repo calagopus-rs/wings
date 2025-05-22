@@ -3,6 +3,7 @@ use crate::server::{
     activity::{Activity, ActivityEvent},
     permissions::Permission,
 };
+use anyhow::Context;
 use axum::extract::ws::{Message, WebSocket};
 use futures_util::stream::SplitSink;
 use serde_json::json;
@@ -16,7 +17,7 @@ pub async fn handle_message(
     sender: &Mutex<SplitSink<WebSocket, Message>>,
     socket_jwt: &WebsocketJwtPayload,
     message: super::WebsocketMessage,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), anyhow::Error> {
     let user_ip = Some(user_ip);
 
     match message.event {
@@ -46,7 +47,7 @@ pub async fn handle_message(
                 let logs = server
                     .read_log(&state.docker, state.config.system.websocket_log_count)
                     .await
-                    .unwrap();
+                    .context("failed to read server logs")?;
 
                 for line in logs.lines() {
                     super::send_message(

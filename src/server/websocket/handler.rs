@@ -89,28 +89,20 @@ pub async fn handle_ws(
                         .await
                     {
                         Ok(Some((message, jwt))) => {
-                            tokio::spawn({
-                                let sender = Arc::clone(&sender);
-                                let state = Arc::clone(&state);
-                                let server = server.clone();
-
-                                async move {
-                                    match super::message_handler::handle_message(
-                                        &state, user_ip, &server, &sender, &jwt, message,
-                                    )
-                                    .await
-                                    {
-                                        Ok(_) => {}
-                                        Err(err) => {
-                                            tracing::error!(
-                                                server = %server.uuid,
-                                                "error handling websocket message: {}",
-                                                err
-                                            );
-                                        }
-                                    }
+                            match super::message_handler::handle_message(
+                                &state, user_ip, &server, &sender, &jwt, message,
+                            )
+                            .await
+                            {
+                                Ok(_) => {}
+                                Err(err) => {
+                                    tracing::error!(
+                                        server = %server.uuid,
+                                        "error handling websocket message: {}",
+                                        err
+                                    );
                                 }
-                            });
+                            }
                         }
                         Ok(None) => {}
                         Err(websocket::jwt::JwtError::CloseSocket) => {

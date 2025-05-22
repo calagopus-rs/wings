@@ -67,11 +67,11 @@ mod post {
             );
         }
 
-        let mut extension = ".".to_string()
-            + location
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .unwrap_or("");
+        let mut extension = location
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| format!(".{}", ext))
+            .unwrap_or("".to_string());
         let mut base_name = location
             .file_stem()
             .and_then(|stem| stem.to_str())
@@ -80,7 +80,7 @@ mod post {
 
         if base_name.ends_with(".tar") {
             extension = format!("tar{}", extension);
-            base_name = base_name.trim_end_matches(".tar").to_string();
+            base_name.truncate(base_name.len() - 4);
         }
 
         #[inline]

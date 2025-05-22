@@ -16,7 +16,7 @@ mod post {
     };
     use serde::{Deserialize, Serialize};
     use serde_json::json;
-    use std::{net::SocketAddr, sync::Arc};
+    use std::net::SocketAddr;
     use tokio::io::AsyncWriteExt;
     use utoipa::ToSchema;
 
@@ -152,7 +152,7 @@ mod post {
 
             let mut written_size = 0;
             let mut writer = crate::server::filesystem::writer::AsyncFileSystemWriter::new(
-                Arc::clone(&server.filesystem),
+                server.clone(),
                 file_path,
                 None,
             )

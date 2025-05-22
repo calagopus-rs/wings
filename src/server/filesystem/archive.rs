@@ -3,7 +3,6 @@ use std::{
     io::{SeekFrom, Write},
     os::unix::fs::PermissionsExt,
     path::PathBuf,
-    sync::Arc,
 };
 use tokio::{
     fs::File,
@@ -32,7 +31,7 @@ pub struct Archive {
     pub compression: CompressionType,
     pub archive: ArchiveType,
 
-    pub filesystem: Arc<super::Filesystem>,
+    pub server: crate::server::Server,
     pub header: [u8; 16],
 
     pub file: File,
@@ -40,7 +39,7 @@ pub struct Archive {
 }
 
 impl Archive {
-    pub async fn open(filesystem: Arc<super::Filesystem>, path: PathBuf) -> Option<Self> {
+    pub async fn open(server: crate::server::Server, path: PathBuf) -> Option<Self> {
         let mut file = File::open(&path).await.ok()?;
 
         let mut header = [0; 16];
@@ -76,7 +75,7 @@ impl Archive {
         Some(Self {
             compression: compression_format,
             archive: archive_format,
-            filesystem,
+            server,
             header,
             file,
             path,
@@ -204,12 +203,9 @@ impl Archive {
                 None => destination,
             };
 
-            let mut writer = super::writer::AsyncFileSystemWriter::new(
-                Arc::clone(&self.filesystem),
-                file_name,
-                None,
-            )
-            .await?;
+            let mut writer =
+                super::writer::AsyncFileSystemWriter::new(self.server.clone(), file_name, None)
+                    .await?;
 
             tokio::io::copy(&mut reader.unwrap(), &mut writer).await?;
             writer.flush().await?;
@@ -231,7 +227,7 @@ impl Archive {
                         }
 
                         let destination_path = destination.join(path);
-                        if !self.filesystem.is_safe_path_sync(&destination_path) {
+                        if !self.server.filesystem.is_safe_path_sync(&destination_path) {
                             continue;
                         }
 
@@ -245,7 +241,7 @@ impl Archive {
                                     .unwrap();
 
                                 let mut writer = super::writer::FileSystemWriter::new(
-                                    Arc::clone(&self.filesystem),
+                                    self.server.clone(),
                                     destination_path,
                                     header.mode().map(Permissions::from_mode).ok(),
                                     header
@@ -283,7 +279,7 @@ impl Archive {
                         }
 
                         let destination_path = destination.join(path);
-                        if !self.filesystem.is_safe_path_sync(&destination_path) {
+                        if !self.server.filesystem.is_safe_path_sync(&destination_path) {
                             continue;
                         }
 
@@ -291,7 +287,7 @@ impl Archive {
                             std::fs::create_dir_all(&destination_path)?;
                         } else {
                             let mut writer = super::writer::FileSystemWriter::new(
-                                Arc::clone(&self.filesystem),
+                                self.server.clone(),
                                 destination_path,
                                 entry.unix_mode().map(Permissions::from_mode),
                                 None,
