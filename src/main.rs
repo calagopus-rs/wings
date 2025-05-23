@@ -47,7 +47,7 @@ fn cli() -> Command {
         .arg(
             Arg::new("debug")
                 .help("pass in order to run wings in debug mode")
-                .num_args(1)
+                .num_args(0)
                 .short('d')
                 .long("debug")
                 .value_parser(clap::value_parser!(bool))
@@ -57,7 +57,7 @@ fn cli() -> Command {
         .arg(
             Arg::new("ignore_certificate_errors")
                 .help("ignore certificate verification errors when executing API calls")
-                .num_args(1)
+                .num_args(0)
                 .long("ignore-certificate-errors")
                 .default_value("false")
                 .value_parser(clap::value_parser!(bool))
@@ -74,7 +74,7 @@ fn cli() -> Command {
                 .arg(
                     Arg::new("allow_insecure")
                         .help("set to true to disable certificate checking")
-                        .num_args(1)
+                        .num_args(0)
                         .long("allow-insecure")
                         .default_value("false")
                         .value_parser(clap::value_parser!(bool))
@@ -83,7 +83,7 @@ fn cli() -> Command {
                 .arg(
                     Arg::new("override")
                         .help("set to true to override an existing configuration for this node")
-                        .num_args(1)
+                        .num_args(0)
                         .long("override")
                         .default_value("false")
                         .value_parser(clap::value_parser!(bool))
