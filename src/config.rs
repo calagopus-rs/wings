@@ -529,6 +529,8 @@ impl Config {
             config.unsafe_mut().debug = debug;
         }
 
+        config.ensure_directories()?;
+
         let latest_log_path = std::path::Path::new(&config.system.log_directory).join("wings.log");
         let latest_file = std::fs::OpenOptions::new()
             .create(true)
@@ -563,7 +565,6 @@ impl Config {
         )
         .unwrap();
 
-        config.ensure_directories()?;
         config.ensure_user()?;
         config.ensure_passwd()?;
         config.save()?;
