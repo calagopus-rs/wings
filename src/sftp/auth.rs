@@ -64,8 +64,8 @@ impl russh::server::Handler for SshSession {
             Ok((user, server, permissions)) => (user, server, permissions),
             Err(err) => {
                 tracing::debug!(
-                    "failed to authenticate user {} (password): {}",
-                    username,
+                    username = username,
+                    "failed to authenticate (password): {:#?}",
                     err
                 );
 
@@ -105,7 +105,7 @@ impl russh::server::Handler for SshSession {
 
     async fn auth_publickey(
         &mut self,
-        user: &str,
+        username: &str,
         public_key: &russh::keys::ssh_key::PublicKey,
     ) -> Result<Auth, Self::Error> {
         let (user, server, permissions) = match self
@@ -114,14 +114,18 @@ impl russh::server::Handler for SshSession {
             .client
             .get_sftp_auth(
                 AuthenticationType::PublicKey,
-                user,
+                username,
                 &public_key.to_openssh().unwrap(),
             )
             .await
         {
             Ok((user, server, permissions)) => (user, server, permissions),
             Err(err) => {
-                tracing::debug!("failed to authenticate user {} (public_key): {}", user, err);
+                tracing::debug!(
+                    username = username,
+                    "failed to authenticate (public_key): {:#?}",
+                    err
+                );
 
                 return Ok(Auth::Reject {
                     proceed_with_methods: Some(self.get_auth_methods()),

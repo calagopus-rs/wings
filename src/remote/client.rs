@@ -11,7 +11,7 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn new(config: &crate::config::InnerConfig) -> Self {
+    pub fn new(config: &crate::config::InnerConfig, ignore_certificate_errors: bool) -> Self {
         let mut headers = HeaderMap::new();
         headers.insert(
             "User-Agent",
@@ -36,7 +36,7 @@ impl Client {
 
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(15))
-            .danger_accept_invalid_certs(true)
+            .danger_accept_invalid_certs(ignore_certificate_errors)
             .default_headers(headers)
             .build()
             .unwrap();

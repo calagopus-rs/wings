@@ -492,6 +492,7 @@ pub struct Config {
     inner: UnsafeCell<InnerConfig>,
 
     pub path: String,
+    pub ignore_certificate_errors: bool,
     pub client: crate::remote::client::Client,
     pub jwt: crate::remote::jwt::JwtClient,
 }
@@ -500,22 +501,31 @@ unsafe impl Send for Config {}
 unsafe impl Sync for Config {}
 
 impl Config {
-    pub fn open(path: &str) -> Result<Arc<Self>, anyhow::Error> {
+    pub fn open(
+        path: &str,
+        debug: Option<bool>,
+        ignore_certificate_errors: bool,
+    ) -> Result<Arc<Self>, anyhow::Error> {
         let file =
             std::fs::File::open(path).context(format!("failed to open config file {}", path))?;
         let reader = std::io::BufReader::new(file);
         let config: InnerConfig = serde_yml::from_reader(reader)
             .context(format!("failed to parse config file {}", path))?;
 
-        let client = crate::remote::client::Client::new(&config);
+        let client = crate::remote::client::Client::new(&config, ignore_certificate_errors);
         let jwt = crate::remote::jwt::JwtClient::new(&config.token);
         let mut config = Self {
             inner: UnsafeCell::new(config),
 
             path: path.to_string(),
+            ignore_certificate_errors,
             client,
             jwt,
         };
+
+        if let Some(debug) = debug {
+            config.unsafe_mut().debug = debug;
+        }
 
         tracing::subscriber::set_global_default(
             tracing_subscriber::fmt()
@@ -532,14 +542,22 @@ impl Config {
         )
         .unwrap();
 
-        tracing::info!("config loaded from {}", path);
-
         config.ensure_directories()?;
         config.ensure_user()?;
         config.ensure_passwd()?;
         config.save()?;
 
         Ok(Arc::new(config))
+    }
+
+    pub fn save_new(path: &str, config: InnerConfig) -> Result<(), anyhow::Error> {
+        let file = std::fs::File::create(path)
+            .context(format!("failed to create config file {}", path))?;
+        let writer = std::io::BufWriter::new(file);
+        serde_yml::to_writer(writer, &config)
+            .context(format!("failed to write config file {}", path))?;
+
+        Ok(())
     }
 
     pub fn save(&self) -> Result<(), anyhow::Error> {

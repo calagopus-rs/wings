@@ -6,6 +6,7 @@ use axum::{
     middleware::Next,
 };
 use bollard::Docker;
+use clap::{Arg, Command};
 use colored::Colorize;
 use routes::ApiError;
 use russh::{keys::ssh_key::rand_core::OsRng, server::Server};
@@ -14,6 +15,7 @@ use tower_http::catch_panic::CatchPanicLayer;
 use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityScheme};
 use utoipa_axum::router::OpenApiRouter;
 
+mod commands;
 mod config;
 mod models;
 mod remote;
@@ -23,6 +25,98 @@ mod sftp;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const GIT_COMMIT: &str = env!("CARGO_GIT_COMMIT");
+
+fn cli() -> Command {
+    Command::new("wings-rs")
+        .about(
+            "The API server allowing programmatic control of game servers for Pterodactyl Panel.",
+        )
+        .allow_external_subcommands(true)
+        .arg(
+            Arg::new("config")
+                .help("set the location for the configuration file")
+                .num_args(1)
+                .short('c')
+                .long("config")
+                .alias("config-file")
+                .alias("config-path")
+                .default_value("/etc/pterodactyl/config.yml")
+                .global(true)
+                .required(false),
+        )
+        .arg(
+            Arg::new("debug")
+                .help("pass in order to run wings in debug mode")
+                .num_args(1)
+                .short('d')
+                .long("debug")
+                .value_parser(clap::value_parser!(bool))
+                .global(true)
+                .required(false),
+        )
+        .arg(
+            Arg::new("ignore_certificate_errors")
+                .help("ignore certificate verification errors when executing API calls")
+                .num_args(1)
+                .long("ignore-certificate-errors")
+                .default_value("false")
+                .value_parser(clap::value_parser!(bool))
+                .required(false),
+        )
+        .subcommand(
+            Command::new("version")
+                .about("Prints the current executable version and exits.")
+                .arg_required_else_help(false),
+        )
+        .subcommand(
+            Command::new("configure")
+                .about("Use a token to configure wings automatically.")
+                .arg(
+                    Arg::new("allow_insecure")
+                        .help("set to true to disable certificate checking")
+                        .num_args(1)
+                        .long("allow-insecure")
+                        .default_value("false")
+                        .value_parser(clap::value_parser!(bool))
+                        .required(false),
+                )
+                .arg(
+                    Arg::new("override")
+                        .help("set to true to override an existing configuration for this node")
+                        .num_args(1)
+                        .long("override")
+                        .default_value("false")
+                        .value_parser(clap::value_parser!(bool))
+                        .required(false),
+                )
+                .arg(
+                    Arg::new("node")
+                        .help("the ID of the node which will be connected to this daemon")
+                        .num_args(1)
+                        .short('n')
+                        .long("node")
+                        .value_parser(clap::value_parser!(usize))
+                        .required(false),
+                )
+                .arg(
+                    Arg::new("panel_url")
+                        .help("the base URL for this daemon's panel")
+                        .num_args(1)
+                        .short('p')
+                        .long("panel-url")
+                        .required(false),
+                )
+                .arg(
+                    Arg::new("token")
+                        .help("the API key to use for fetching node information")
+                        .num_args(1)
+                        .short('t')
+                        .long("token")
+                        .required(false),
+                )
+                .arg_required_else_help(false),
+        )
+}
 
 fn handle_panic(_err: Box<dyn std::any::Any + Send + 'static>) -> Response<Body> {
     tracing::error!("a request panic has occurred");
@@ -110,7 +204,28 @@ async fn handle_cors(
 
 #[tokio::main]
 async fn main() {
-    let config = config::Config::open("/etc/pterodactyl/config.yml").unwrap();
+    let matches = cli().get_matches();
+
+    let config_path = matches.get_one::<String>("config").unwrap();
+    let debug = matches.get_one::<bool>("debug").copied();
+    let ignore_certificate_errors = *matches
+        .get_one::<bool>("ignore_certificate_errors")
+        .unwrap_or(&false);
+    let config = config::Config::open(config_path, debug, ignore_certificate_errors);
+
+    match matches.subcommand() {
+        Some(("version", sub_matches)) => {
+            std::process::exit(commands::version::version(sub_matches, config.as_ref().ok()).await)
+        }
+        Some(("configure", sub_matches)) => std::process::exit(
+            commands::configure::configure(sub_matches, config.as_ref().ok()).await,
+        ),
+        _ => {}
+    }
+
+    let config = config.context("failed to load config").unwrap();
+    tracing::info!("config loaded from {}", config_path);
+
     tracing::info!("connecting to docker");
     let docker = Arc::new(
         Docker::connect_with_local_defaults()
@@ -128,7 +243,12 @@ async fn main() {
     let server_manager = server::manager::Manager::new(
         Arc::clone(&config),
         Arc::clone(&docker),
-        config.client.servers().await.unwrap(),
+        config
+            .client
+            .servers()
+            .await
+            .context("failed to fetch servers from remote")
+            .unwrap(),
     )
     .await;
 
@@ -173,7 +293,7 @@ async fn main() {
         axum::routing::get(|| async move { axum::Json(openapi) }),
     );
 
-    tracing::info!("starting server");
+    tracing::info!("starting api/sftp server");
 
     rustls::crypto::ring::default_provider()
         .install_default()

@@ -130,6 +130,6 @@ async fn send_message(sender: &Mutex<SplitSink<WebSocket, Message>>, message: We
 
     let mut sender = sender.lock().await;
     if let Err(err) = sender.send(message).await {
-        tracing::error!("failed to send websocket message: {}", err);
+        tracing::error!("failed to send websocket message: {:#?}", err);
     }
 }

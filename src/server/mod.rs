@@ -653,16 +653,13 @@ impl Server {
                             err
                         );
 
-                        self.log_daemon_error(&format!("failed to pull image: {}", err))
+                        self.log_daemon_error(&format!("failed to pull image: {:#?}", err))
                             .await;
 
                         if let Ok(images) = client
                             .list_images(Some(bollard::image::ListImagesOptions {
                                 all: true,
-                                filters: HashMap::from([(
-                                    "reference".to_string(),
-                                    vec![image.to_string()],
-                                )]),
+                                filters: HashMap::from([("reference", vec![image])]),
                                 ..Default::default()
                             }))
                             .await

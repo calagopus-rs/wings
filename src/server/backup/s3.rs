@@ -8,19 +8,34 @@ use std::{
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     pin::Pin,
-    sync::LazyLock,
+    sync::Arc,
     task::{Context, Poll},
 };
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, BufReader, ReadBuf};
+use tokio::{
+    io::{AsyncRead, AsyncReadExt, AsyncSeekExt, BufReader, ReadBuf},
+    sync::RwLock,
+};
 use tokio_util::io::SyncIoBridge;
 
-static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
-    reqwest::ClientBuilder::new()
-        .timeout(std::time::Duration::from_secs(15))
-        .danger_accept_invalid_certs(true)
-        .build()
-        .unwrap()
-});
+static CLIENT: RwLock<Option<Arc<reqwest::Client>>> = RwLock::const_new(None);
+
+#[inline]
+async fn get_client(server: &crate::server::Server) -> Arc<reqwest::Client> {
+    if let Some(client) = CLIENT.read().await.as_ref() {
+        return Arc::clone(client);
+    }
+
+    let client = Arc::new(
+        reqwest::ClientBuilder::new()
+            .timeout(std::time::Duration::from_secs(15))
+            .danger_accept_invalid_certs(server.config.ignore_certificate_errors)
+            .build()
+            .unwrap(),
+    );
+
+    *CLIENT.write().await = Some(Arc::clone(&client));
+    client
+}
 
 struct BoundedReader {
     file: tokio::fs::File,
@@ -165,7 +180,8 @@ pub async fn create_backup(
                 server.uuid
             );
 
-            match CLIENT
+            match get_client(&server)
+                .await
                 .put(&url)
                 .header("Content-Length", part_size)
                 .header("Content-Type", "application/x-gzip")
@@ -229,7 +245,8 @@ pub async fn restore_backup(
     server: crate::server::Server,
     download_url: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let response = CLIENT
+    let response = get_client(&server)
+        .await
         .get(download_url.unwrap())
         .send()
         .await?

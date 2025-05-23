@@ -122,7 +122,11 @@ impl Manager {
                     if let Err(err) =
                         crate::server::installation::install_server(&server, &client, false).await
                     {
-                        tracing::error!("failed to reinstall server {}: {}", server.uuid, err);
+                        tracing::error!(
+                            server = %server.uuid,
+                            "failed to reinstall server: {:#?}",
+                            err
+                        );
                     } else if server
                         .configuration
                         .read()
