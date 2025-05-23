@@ -653,7 +653,7 @@ impl Server {
                             err
                         );
 
-                        self.log_daemon_error(&format!("failed to pull image: {:#?}", err))
+                        self.log_daemon_error(&format!("failed to pull image: {}", err))
                             .await;
 
                         if let Ok(images) = client
@@ -766,7 +766,20 @@ impl Server {
                         }
                     };
 
-                    Ok(client.start_container::<String>(&container, None).await?)
+                    if let Err(err) = client.start_container::<String>(&container, None).await {
+                        tracing::error!(
+                            server = %self.uuid,
+                            "failed to start container: {}",
+                            err
+                        );
+
+                        self.log_daemon_error(&format!("failed to start container: {}", err))
+                            .await;
+
+                        return Err(anyhow::anyhow!(err));
+                    }
+
+                    Ok(())
                 },
                 aquire_timeout,
             )
