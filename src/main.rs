@@ -116,6 +116,21 @@ fn cli() -> Command {
                 )
                 .arg_required_else_help(false),
         )
+        .subcommand(
+            Command::new("diagnostics")
+                .about("Collect and report information about this Wings instance to assist in debugging.")
+                .arg(
+                    Arg::new("log_lines")
+                        .help("the number of log lines to include in the report")
+                        .num_args(1)
+                        .short('l')
+                        .long("log-lines")
+                        .default_value("200")
+                        .value_parser(clap::value_parser!(usize))
+                        .required(false),
+                )
+                .arg_required_else_help(false),
+        )
 }
 
 fn handle_panic(_err: Box<dyn std::any::Any + Send + 'static>) -> Response<Body> {
@@ -214,16 +229,20 @@ async fn main() {
     let config = config::Config::open(config_path, debug, ignore_certificate_errors);
 
     match matches.subcommand() {
-        Some(("version", sub_matches)) => {
-            std::process::exit(commands::version::version(sub_matches, config.as_ref().ok()).await)
-        }
+        Some(("version", sub_matches)) => std::process::exit(
+            commands::version::version(sub_matches, config.as_ref().ok().map(|c| &c.0)).await,
+        ),
         Some(("configure", sub_matches)) => std::process::exit(
-            commands::configure::configure(sub_matches, config.as_ref().ok()).await,
+            commands::configure::configure(sub_matches, config.as_ref().ok().map(|c| &c.0)).await,
+        ),
+        Some(("diagnostics", sub_matches)) => std::process::exit(
+            commands::diagnostics::diagnostics(sub_matches, config.as_ref().ok().map(|c| &c.0))
+                .await,
         ),
         _ => {}
     }
 
-    let config = config.context("failed to load config").unwrap();
+    let (config, _guard) = config.context("failed to load config").unwrap();
     tracing::info!("config loaded from {}", config_path);
 
     tracing::info!("connecting to docker");

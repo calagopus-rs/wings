@@ -9,6 +9,8 @@ use std::{
     os::unix::fs::PermissionsExt,
     sync::Arc,
 };
+use tracing_appender::non_blocking::WorkerGuard;
+use tracing_subscriber::fmt::writer::MakeWriterExt;
 
 fn app_name() -> String {
     "Pterodactyl".to_string()
@@ -505,7 +507,7 @@ impl Config {
         path: &str,
         debug: Option<bool>,
         ignore_certificate_errors: bool,
-    ) -> Result<Arc<Self>, anyhow::Error> {
+    ) -> Result<(Arc<Self>, WorkerGuard), anyhow::Error> {
         let file =
             std::fs::File::open(path).context(format!("failed to open config file {}", path))?;
         let reader = std::io::BufReader::new(file);
@@ -527,8 +529,27 @@ impl Config {
             config.unsafe_mut().debug = debug;
         }
 
+        let latest_log_path = std::path::Path::new(&config.system.log_directory).join("wings.log");
+        let latest_file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&latest_log_path)
+            .context("failed to open latest log file")?;
+
+        let rolling_appender = tracing_appender::rolling::Builder::new()
+            .filename_prefix("wings")
+            .filename_suffix("log")
+            .max_log_files(30)
+            .rotation(tracing_appender::rolling::Rotation::DAILY)
+            .build(&config.system.log_directory)
+            .context("failed to create rolling log file appender")?;
+
+        let (file_appender, guard) =
+            tracing_appender::non_blocking(latest_file.and(rolling_appender));
+
         tracing::subscriber::set_global_default(
             tracing_subscriber::fmt()
+                .with_writer(std::io::stdout.and(file_appender))
                 .with_target(false)
                 .with_level(true)
                 .with_file(true)
@@ -547,7 +568,7 @@ impl Config {
         config.ensure_passwd()?;
         config.save()?;
 
-        Ok(Arc::new(config))
+        Ok((Arc::new(config), guard))
     }
 
     pub fn save_new(path: &str, config: InnerConfig) -> Result<(), anyhow::Error> {
