@@ -548,6 +548,19 @@ impl Filesystem {
             return;
         }
 
+        if let Err(err) = limiter::update_disk_limit(
+            self,
+            self.disk_limit.load(std::sync::atomic::Ordering::Relaxed) as u64,
+        )
+        .await
+        {
+            tracing::error!(
+                path = %self.base_path.display(),
+                "failed to update disk limit for server: {}",
+                err
+            );
+        }
+
         let base_path = self.base_path.clone();
         let owner_uid = self.owner_uid;
         let owner_gid = self.owner_gid;
