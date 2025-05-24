@@ -177,7 +177,7 @@ impl OutgoingServerTransfer {
                 let server = server.clone();
 
                 async move {
-                    let total_bytes = server.filesystem.cached_usage();
+                    let total_bytes = server.filesystem.limiter_usage().await;
                     let mut total_n_bytes_archived = 0.0;
 
                     loop {

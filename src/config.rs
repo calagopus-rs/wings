@@ -254,6 +254,12 @@ nestify::nest! {
 
             #[serde(default = "system_disk_check_interval")]
             pub disk_check_interval: u64,
+            #[serde(default)]
+            pub disk_limiter_mode: #[derive(Deserialize, Serialize, Default)] #[serde(rename_all = "snake_case")] pub enum SystemDiskLimiterMode {
+                #[default]
+                None,
+                BtrfsSubvolume,
+            },
             #[serde(default = "system_activity_send_interval")]
             pub activity_send_interval: u64,
             #[serde(default = "system_activity_send_count")]

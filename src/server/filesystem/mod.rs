@@ -14,12 +14,14 @@ use tokio::{
 };
 
 pub mod archive;
+pub mod limiter;
 pub mod pull;
 mod usage;
 pub mod writer;
 
 pub struct Filesystem {
     checker_abort: Arc<AtomicBool>,
+    config: Arc<crate::config::Config>,
 
     pub base_path: PathBuf,
 
@@ -39,7 +41,7 @@ impl Filesystem {
         base_path: PathBuf,
         disk_limit: u64,
         check_interval: u64,
-        config: &crate::config::Config,
+        config: Arc<crate::config::Config>,
         deny_list: &[String],
     ) -> Self {
         let disk_usage = Arc::new(RwLock::new(usage::DiskUsage::new()));
@@ -133,6 +135,7 @@ impl Filesystem {
 
         Self {
             checker_abort,
+            config: Arc::clone(&config),
 
             base_path,
 
@@ -190,9 +193,20 @@ impl Filesystem {
     }
 
     #[inline]
-    pub fn cached_usage(&self) -> u64 {
-        self.disk_usage_cached
-            .load(std::sync::atomic::Ordering::Relaxed)
+    pub async fn limiter_usage(&self) -> u64 {
+        limiter::disk_usage(self).await.unwrap_or_else(|_| {
+            self.disk_usage_cached
+                .load(std::sync::atomic::Ordering::Relaxed)
+        })
+    }
+
+    #[inline]
+    pub async fn update_disk_limit(&self, limit: u64) {
+        self.disk_limit
+            .store(limit as i64, std::sync::atomic::Ordering::Relaxed);
+        limiter::update_disk_limit(self, limit)
+            .await
+            .unwrap_or_else(|_| tracing::warn!("failed to update disk limit"));
     }
 
     #[inline]
@@ -201,8 +215,8 @@ impl Filesystem {
     }
 
     #[inline]
-    pub fn is_full(&self) -> bool {
-        self.disk_limit() != 0 && self.cached_usage() >= self.disk_limit() as u64
+    pub async fn is_full(&self) -> bool {
+        self.disk_limit() != 0 && self.limiter_usage().await >= self.disk_limit() as u64
     }
 
     #[inline]
@@ -524,11 +538,20 @@ impl Filesystem {
     }
 
     pub async fn setup(&self) {
+        if let Err(err) = limiter::setup(self).await {
+            tracing::error!(
+                path = %self.base_path.display(),
+                "failed to create server base directory: {}",
+                err
+            );
+
+            return;
+        }
+
         let base_path = self.base_path.clone();
         let owner_uid = self.owner_uid;
         let owner_gid = self.owner_gid;
 
-        tokio::fs::create_dir_all(&base_path).await.unwrap_or(());
         tokio::task::spawn_blocking(move || {
             std::os::unix::fs::chown(&base_path, Some(owner_uid), Some(owner_gid)).unwrap();
         })
@@ -539,7 +562,7 @@ impl Filesystem {
     pub async fn destroy(&self) {
         self.checker_abort
             .store(true, std::sync::atomic::Ordering::Relaxed);
-        if let Err(err) = tokio::fs::remove_dir_all(&self.base_path).await {
+        if let Err(err) = limiter::destroy(self).await {
             tracing::error!(
                 path = %self.base_path.display(),
                 "failed to delete server base directory for: {}",

@@ -126,7 +126,7 @@ impl Container {
 
                             usage.memory_bytes = stats.memory_stats.usage.unwrap_or(0);
                             usage.memory_limit_bytes = stats.memory_stats.limit.unwrap_or(0);
-                            usage.disk_bytes = server.filesystem.cached_usage();
+                            usage.disk_bytes = server.filesystem.limiter_usage().await;
 
                             if let Some(networks) = stats.networks {
                                 if let Some(network) = networks.values().next() {

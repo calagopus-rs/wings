@@ -71,7 +71,7 @@ impl Server {
             PathBuf::from(&config.system.data_directory).join(configuration.uuid.to_string()),
             configuration.build.disk_space * 1024 * 1024,
             config.system.disk_check_interval,
-            &config,
+            Arc::clone(&config),
             &configuration.egg.file_denylist,
         );
 
@@ -162,7 +162,7 @@ impl Server {
                     prev_usage = usage;
                 }
 
-                if server.filesystem.is_full()
+                if server.filesystem.is_full().await
                     && server.state.get_state() != state::ServerState::Offline
                     && !server.stopping.load(std::sync::atomic::Ordering::Relaxed)
                 {
@@ -366,7 +366,7 @@ impl Server {
             *container.resource_usage.read().await
         } else {
             resources::ResourceUsage {
-                disk_bytes: self.filesystem.cached_usage(),
+                disk_bytes: self.filesystem.limiter_usage().await,
                 ..Default::default()
             }
         }
@@ -518,10 +518,9 @@ impl Server {
         &self,
         client: &bollard::Docker,
     ) -> Result<(), bollard::errors::Error> {
-        self.filesystem.disk_limit.store(
-            self.configuration.read().await.build.disk_space as i64 * 1024 * 1024,
-            std::sync::atomic::Ordering::Relaxed,
-        );
+        self.filesystem
+            .update_disk_limit(self.configuration.read().await.build.disk_space * 1024 * 1024)
+            .await;
 
         if let Some(container) = self.container.read().await.as_ref() {
             client
@@ -728,7 +727,7 @@ impl Server {
             return Err("server is already running".into());
         }
 
-        if self.filesystem.is_full() {
+        if self.filesystem.is_full().await {
             self.log_daemon_error("disk space is full, cannot start the server")
                 .await;
             return Err("disk space is full, cannot start the server".into());
