@@ -178,19 +178,17 @@ impl OutgoingServerTransfer {
 
                 async move {
                     let total_bytes = server.filesystem.cached_usage();
-                    let mut total_bytes_archived = 0.0;
                     let mut total_n_bytes_archived = 0.0;
 
                     loop {
                         let bytes_archived =
                             bytes_archived.load(std::sync::atomic::Ordering::SeqCst);
-                        total_bytes_archived += bytes_archived as f64;
                         total_n_bytes_archived += 1.0;
 
                         let formatted_bytes_archived = human_bytes(bytes_archived as f64);
                         let formatted_total_bytes = human_bytes(total_bytes as f64);
                         let formatted_diff =
-                            human_bytes(total_bytes_archived / total_n_bytes_archived);
+                            human_bytes(bytes_archived as f64 / total_n_bytes_archived);
                         let formatted_percentage = format!(
                             "{:.2}%",
                             (bytes_archived as f64 / total_bytes as f64) * 100.0
