@@ -267,10 +267,17 @@ impl Server {
                                     ))
                                     .await;
 
-                                if let Some(last_crash) = *server.last_crash.read().await {
+                                let last_crash_lock = server.last_crash.read().await;
+                                if let Some(last_crash) = *last_crash_lock {
                                     if last_crash.elapsed().as_secs()
                                         < server.config.system.crash_detection.timeout
                                     {
+                                        tracing::debug!(
+                                            server = %server.uuid,
+                                            "last crash was less than {} seconds ago, aborting automatic restart",
+                                            server.config.system.crash_detection.timeout
+                                        );
+
                                         server.log_daemon_with_prelude(
                                         &format!(
                                             "Aborting automatic restart, last crash occurred less than {} seconds ago.",
@@ -279,6 +286,13 @@ impl Server {
                                     ).await;
                                         return;
                                     } else {
+                                        tracing::debug!(
+                                            server = %server.uuid,
+                                            "last crash was more than {} seconds ago, restarting server",
+                                            server.config.system.crash_detection.timeout
+                                        );
+
+                                        drop(last_crash_lock);
                                         server
                                             .last_crash
                                             .write()
@@ -286,12 +300,23 @@ impl Server {
                                             .replace(std::time::Instant::now());
                                     }
                                 } else {
+                                    tracing::debug!(
+                                        server = %server.uuid,
+                                        "no previous crash recorded, restarting server"
+                                    );
+
+                                    drop(last_crash_lock);
                                     server
                                         .last_crash
                                         .write()
                                         .await
                                         .replace(std::time::Instant::now());
                                 }
+
+                                tracing::info!(
+                                    server = %server.uuid,
+                                    "restarting server due to crash"
+                                );
 
                                 let client = Arc::clone(&client);
                                 let server = server.clone();
