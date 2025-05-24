@@ -573,6 +573,8 @@ impl Config {
     }
 
     pub fn save_new(path: &str, config: InnerConfig) -> Result<(), anyhow::Error> {
+        std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap())
+            .context(format!("failed to create config directory {}", path))?;
         let file = std::fs::File::create(path)
             .context(format!("failed to create config file {}", path))?;
         let writer = std::io::BufWriter::new(file);
