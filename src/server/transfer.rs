@@ -1,4 +1,3 @@
-use colored::Colorize;
 use human_bytes::human_bytes;
 use ignore::WalkBuilder;
 use sha2::Digest;
@@ -22,20 +21,16 @@ impl OutgoingServerTransfer {
     }
 
     fn log(server: &super::Server, message: &str) {
+        let prelude = ansi_term::Color::Yellow.bold().paint(format!(
+            "{} [Transfer System] [Source Node]:",
+            chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
+        ));
+
         server
             .websocket
             .send(super::websocket::WebsocketMessage::new(
                 super::websocket::WebsocketEvent::ServerTransferLogs,
-                &[format!(
-                    "{} {}",
-                    format!(
-                        "{} [Transfer System] [Source Node]:",
-                        chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
-                    )
-                    .yellow()
-                    .bold(),
-                    message
-                )],
+                &[format!("{} {}", prelude, message)],
             ))
             .ok();
     }
