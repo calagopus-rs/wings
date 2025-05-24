@@ -307,7 +307,10 @@ fn tar_recursive_convert_entries(
             entry_header.set_entry_type(tar::EntryType::Regular);
             entry_header.set_size(file.size_real);
 
-            let reader = repository.entry_reader(Entry::File(file.clone())).unwrap();
+            let reader = FixedReader::new(
+                Box::new(repository.entry_reader(Entry::File(file.clone())).unwrap()),
+                file.size_real as usize,
+            );
 
             if archive
                 .append_data(&mut entry_header, &path, reader)
@@ -377,4 +380,46 @@ pub async fn list_backups(
     }
 
     Ok(backups)
+}
+
+pub struct FixedReader {
+    inner: Box<dyn std::io::Read>,
+    size: usize,
+    bytes_read: usize,
+}
+
+impl FixedReader {
+    pub fn new(inner: Box<dyn std::io::Read>, size: usize) -> Self {
+        FixedReader {
+            inner,
+            size,
+            bytes_read: 0,
+        }
+    }
+}
+
+impl std::io::Read for FixedReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.bytes_read >= self.size {
+            return Ok(0);
+        }
+
+        let remaining = self.size - self.bytes_read;
+        let to_read = std::cmp::min(buf.len(), remaining);
+        let bytes = self.inner.read(&mut buf[..to_read])?;
+
+        if bytes == 0 && remaining > 0 {
+            let zeros_to_write = std::cmp::min(buf.len(), remaining);
+            for byte in buf.iter_mut().take(zeros_to_write) {
+                *byte = 0;
+            }
+
+            self.bytes_read += zeros_to_write;
+            return Ok(zeros_to_write);
+        }
+
+        self.bytes_read += bytes;
+
+        Ok(bytes)
+    }
 }
