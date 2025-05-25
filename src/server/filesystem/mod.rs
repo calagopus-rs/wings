@@ -528,15 +528,6 @@ impl Filesystem {
         .unwrap()
     }
 
-    pub async fn get_pteroignore(&self) -> Option<String> {
-        let path = self.base_path.join(".pteroignore");
-        if path.symlink_metadata().ok()?.is_file() {
-            tokio::fs::read_to_string(&path).await.ok()
-        } else {
-            None
-        }
-    }
-
     pub async fn setup(&self) {
         if let Err(err) = limiter::setup(self).await {
             tracing::error!(

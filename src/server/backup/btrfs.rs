@@ -137,6 +137,7 @@ pub async fn restore_backup(
 
             WalkBuilder::new(&subvolume_path)
                 .overrides(override_builder.build()?)
+                .add_custom_ignore_filename(".pteroignore")
                 .git_ignore(false)
                 .ignore(false)
                 .git_exclude(false)
@@ -261,6 +262,7 @@ pub async fn download_backup(
 
         for entry in WalkBuilder::new(&subvolume_path)
             .overrides(override_builder.build().unwrap())
+            .add_custom_ignore_filename(".pteroignore")
             .git_ignore(false)
             .ignore(false)
             .git_exclude(false)

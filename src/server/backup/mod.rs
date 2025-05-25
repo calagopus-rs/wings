@@ -69,20 +69,6 @@ pub async fn create_backup(
         override_raw.push('\n');
     }
 
-    if let Some(pteroignore) = server.filesystem.get_pteroignore().await {
-        for line in pteroignore.lines() {
-            if line.trim().is_empty() {
-                continue;
-            }
-
-            if let Some(line) = line.trim().strip_prefix('!') {
-                override_builder.add(line).ok();
-            } else {
-                override_builder.add(&format!("!{}", line.trim())).ok();
-            }
-        }
-    }
-
     let backup = match match adapter {
         BackupAdapter::Wings => {
             wings::create_backup(server.clone(), uuid, override_builder.build()?).await
