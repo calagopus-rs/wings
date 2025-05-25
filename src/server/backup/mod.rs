@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::ToSchema;
 
+mod btrfs;
 mod ddup_bak;
 mod s3;
 mod wings;
@@ -19,6 +20,7 @@ pub enum BackupAdapter {
     Wings,
     S3,
     DdupBak,
+    Btrfs,
 }
 
 pub async fn create_backup(
@@ -35,6 +37,7 @@ pub async fn create_backup(
     );
 
     let mut override_builder = OverrideBuilder::new(&server.filesystem.base_path);
+    let mut override_raw = String::new();
 
     for line in ignore.lines() {
         if line.trim().is_empty() {
@@ -43,9 +46,14 @@ pub async fn create_backup(
 
         if let Some(line) = line.trim().strip_prefix('!') {
             override_builder.add(line).ok();
+            override_raw.push_str(line);
         } else {
             override_builder.add(&format!("!{}", line.trim())).ok();
+            override_raw.push('!');
+            override_raw.push_str(line.trim());
         }
+
+        override_raw.push('\n');
     }
 
     for file in &server.configuration.read().await.egg.file_denylist {
@@ -79,6 +87,15 @@ pub async fn create_backup(
         }
         BackupAdapter::DdupBak => {
             ddup_bak::create_backup(server.clone(), uuid, override_builder.build()?).await
+        }
+        BackupAdapter::Btrfs => {
+            btrfs::create_backup(
+                server.clone(),
+                uuid,
+                override_builder.build()?,
+                override_raw,
+            )
+            .await
         }
     } {
         Ok(backup) => backup,
@@ -159,6 +176,7 @@ pub async fn restore_backup(
         BackupAdapter::Wings => wings::restore_backup(server.clone(), uuid).await,
         BackupAdapter::S3 => s3::restore_backup(server.clone(), download_url).await,
         BackupAdapter::DdupBak => ddup_bak::restore_backup(server.clone(), uuid).await,
+        BackupAdapter::Btrfs => btrfs::restore_backup(server.clone(), uuid).await,
     } {
         Ok(_) => {
             server
@@ -222,6 +240,7 @@ pub async fn download_backup(
         BackupAdapter::Wings => wings::download_backup(server, uuid).await,
         BackupAdapter::S3 => unimplemented!(),
         BackupAdapter::DdupBak => ddup_bak::download_backup(server, uuid).await,
+        BackupAdapter::Btrfs => btrfs::download_backup(server, uuid).await,
     }
 }
 
@@ -241,6 +260,7 @@ pub async fn delete_backup(
         BackupAdapter::Wings => wings::delete_backup(server, uuid).await,
         BackupAdapter::S3 => s3::delete_backup(server, uuid).await,
         BackupAdapter::DdupBak => ddup_bak::delete_backup(server, uuid).await,
+        BackupAdapter::Btrfs => btrfs::delete_backup(server, uuid).await,
     }
 }
 
@@ -252,5 +272,6 @@ pub async fn list_backups(
         BackupAdapter::Wings => wings::list_backups(server).await,
         BackupAdapter::S3 => s3::list_backups(server).await,
         BackupAdapter::DdupBak => ddup_bak::list_backups(server).await,
+        BackupAdapter::Btrfs => btrfs::list_backups(server).await,
     }
 }

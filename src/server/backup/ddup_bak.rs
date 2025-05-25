@@ -31,6 +31,7 @@ async fn get_repository(server: &crate::server::Server) -> Arc<ddup_bak::reposit
             0,
             None,
         ));
+        repository.save().unwrap();
         *REPOSITORY.write().await = Some(Arc::clone(&repository));
 
         repository
