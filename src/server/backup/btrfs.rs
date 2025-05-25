@@ -154,10 +154,7 @@ pub async fn restore_backup(
                             Ok(entry) => entry,
                             Err(_) => return WalkState::Continue,
                         };
-                        let path = match entry.path().strip_prefix(&subvolume_path) {
-                            Ok(path) => path,
-                            Err(_) => return WalkState::Continue,
-                        };
+                        let path = entry.path();
 
                         let metadata = match entry.metadata() {
                             Ok(metadata) => metadata,
@@ -168,15 +165,18 @@ pub async fn restore_backup(
                             return WalkState::Continue;
                         }
 
+                        let destination_path = server
+                            .filesystem
+                            .base_path
+                            .join(path.strip_prefix(&subvolume_path).unwrap_or(path));
+                        if !server.filesystem.is_safe_path_sync(&destination_path) {
+                            return WalkState::Continue;
+                        }
+
                         if metadata.is_file() {
                             runtime.block_on(
                                 server.log_daemon(format!("(restoring): {}", path.display())),
                             );
-
-                            let destination_path = server.filesystem.base_path.join(path);
-                            if !server.filesystem.is_safe_path_sync(&destination_path) {
-                                return WalkState::Continue;
-                            }
 
                             std::fs::create_dir_all(destination_path.parent().unwrap()).ok();
 
@@ -193,21 +193,18 @@ pub async fn restore_backup(
                             std::io::copy(&mut file, &mut writer).unwrap();
                             writer.flush().unwrap();
                         } else if metadata.is_dir() {
-                            std::fs::create_dir_all(server.filesystem.base_path.join(path)).ok();
-                            std::fs::set_permissions(
-                                server.filesystem.base_path.join(path),
-                                metadata.permissions(),
-                            )
-                            .ok();
+                            std::fs::create_dir_all(&destination_path).ok();
+                            std::fs::set_permissions(&destination_path, metadata.permissions())
+                                .ok();
                             std::os::unix::fs::chown(
-                                server.filesystem.base_path.join(path),
+                                &destination_path,
                                 Some(metadata.uid()),
                                 Some(metadata.gid()),
                             )
                             .ok();
                         } else if metadata.is_symlink() {
                             if let Ok(target) = std::fs::read_link(path) {
-                                let destination_path = server.filesystem.base_path.join(path);
+                                let destination_path = &destination_path;
                                 if !server.filesystem.is_safe_path_sync(&destination_path) {
                                     return WalkState::Continue;
                                 }
