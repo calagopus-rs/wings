@@ -10,21 +10,6 @@ pub async fn setup(
 
     if !filesystem.base_path.exists() {
         let output = Command::new("btrfs")
-            .arg("quota")
-            .arg("enable")
-            .arg(&filesystem.base_path)
-            .output()
-            .await?;
-
-        if !output.status.success() {
-            return Err(std::io::Error::other(format!(
-                "Failed to enable Btrfs quota for {}: {}",
-                filesystem.base_path.display(),
-                String::from_utf8_lossy(&output.stderr)
-            )));
-        }
-
-        let output = Command::new("btrfs")
             .arg("subvolume")
             .arg("create")
             .arg(&filesystem.base_path)
@@ -34,6 +19,21 @@ pub async fn setup(
         if !output.status.success() {
             return Err(std::io::Error::other(format!(
                 "Failed to create Btrfs subvolume for {}: {}",
+                filesystem.base_path.display(),
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
+
+        let output = Command::new("btrfs")
+            .arg("quota")
+            .arg("enable")
+            .arg(&filesystem.base_path)
+            .output()
+            .await?;
+
+        if !output.status.success() {
+            return Err(std::io::Error::other(format!(
+                "Failed to enable Btrfs quota for {}: {}",
                 filesystem.base_path.display(),
                 String::from_utf8_lossy(&output.stderr)
             )));
