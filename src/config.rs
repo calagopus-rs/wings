@@ -511,7 +511,7 @@ unsafe impl Sync for Config {}
 impl Config {
     pub fn open(
         path: &str,
-        debug: Option<bool>,
+        debug: bool,
         ignore_certificate_errors: bool,
     ) -> Result<(Arc<Self>, WorkerGuard), anyhow::Error> {
         let file =
@@ -530,10 +530,6 @@ impl Config {
             client,
             jwt,
         };
-
-        if let Some(debug) = debug {
-            config.unsafe_mut().debug = debug;
-        }
 
         config.ensure_directories()?;
 
@@ -574,6 +570,10 @@ impl Config {
         config.ensure_user()?;
         config.ensure_passwd()?;
         config.save()?;
+
+        if debug {
+            config.unsafe_mut().debug = true;
+        }
 
         Ok((Arc::new(config), guard))
     }

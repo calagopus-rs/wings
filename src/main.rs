@@ -50,6 +50,7 @@ fn cli() -> Command {
                 .num_args(0)
                 .short('d')
                 .long("debug")
+                .default_value("false")
                 .value_parser(clap::value_parser!(bool))
                 .global(true)
                 .required(false),
@@ -222,7 +223,7 @@ async fn main() {
     let matches = cli().get_matches();
 
     let config_path = matches.get_one::<String>("config").unwrap();
-    let debug = matches.get_one::<bool>("debug").copied();
+    let debug = *matches.get_one::<bool>("debug").unwrap();
     let ignore_certificate_errors = *matches
         .get_one::<bool>("ignore_certificate_errors")
         .unwrap_or(&false);
