@@ -551,6 +551,14 @@ impl Config {
         let (file_appender, guard) =
             tracing_appender::non_blocking(latest_file.and(rolling_appender));
 
+        config.ensure_user()?;
+        config.ensure_passwd()?;
+        config.save()?;
+
+        if debug {
+            config.unsafe_mut().debug = true;
+        }
+
         tracing::subscriber::set_global_default(
             tracing_subscriber::fmt()
                 .with_writer(std::io::stdout.and(file_appender))
@@ -566,14 +574,6 @@ impl Config {
                 .finish(),
         )
         .unwrap();
-
-        config.ensure_user()?;
-        config.ensure_passwd()?;
-        config.save()?;
-
-        if debug {
-            config.unsafe_mut().debug = true;
-        }
 
         Ok((Arc::new(config), guard))
     }
