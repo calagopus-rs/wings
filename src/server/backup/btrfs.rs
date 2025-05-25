@@ -324,25 +324,6 @@ pub async fn delete_backup(
     server: &crate::server::Server,
     uuid: uuid::Uuid,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let subvolume_path = get_subvolume_path(server, uuid);
-
-    if subvolume_path.exists() {
-        let output = Command::new("btrfs")
-            .arg("subvolume")
-            .arg("delete")
-            .arg(&subvolume_path)
-            .output()
-            .await?;
-
-        if !output.status.success() {
-            return Err(Box::new(std::io::Error::other(format!(
-                "Failed to delete Btrfs subvolume for {}: {}",
-                server.filesystem.base_path.display(),
-                String::from_utf8_lossy(&output.stderr)
-            ))));
-        }
-    }
-
     tokio::fs::remove_dir_all(get_backup_path(server, uuid)).await?;
 
     Ok(())
