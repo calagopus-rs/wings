@@ -147,13 +147,17 @@ pub async fn restore_backup(
                 .run(move || {
                     let server = server.clone();
                     let runtime = runtime.clone();
+                    let subvolume_path = subvolume_path.clone();
 
                     Box::new(move |entry| {
                         let entry = match entry {
                             Ok(entry) => entry,
                             Err(_) => return WalkState::Continue,
                         };
-                        let path = entry.path();
+                        let path = match entry.path().strip_prefix(&subvolume_path) {
+                            Ok(path) => path,
+                            Err(_) => return WalkState::Continue,
+                        };
 
                         let metadata = match entry.metadata() {
                             Ok(metadata) => metadata,
