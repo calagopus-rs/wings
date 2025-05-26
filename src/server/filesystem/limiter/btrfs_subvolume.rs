@@ -108,12 +108,12 @@ pub async fn setup(
                 String::from_utf8_lossy(&output.stderr)
             )));
         }
-
-        DISK_USAGE.write().await.insert(
-            filesystem.uuid.to_string(),
-            (filesystem.base_path.clone(), 0),
-        );
     }
+
+    DISK_USAGE.write().await.insert(
+        filesystem.uuid.to_string(),
+        (filesystem.base_path.clone(), 0),
+    );
 
     Ok(())
 }
