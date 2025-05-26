@@ -6,7 +6,7 @@ use std::{
     path::Path,
     sync::Arc,
 };
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, Semaphore};
 
 pub struct Manager {
     state_writer: tokio::task::JoinHandle<()>,
@@ -31,33 +31,41 @@ impl Manager {
         )
         .unwrap_or_default();
         let mut servers = Vec::new();
+        let semaphore = Arc::new(Semaphore::new(
+            config.remote_query.boot_servers_per_page as usize,
+        ));
 
         for s in raw_servers {
             let server = Server::new(s.settings, s.process_configuration, Arc::clone(&config));
             let state = states.remove(&server.uuid).unwrap_or_default();
 
-            tokio::spawn({
-                let client = Arc::clone(&client);
-                let server = server.clone();
+            if config.remote_query.boot_servers_per_page > 0 {
+                tokio::spawn({
+                    let client = Arc::clone(&client);
+                    let semaphore = Arc::clone(&semaphore);
+                    let server = server.clone();
 
-                async move {
-                    tracing::info!(
-                        server = %server.uuid,
-                        "restoring server state {:?}",
-                        state
-                    );
+                    async move {
+                        tracing::info!(
+                            server = %server.uuid,
+                            "restoring server state {:?}",
+                            state
+                        );
 
-                    server.attach_container(&client).await.unwrap();
+                        server.attach_container(&client).await.unwrap();
 
-                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                    if (state == ServerState::Running || state == ServerState::Starting)
-                        && server.state.get_state() != ServerState::Running
-                        && state != ServerState::Starting
-                    {
-                        server.start(&client, None).await.ok();
+                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                        if (state == ServerState::Running || state == ServerState::Starting)
+                            && server.state.get_state() != ServerState::Running
+                            && state != ServerState::Starting
+                        {
+                            let _ = semaphore.acquire().await.unwrap();
+
+                            server.start(&client, None).await.ok();
+                        }
                     }
-                }
-            });
+                });
+            }
 
             servers.push(server);
         }
