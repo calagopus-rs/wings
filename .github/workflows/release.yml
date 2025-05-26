@@ -66,6 +66,12 @@ jobs:
         with:
           prefix-key: ${{ runner.os }}-${{ matrix.rust }}-${{ matrix.target }}
 
+      - name: Install dependencies
+        if: matrix.build == 'x86_64-linux-musl' || matrix.build == 'aarch64-linux-musl'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
       - name: Run cargo test
         uses: actions-rs/cargo@v1
         with:

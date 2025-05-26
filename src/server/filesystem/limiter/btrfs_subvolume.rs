@@ -3,11 +3,11 @@ use std::{
     path::PathBuf,
     sync::{Arc, LazyLock},
 };
-use tokio::{process::Command, sync::Mutex};
+use tokio::{process::Command, sync::RwLock};
 
 type DiskUsageMap = HashMap<String, (PathBuf, u64)>;
-static DISK_USAGE: LazyLock<Arc<Mutex<DiskUsageMap>>> = LazyLock::new(|| {
-    let disk_usage: Arc<Mutex<DiskUsageMap>> = Arc::new(Mutex::new(HashMap::new()));
+static DISK_USAGE: LazyLock<Arc<RwLock<DiskUsageMap>>> = LazyLock::new(|| {
+    let disk_usage: Arc<RwLock<DiskUsageMap>> = Arc::new(RwLock::new(HashMap::new()));
 
     tokio::spawn({
         let disk_usage = Arc::clone(&disk_usage);
@@ -16,7 +16,7 @@ static DISK_USAGE: LazyLock<Arc<Mutex<DiskUsageMap>>> = LazyLock::new(|| {
             loop {
                 let mut usage = String::new();
 
-                for (server, (path, server_usage)) in disk_usage.lock().await.iter_mut() {
+                for (server, (path, server_usage)) in disk_usage.write().await.iter_mut() {
                     if let Some(line) = usage.lines().find(|line| line.ends_with(server)) {
                         if let Some(used_space) = line.split_whitespace().nth(1) {
                             if let Ok(used_space) = used_space.parse::<u64>() {
@@ -109,7 +109,7 @@ pub async fn setup(
             )));
         }
 
-        DISK_USAGE.lock().await.insert(
+        DISK_USAGE.write().await.insert(
             filesystem.uuid.to_string(),
             (filesystem.base_path.clone(), 0),
         );
@@ -121,7 +121,7 @@ pub async fn setup(
 pub async fn disk_usage(
     filesystem: &crate::server::filesystem::Filesystem,
 ) -> Result<u64, std::io::Error> {
-    if let Some(usage) = DISK_USAGE.lock().await.get(&filesystem.uuid.to_string()) {
+    if let Some(usage) = DISK_USAGE.read().await.get(&filesystem.uuid.to_string()) {
         return Ok(usage.1);
     }
 
@@ -187,7 +187,10 @@ pub async fn destroy(
         )));
     }
 
-    DISK_USAGE.lock().await.remove(&filesystem.uuid.to_string());
+    DISK_USAGE
+        .write()
+        .await
+        .remove(&filesystem.uuid.to_string());
 
     Ok(())
 }
