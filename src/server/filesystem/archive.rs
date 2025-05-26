@@ -232,6 +232,14 @@ impl Archive {
                         }
 
                         let header = entry.header();
+
+                        if self.server.filesystem.is_ignored_sync(
+                            &destination_path,
+                            header.entry_type() == tar::EntryType::Directory,
+                        ) {
+                            continue;
+                        }
+
                         match header.entry_type() {
                             tar::EntryType::Directory => {
                                 std::fs::create_dir_all(&destination_path).unwrap();
@@ -280,6 +288,14 @@ impl Archive {
 
                         let destination_path = destination.join(path);
                         if !self.server.filesystem.is_safe_path_sync(&destination_path) {
+                            continue;
+                        }
+
+                        if self
+                            .server
+                            .filesystem
+                            .is_ignored_sync(&destination_path, entry.is_dir())
+                        {
                             continue;
                         }
 

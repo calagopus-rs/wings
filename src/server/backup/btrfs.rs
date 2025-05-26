@@ -162,7 +162,7 @@ pub async fn restore_backup(
                             Err(_) => return WalkState::Continue,
                         };
 
-                        if runtime.block_on(server.filesystem.is_ignored(path, metadata.is_dir())) {
+                        if server.filesystem.is_ignored_sync(path, metadata.is_dir()) {
                             return WalkState::Continue;
                         }
 
@@ -252,8 +252,6 @@ pub async fn download_backup(
         tar.mode(tar::HeaderMode::Complete);
         tar.follow_symlinks(false);
 
-        let runtime = tokio::runtime::Handle::current();
-
         let mut override_builder = OverrideBuilder::new(&subvolume_path);
 
         for line in std::fs::read_to_string(&ignored_path).unwrap().lines() {
@@ -286,11 +284,10 @@ pub async fn download_backup(
                 }
             };
 
-            if runtime.block_on(
-                server
-                    .filesystem
-                    .is_ignored(entry.path(), metadata.is_dir()),
-            ) {
+            if server
+                .filesystem
+                .is_ignored_sync(entry.path(), metadata.is_dir())
+            {
                 continue;
             }
 

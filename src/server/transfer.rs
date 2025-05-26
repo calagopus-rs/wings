@@ -93,7 +93,6 @@ impl OutgoingServerTransfer {
             let archive_task = tokio::task::spawn_blocking({
                 let bytes_archived = Arc::clone(&bytes_archived);
                 let server = Arc::clone(&server);
-                let runtime = tokio::runtime::Handle::current();
 
                 move || {
                     let writer = tokio_util::io::SyncIoBridge::new(checksummed_writer);
@@ -124,11 +123,10 @@ impl OutgoingServerTransfer {
                             }
                         };
 
-                        if runtime.block_on(
-                            server
-                                .filesystem
-                                .is_ignored(entry.path(), metadata.is_dir()),
-                        ) {
+                        if server
+                            .filesystem
+                            .is_ignored_sync(entry.path(), metadata.is_dir())
+                        {
                             continue;
                         }
 

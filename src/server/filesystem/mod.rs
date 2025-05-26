@@ -172,6 +172,14 @@ impl Filesystem {
             .is_ignore()
     }
 
+    pub fn is_ignored_sync(&self, path: &Path, is_dir: bool) -> bool {
+        self.disk_ignored
+            .blocking_read()
+            .matched(path, is_dir)
+            .invert()
+            .is_ignore()
+    }
+
     pub async fn pulls(
         &self,
     ) -> RwLockReadGuard<'_, HashMap<uuid::Uuid, Arc<RwLock<pull::Download>>>> {

@@ -4,6 +4,7 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 mod post {
     use crate::routes::{ApiError, GetState, api::servers::_server_::GetServer};
     use axum::http::StatusCode;
+    use ignore::WalkBuilder;
     use serde::Deserialize;
     use std::sync::Arc;
     use utoipa::ToSchema;
@@ -59,7 +60,6 @@ mod post {
 
         tokio::task::spawn_blocking({
             let server = Arc::clone(&server);
-            let runtime = tokio::runtime::Handle::current();
 
             move || {
                 let mut archive = tar::Builder::new(flate2::write::GzEncoder::new(
@@ -82,16 +82,50 @@ mod post {
                     };
 
                     let source_metadata = source.symlink_metadata().unwrap();
-                    if runtime.block_on(
-                        server
-                            .filesystem
-                            .is_ignored(&source, source_metadata.is_dir()),
-                    ) {
+                    if server
+                        .filesystem
+                        .is_ignored_sync(&source, source_metadata.is_dir())
+                    {
                         continue;
                     }
 
                     if source_metadata.is_dir() {
-                        archive.append_dir_all(relative, &source).unwrap();
+                        for entry in WalkBuilder::new(&source)
+                            .git_ignore(false)
+                            .ignore(false)
+                            .git_exclude(false)
+                            .follow_links(false)
+                            .hidden(false)
+                            .build()
+                            .flatten()
+                        {
+                            let path = entry.path().strip_prefix(&source).unwrap_or(entry.path());
+                            if path.display().to_string().is_empty() {
+                                continue;
+                            }
+
+                            let path = relative.join(path);
+
+                            let metadata = match entry.metadata() {
+                                Ok(metadata) => metadata,
+                                Err(_) => {
+                                    continue;
+                                }
+                            };
+
+                            if server
+                                .filesystem
+                                .is_ignored_sync(entry.path(), metadata.is_dir())
+                            {
+                                continue;
+                            }
+
+                            if metadata.is_dir() {
+                                archive.append_dir(path, entry.path()).ok();
+                            } else {
+                                archive.append_path_with_name(entry.path(), path).ok();
+                            }
+                        }
                     } else {
                         archive.append_path_with_name(&source, relative).unwrap();
                     }
