@@ -86,6 +86,8 @@ impl Filesystem {
                             Err(_) => return 0,
                         };
 
+                        total_size += metadata.len();
+
                         if metadata.is_dir() {
                             if let Ok(entries) = path.read_dir() {
                                 for entry in entries.flatten() {
@@ -99,16 +101,14 @@ impl Filesystem {
                                     let mut new_path = relative_path.to_vec();
                                     new_path.push(file_name);
 
+                                    total_size += metadata.len();
+
                                     if metadata.is_dir() {
                                         let size = recursive_size(&path, &new_path, disk_usage);
                                         disk_usage.update_size(&new_path, size as i64);
-                                    } else {
-                                        total_size += metadata.len();
                                     }
                                 }
                             }
-                        } else {
-                            total_size += metadata.len();
                         }
 
                         total_size
