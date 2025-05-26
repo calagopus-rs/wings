@@ -2,8 +2,10 @@ use serde::{
     Deserialize, Deserializer, Serialize,
     de::{SeqAccess, Visitor},
 };
-use std::marker::PhantomData;
-use std::ops::{Deref, DerefMut};
+use std::{
+    marker::PhantomData,
+    ops::{Deref, DerefMut},
+};
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Hash)]
 pub enum Permission {

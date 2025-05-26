@@ -36,29 +36,28 @@ impl Manager {
             let server = Server::new(s.settings, s.process_configuration, Arc::clone(&config));
             let state = states.remove(&server.uuid).unwrap_or_default();
 
-            if state == ServerState::Starting || state == ServerState::Running {
-                tokio::spawn({
-                    let client = Arc::clone(&client);
-                    let server = server.clone();
+            tokio::spawn({
+                let client = Arc::clone(&client);
+                let server = server.clone();
 
-                    async move {
-                        tracing::info!(
-                            server = %server.uuid,
-                            "restoring server state {:?}",
-                            state
-                        );
+                async move {
+                    tracing::info!(
+                        server = %server.uuid,
+                        "restoring server state {:?}",
+                        state
+                    );
 
-                        server.attach_container(&client).await.unwrap();
+                    server.attach_container(&client).await.unwrap();
 
-                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                        if server.state.get_state() != ServerState::Running
-                            && state != ServerState::Starting
-                        {
-                            server.start(&client, None).await.ok();
-                        }
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    if (state == ServerState::Running || state == ServerState::Starting)
+                        && server.state.get_state() != ServerState::Running
+                        && state != ServerState::Starting
+                    {
+                        server.start(&client, None).await.ok();
                     }
-                });
-            }
+                }
+            });
 
             servers.push(server);
         }
@@ -72,6 +71,8 @@ impl Manager {
 
                 async move {
                     loop {
+                        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+
                         let servers = servers
                             .read()
                             .await
@@ -84,8 +85,6 @@ impl Manager {
                         serde_json::to_writer(&mut states_file, &servers).unwrap();
                         states_file.flush().unwrap();
                         states_file.sync_all().unwrap();
-
-                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                     }
                 }
             }),
