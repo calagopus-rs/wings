@@ -199,6 +199,8 @@ impl Container {
                 let mut ratelimit_start = std::time::Instant::now();
 
                 let mut allow_ratelimit = async || {
+                    ratelimit_counter += 1;
+
                     if server.config.throttles.enabled
                         && server.config.throttles.line_reset_interval > 0
                         && ratelimit_counter >= server.config.throttles.lines
@@ -219,8 +221,6 @@ impl Container {
                                 server.log_daemon_with_prelude("Server is outputting console data too quickly -- throttling...").await;
                             }
 
-                            ratelimit_counter += 1;
-
                             return false;
                         } else {
                             ratelimit_counter = 0;
@@ -228,7 +228,6 @@ impl Container {
                         }
                     }
 
-                    ratelimit_counter += 1;
                     true
                 };
 

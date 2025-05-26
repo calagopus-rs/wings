@@ -118,6 +118,22 @@ pub async fn setup(
     Ok(())
 }
 
+pub async fn attach(
+    filesystem: &crate::server::filesystem::Filesystem,
+) -> Result<(), std::io::Error> {
+    tracing::debug!(
+        path = %filesystem.base_path.display(),
+        "attaching btrfs disk limiter for volume"
+    );
+
+    DISK_USAGE.write().await.insert(
+        filesystem.uuid.to_string(),
+        (filesystem.base_path.clone(), 0),
+    );
+
+    Ok(())
+}
+
 pub async fn disk_usage(
     filesystem: &crate::server::filesystem::Filesystem,
 ) -> Result<u64, std::io::Error> {

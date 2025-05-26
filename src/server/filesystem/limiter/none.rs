@@ -11,6 +11,17 @@ pub async fn setup(
     Ok(())
 }
 
+pub async fn attach(
+    filesystem: &crate::server::filesystem::Filesystem,
+) -> Result<(), std::io::Error> {
+    tracing::debug!(
+        path = %filesystem.base_path.display(),
+        "attaching no disk limiter for volume"
+    );
+
+    Ok(())
+}
+
 pub async fn disk_usage(
     filesystem: &crate::server::filesystem::Filesystem,
 ) -> Result<u64, std::io::Error> {

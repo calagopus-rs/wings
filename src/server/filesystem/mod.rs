@@ -566,6 +566,16 @@ impl Filesystem {
         .unwrap();
     }
 
+    pub async fn attach(&self) {
+        if let Err(err) = limiter::attach(self).await {
+            tracing::error!(
+                path = %self.base_path.display(),
+                "failed to attach server base directory: {}",
+                err
+            );
+        }
+    }
+
     pub async fn destroy(&self) {
         self.checker_abort
             .store(true, std::sync::atomic::Ordering::Relaxed);

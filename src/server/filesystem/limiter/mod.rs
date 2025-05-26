@@ -31,6 +31,34 @@ pub async fn setup(
     none::setup(filesystem).await
 }
 
+pub async fn attach(
+    filesystem: &crate::server::filesystem::Filesystem,
+) -> Result<(), std::io::Error> {
+    match filesystem.config.system.disk_limiter_mode {
+        crate::config::SystemDiskLimiterMode::BtrfsSubvolume => {
+            match btrfs_subvolume::attach(filesystem).await {
+                Err(err) => {
+                    tracing::error!(
+                        path = %filesystem.base_path.display(),
+                        "failed to attach btrfs subvolume for server, falling back to interval scan: {:#?}",
+                        err
+                    );
+                }
+                Ok(_) => {
+                    tracing::info!(
+                        path = %filesystem.base_path.display(),
+                        "successfully attached btrfs subvolume for server"
+                    );
+                    return Ok(());
+                }
+            }
+        }
+        _ => {}
+    }
+
+    none::attach(filesystem).await
+}
+
 pub async fn disk_usage(
     filesystem: &crate::server::filesystem::Filesystem,
 ) -> Result<u64, std::io::Error> {
