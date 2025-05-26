@@ -46,6 +46,8 @@ impl Container {
             crate::server::resources::ResourceUsage::default(),
         ));
 
+        resource_usage.write().await.disk_bytes = server.filesystem.limiter_usage().await;
+
         let mut stream = client
             .attach_container::<String>(
                 &docker_id,
