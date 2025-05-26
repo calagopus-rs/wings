@@ -504,6 +504,10 @@ impl Server {
                     .await?,
                 );
 
+                self.last_crash
+                    .write()
+                    .await
+                    .replace(std::time::Instant::now());
                 self.setup_websocket_sender(Arc::clone(&container), Arc::clone(client))
                     .await;
                 *self.container.write().await = Some(container);
