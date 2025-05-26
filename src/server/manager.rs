@@ -55,9 +55,11 @@ impl Manager {
                         server.attach_container(&client).await.unwrap();
 
                         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                        if (state == ServerState::Running || state == ServerState::Starting)
-                            && server.state.get_state() != ServerState::Running
-                            && server.state.get_state() != ServerState::Starting
+                        if matches!(state, ServerState::Running | ServerState::Starting)
+                            && !matches!(
+                                server.state.get_state(),
+                                ServerState::Running | ServerState::Starting
+                            )
                         {
                             let _ = semaphore.acquire().await.unwrap();
 
