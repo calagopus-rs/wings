@@ -195,6 +195,43 @@ impl Container {
                 let mut buffer = Vec::with_capacity(1024);
                 let mut line_start = 0;
 
+                let mut ratelimit_counter = 0;
+                let mut ratelimit_start = std::time::Instant::now();
+
+                let mut allow_ratelimit = async || {
+                    if server.config.throttles.enabled
+                        && server.config.throttles.line_reset_interval > 0
+                        && ratelimit_counter >= server.config.throttles.lines
+                    {
+                        if ratelimit_start.elapsed()
+                            < std::time::Duration::from_secs(
+                                server.config.throttles.line_reset_interval,
+                            )
+                        {
+                            if ratelimit_counter == server.config.throttles.lines {
+                                tracing::debug!(
+                                    server = %server.uuid,
+                                    lines = server.config.throttles.lines,
+                                    reset_interval = server.config.throttles.line_reset_interval,
+                                    "ratelimit reached for server output"
+                                );
+
+                                server.log_daemon_with_prelude("Server is outputting console data too quickly -- throttling...").await;
+                            }
+
+                            ratelimit_counter += 1;
+
+                            return false;
+                        } else {
+                            ratelimit_counter = 0;
+                            ratelimit_start = std::time::Instant::now();
+                        }
+                    }
+
+                    ratelimit_counter += 1;
+                    true
+                };
+
                 while let Some(Ok(data)) = stream.output.next().await {
                     buffer.extend_from_slice(&data.into_bytes());
 
@@ -256,7 +293,9 @@ impl Container {
                                         .to_string();
 
                                 check_startup(&line);
-                                stdout_sender.send(line).unwrap();
+                                if allow_ratelimit().await {
+                                    stdout_sender.send(line).unwrap();
+                                }
 
                                 line_start = newline_pos + 1;
                                 search_start = line_start;
@@ -268,7 +307,9 @@ impl Container {
                                 .to_string();
 
                                 check_startup(&line);
-                                stdout_sender.send(line).unwrap();
+                                if allow_ratelimit().await {
+                                    stdout_sender.send(line).unwrap();
+                                }
 
                                 line_start += 512;
                                 search_start = line_start;
@@ -281,7 +322,9 @@ impl Container {
                                 )
                                 .trim()
                                 .to_string();
-                                stdout_sender.send(line).unwrap();
+                                if allow_ratelimit().await {
+                                    stdout_sender.send(line).unwrap();
+                                }
 
                                 line_start += 512;
                                 search_start = line_start;

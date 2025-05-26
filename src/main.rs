@@ -342,6 +342,7 @@ async fn main() {
                         algorithm = %key.algorithm().to_string(),
                         "loaded existing sftp host key"
                     );
+
                     key
                 }
                 _ => {
@@ -349,6 +350,7 @@ async fn main() {
                         algorithm = %state.config.system.sftp.key_algorithm,
                         "generating new sftp host key"
                     );
+
                     let key = russh::keys::PrivateKey::random(
                         &mut OsRng,
                         state
@@ -413,6 +415,7 @@ async fn main() {
             server
                 .run_on_address(Arc::new(config), address)
                 .await
+                .context("failed to bind to SFTP address")
                 .unwrap();
         }
     });
@@ -430,6 +433,7 @@ async fn main() {
             config.api.ssl.key.as_str(),
         )
         .await
+        .context("failed to load SSL certificate and key")
         .unwrap();
 
         tracing::info!(
@@ -441,6 +445,7 @@ async fn main() {
         axum_server::bind_rustls(address, config)
             .serve(router.into_make_service_with_connect_info::<SocketAddr>())
             .await
+            .context("failed to bind to address")
             .unwrap();
     } else {
         tracing::info!(
@@ -449,12 +454,15 @@ async fn main() {
             address.to_string().cyan(),
         );
 
-        let listener = tokio::net::TcpListener::bind(address).await.unwrap();
         axum::serve(
-            listener,
+            tokio::net::TcpListener::bind(address)
+                .await
+                .context("failed to bind to address")
+                .unwrap(),
             router.into_make_service_with_connect_info::<SocketAddr>(),
         )
         .await
+        .context("failed to start HTTP server")
         .unwrap();
     }
 }

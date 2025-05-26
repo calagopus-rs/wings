@@ -66,6 +66,7 @@ impl Server {
             server = %configuration.uuid,
             "creating server instance"
         );
+
         let filesystem = filesystem::Filesystem::new(
             configuration.uuid,
             configuration.build.disk_space * 1024 * 1024,
