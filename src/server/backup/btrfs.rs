@@ -206,15 +206,15 @@ pub async fn restore_backup(
                         } else if metadata.is_symlink() {
                             if let Ok(target) = std::fs::read_link(path) {
                                 let destination_path = &destination_path;
-                                if !server.filesystem.is_safe_path_sync(&destination_path) {
+                                if !server.filesystem.is_safe_path_sync(destination_path) {
                                     return WalkState::Continue;
                                 }
 
-                                std::os::unix::fs::symlink(target, &destination_path).ok();
-                                std::fs::set_permissions(&destination_path, metadata.permissions())
+                                std::os::unix::fs::symlink(target, destination_path).ok();
+                                std::fs::set_permissions(destination_path, metadata.permissions())
                                     .ok();
                                 std::os::unix::fs::chown(
-                                    &destination_path,
+                                    destination_path,
                                     Some(metadata.uid()),
                                     Some(metadata.gid()),
                                 )

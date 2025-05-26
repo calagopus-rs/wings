@@ -1,4 +1,74 @@
-use tokio::process::Command;
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::{Arc, LazyLock},
+};
+use tokio::{process::Command, sync::Mutex};
+
+type DiskUsageMap = HashMap<String, (PathBuf, u64)>;
+static DISK_USAGE: LazyLock<Arc<Mutex<DiskUsageMap>>> = LazyLock::new(|| {
+    let disk_usage: Arc<Mutex<DiskUsageMap>> = Arc::new(Mutex::new(HashMap::new()));
+
+    tokio::spawn({
+        let disk_usage = Arc::clone(&disk_usage);
+
+        async move {
+            loop {
+                let mut usage = String::new();
+
+                for (server, (path, server_usage)) in disk_usage.lock().await.iter_mut() {
+                    if let Some(line) = usage.lines().find(|line| line.ends_with(server)) {
+                        if let Some(used_space) = line.split_whitespace().nth(1) {
+                            if let Ok(used_space) = used_space.parse::<u64>() {
+                                *server_usage = used_space;
+                                continue;
+                            }
+                        }
+                    }
+
+                    let output = Command::new("btrfs")
+                        .arg("qgroup")
+                        .arg("show")
+                        .arg("--raw")
+                        .arg(path)
+                        .output()
+                        .await;
+                    match output {
+                        Ok(output) if output.status.success() => {
+                            let output_str = String::from_utf8_lossy(&output.stdout);
+                            for line in output_str.lines() {
+                                if line.ends_with(server) {
+                                    if let Some(used_space) = line.split_whitespace().nth(1) {
+                                        if let Ok(used_space) = used_space.parse::<u64>() {
+                                            *server_usage = used_space;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+
+                            usage.push_str(&output_str);
+                        }
+                        Ok(output) => {
+                            tracing::error!(
+                                server = server,
+                                "failed to get Btrfs disk usage: {}",
+                                String::from_utf8_lossy(&output.stderr)
+                            );
+                        }
+                        Err(e) => {
+                            tracing::error!("error executing btrfs command: {}", e);
+                        }
+                    }
+                }
+
+                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+            }
+        }
+    });
+
+    disk_usage
+});
 
 pub async fn setup(
     filesystem: &crate::server::filesystem::Filesystem,
@@ -38,6 +108,11 @@ pub async fn setup(
                 String::from_utf8_lossy(&output.stderr)
             )));
         }
+
+        DISK_USAGE.lock().await.insert(
+            filesystem.uuid.to_string(),
+            (filesystem.base_path.clone(), 0),
+        );
     }
 
     Ok(())
@@ -46,43 +121,12 @@ pub async fn setup(
 pub async fn disk_usage(
     filesystem: &crate::server::filesystem::Filesystem,
 ) -> Result<u64, std::io::Error> {
-    let output = Command::new("btrfs")
-        .arg("qgroup")
-        .arg("show")
-        .arg(&filesystem.base_path)
-        .arg("--raw")
-        .output()
-        .await?;
-
-    if !output.status.success() {
-        return Err(std::io::Error::other(format!(
-            "Failed to get Btrfs disk usage for {}: {}",
-            filesystem.base_path.display(),
-            String::from_utf8_lossy(&output.stderr)
-        )));
-    }
-
-    let output_str = String::from_utf8_lossy(&output.stdout);
-    let server_uuid_str = filesystem
-        .base_path
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_string();
-    for line in output_str.lines() {
-        if !line.ends_with(&server_uuid_str) {
-            continue;
-        }
-
-        if let Some(used_space) = line.split_whitespace().nth(1) {
-            if let Ok(used_space) = used_space.parse::<u64>() {
-                return Ok(used_space);
-            }
-        }
+    if let Some(usage) = DISK_USAGE.lock().await.get(&filesystem.uuid.to_string()) {
+        return Ok(usage.1);
     }
 
     Err(std::io::Error::other(format!(
-        "Failed to parse Btrfs disk usage for {}",
+        "Failed to load Btrfs disk usage for {}",
         filesystem.base_path.display()
     )))
 }
@@ -142,6 +186,8 @@ pub async fn destroy(
             String::from_utf8_lossy(&output.stderr)
         )));
     }
+
+    DISK_USAGE.lock().await.remove(&filesystem.uuid.to_string());
 
     Ok(())
 }

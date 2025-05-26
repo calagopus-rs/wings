@@ -4,7 +4,6 @@ use serde_json::json;
 use std::{
     collections::HashMap,
     ops::Deref,
-    path::PathBuf,
     pin::Pin,
     sync::{Arc, atomic::AtomicBool},
 };
@@ -68,7 +67,7 @@ impl Server {
             "creating server instance"
         );
         let filesystem = filesystem::Filesystem::new(
-            PathBuf::from(&config.system.data_directory).join(configuration.uuid.to_string()),
+            configuration.uuid,
             configuration.build.disk_space * 1024 * 1024,
             config.system.disk_check_interval,
             Arc::clone(&config),

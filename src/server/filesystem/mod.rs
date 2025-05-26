@@ -20,6 +20,7 @@ mod usage;
 pub mod writer;
 
 pub struct Filesystem {
+    uuid: uuid::Uuid,
     checker_abort: Arc<AtomicBool>,
     config: Arc<crate::config::Config>,
 
@@ -38,12 +39,13 @@ pub struct Filesystem {
 
 impl Filesystem {
     pub fn new(
-        base_path: PathBuf,
+        uuid: uuid::Uuid,
         disk_limit: u64,
         check_interval: u64,
         config: Arc<crate::config::Config>,
         deny_list: &[String],
     ) -> Self {
+        let base_path = Path::new(&config.system.data_directory).join(uuid.to_string());
         let disk_usage = Arc::new(RwLock::new(usage::DiskUsage::new()));
         let disk_usage_cached = Arc::new(AtomicU64::new(0));
         let mut disk_ignored = ignore::overrides::OverrideBuilder::new(&base_path);
@@ -134,6 +136,7 @@ impl Filesystem {
         });
 
         Self {
+            uuid,
             checker_abort,
             config: Arc::clone(&config),
 
