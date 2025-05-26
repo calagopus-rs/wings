@@ -42,11 +42,10 @@ impl Container {
 
         let (update_channel, update_reciever) = tokio::sync::mpsc::channel(1);
 
-        let resource_usage = Arc::new(RwLock::new(
-            crate::server::resources::ResourceUsage::default(),
-        ));
-
-        resource_usage.write().await.disk_bytes = server.filesystem.limiter_usage().await;
+        let resource_usage = Arc::new(RwLock::new(crate::server::resources::ResourceUsage {
+            disk_bytes: server.filesystem.limiter_usage().await,
+            ..Default::default()
+        }));
 
         let mut stream = client
             .attach_container::<String>(
@@ -122,13 +121,16 @@ impl Container {
                         let mut prev_cpu = (0, 0);
 
                         while let Some(Ok(stats)) = stats_stream.next().await {
-                            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                            let (disk_usage, _) = tokio::join!(
+                                server.filesystem.limiter_usage(),
+                                tokio::time::sleep(std::time::Duration::from_millis(500))
+                            );
 
                             let mut usage = resource_usage.write().await;
 
                             usage.memory_bytes = stats.memory_stats.usage.unwrap_or(0);
                             usage.memory_limit_bytes = stats.memory_stats.limit.unwrap_or(0);
-                            usage.disk_bytes = server.filesystem.limiter_usage().await;
+                            usage.disk_bytes = disk_usage;
 
                             if let Some(networks) = stats.networks {
                                 if let Some(network) = networks.values().next() {
