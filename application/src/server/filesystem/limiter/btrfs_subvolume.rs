@@ -5,7 +5,7 @@ use std::{
 };
 use tokio::{process::Command, sync::RwLock};
 
-type DiskUsageMap = HashMap<String, (PathBuf, u64)>;
+type DiskUsageMap = HashMap<String, (PathBuf, String, u64)>;
 static DISK_USAGE: LazyLock<Arc<RwLock<DiskUsageMap>>> = LazyLock::new(|| {
     let disk_usage: Arc<RwLock<DiskUsageMap>> = Arc::new(RwLock::new(HashMap::new()));
 
@@ -16,8 +16,10 @@ static DISK_USAGE: LazyLock<Arc<RwLock<DiskUsageMap>>> = LazyLock::new(|| {
             loop {
                 let mut usage = String::new();
 
-                for (server, (path, server_usage)) in disk_usage.write().await.iter_mut() {
+                for (server, (path, qgroup, server_usage)) in disk_usage.write().await.iter_mut() {
                     if let Some(line) = usage.lines().find(|line| line.ends_with(server)) {
+                        *qgroup = line.split_whitespace().next().unwrap_or("").to_string();
+
                         if let Some(used_space) = line.split_whitespace().nth(1) {
                             if let Ok(used_space) = used_space.parse::<u64>() {
                                 *server_usage = used_space;
@@ -112,7 +114,7 @@ pub async fn setup(
 
     DISK_USAGE.write().await.insert(
         filesystem.uuid.to_string(),
-        (filesystem.base_path.clone(), 0),
+        (filesystem.base_path.clone(), "".to_string(), 0),
     );
 
     Ok(())
@@ -128,7 +130,7 @@ pub async fn attach(
 
     DISK_USAGE.write().await.insert(
         filesystem.uuid.to_string(),
-        (filesystem.base_path.clone(), 0),
+        (filesystem.base_path.clone(), "".to_string(), 0),
     );
 
     Ok(())
@@ -138,7 +140,7 @@ pub async fn disk_usage(
     filesystem: &crate::server::filesystem::Filesystem,
 ) -> Result<u64, std::io::Error> {
     if let Some(usage) = DISK_USAGE.read().await.get(&filesystem.uuid.to_string()) {
-        return Ok(usage.1);
+        return Ok(usage.2);
     }
 
     Err(std::io::Error::other(format!(
@@ -187,6 +189,24 @@ pub async fn destroy(
         path = %filesystem.base_path.display(),
         "destroying btrfs subvolume for server"
     );
+
+    if let Some(usage) = DISK_USAGE.read().await.get(&filesystem.uuid.to_string()) {
+        let output = Command::new("btrfs")
+            .arg("qgroup")
+            .arg("destroy")
+            .arg(&usage.1)
+            .arg(&filesystem.base_path)
+            .output()
+            .await?;
+
+        if !output.status.success() {
+            return Err(std::io::Error::other(format!(
+                "Failed to destroy Btrfs qgroup for {}: {}",
+                filesystem.base_path.display(),
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
+    }
 
     let output = Command::new("btrfs")
         .arg("subvolume")

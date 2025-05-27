@@ -335,7 +335,7 @@ pub async fn install_server(
     *container_id.lock().await = Some(container.id.clone());
 
     match tokio::time::timeout(std::time::Duration::from_secs(15 * 60), async move {
-        let thread = tokio::spawn({
+        let thread = {
             let docker_id = container.id.clone();
             let server = Arc::clone(server);
             let client = Arc::clone(client);
@@ -441,7 +441,7 @@ pub async fn install_server(
                         .ok();
                 }
             }
-        });
+        };
 
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         client
@@ -449,7 +449,7 @@ pub async fn install_server(
             .await
             .unwrap();
 
-        let wait_thread = tokio::spawn({
+        let wait_thread = {
             let client = Arc::clone(client);
 
             async move {
@@ -458,9 +458,12 @@ pub async fn install_server(
                     .next()
                     .await;
             }
-        });
+        };
 
-        tokio::try_join!(thread, wait_thread)
+        tokio::select! {
+            _ = thread => {},
+            _ = wait_thread => {},
+        }
     })
     .await
     {
