@@ -1,17 +1,9 @@
-use wings_rs::extensions::Extension;
+use wings_rs::{export_extension, extensions::Extension};
 
-#[unsafe(no_mangle)]
-#[allow(improper_ctypes_definitions)]
-pub extern "C" fn load_extension() -> Box<dyn Extension> {
-    Box::new(ExampleExtension)
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn api_version() -> u32 {
-    wings_rs::extensions::API_VERSION
-}
+export_extension!(ExampleExtension);
 
 #[repr(C)]
+#[derive(Default)]
 pub struct ExampleExtension;
 
 impl Extension for ExampleExtension {

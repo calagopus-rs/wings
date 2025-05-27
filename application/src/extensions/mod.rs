@@ -30,3 +30,19 @@ pub trait Extension: Send + Sync + 'static {
         OpenApiRouter::new().with_state(state)
     }
 }
+
+#[macro_export]
+macro_rules! export_extension {
+    ($struct_name:ident) => {
+        #[unsafe(no_mangle)]
+        #[allow(improper_ctypes_definitions)]
+        pub extern "C" fn load_extension() -> Box<dyn wings_rs::extensions::Extension> {
+            Box::new($struct_name::default())
+        }
+
+        #[unsafe(no_mangle)]
+        pub extern "C" fn api_version() -> u32 {
+            wings_rs::extensions::API_VERSION
+        }
+    };
+}
