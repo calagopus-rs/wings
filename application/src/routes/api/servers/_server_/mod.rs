@@ -21,7 +21,7 @@ mod ws;
 
 pub type GetServer = axum::extract::Extension<crate::server::Server>;
 
-async fn auth(
+pub async fn auth(
     state: GetState,
     Path(parts): Path<Vec<String>>,
     mut req: Request,

@@ -22,6 +22,7 @@ pub mod state;
 pub mod transfer;
 pub mod websocket;
 
+#[repr(C)]
 pub struct InnerServer {
     pub uuid: uuid::Uuid,
     config: Arc<crate::config::Config>,

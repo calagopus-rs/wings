@@ -4,6 +4,7 @@ use serde::Deserialize;
 use serde_json::json;
 use utoipa::ToSchema;
 
+#[repr(C)]
 #[derive(ToSchema, Deserialize)]
 pub struct RawServer {
     pub settings: crate::server::configuration::ServerConfiguration,

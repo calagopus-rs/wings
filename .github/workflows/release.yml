@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        build: [x86_64-linux, x86_64-macos, aarch64-linux, aarch64-macos]
+        build: [x86_64-linux, x86_64-linux-musl, x86_64-macos, aarch64-linux, aarch64-linux-musl, aarch64-macos]
         include:
         - build: x86_64-linux
           os: ubuntu-22.04

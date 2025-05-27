@@ -1,7 +1,7 @@
 use super::State;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-mod _server_;
+pub mod _server_;
 
 mod get {
     use crate::routes::GetState;

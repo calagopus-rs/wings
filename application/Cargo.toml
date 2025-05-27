@@ -1,0 +1,53 @@
+[package]
+name = "wings-rs"
+version = "0.8.0"
+edition = "2024"
+
+[dependencies]
+tracing = "0.1.41"
+tracing-subscriber = "0.3.19"
+tracing-appender = "0.2.3"
+anyhow = { workspace = true }
+axum = { workspace = true }
+axum-server = { workspace = true }
+axum-extra = { workspace = true }
+bollard = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+utoipa = { workspace = true }
+utoipa-axum = { workspace = true }
+reqwest = { workspace = true }
+tower-http = { workspace = true }
+tokio = { workspace = true }
+colored = "3.0.0"
+chrono = { workspace = true }
+nestify = "0.3.3"
+rayon = "1.10.0"
+serde_yml = "0.0.12"
+serde_default = "0.2.0"
+users = "0.11.0"
+futures-util = { workspace = true }
+tokio-util = { workspace = true }
+uuid = { workspace = true }
+tar = { workspace = true }
+zip = { workspace = true }
+flate2 = { workspace = true }
+async-compression = { workspace = true }
+jwt = "0.16.0"
+hmac = { version = "0.12.1", features = ["std"] }
+sha2 = "0.10.9"
+ddup-bak = "0.6.0"
+infer = "0.19.0"
+rustls = { version = "0.23.27", features = ["ring"] }
+rand = "0.9.1"
+ignore = { version = "0.4.23", features = ["simd-accel"] }
+sha1 = "0.10.6"
+futures = "0.3.31"
+russh = "0.52.1"
+russh-sftp = "2.1.1"
+md5 = "0.7.0"
+human_bytes = "0.4.3"
+ansi_term = "0.12.1"
+clap = "4.5.37"
+dialoguer = "0.11.0"
+libloading = "0.8.8"

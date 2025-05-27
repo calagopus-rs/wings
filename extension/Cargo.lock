@@ -1197,27 +1197,7 @@ dependencies = [
 name = "extension"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "async-compression",
- "axum",
- "axum-extra",
- "axum-server",
- "bollard",
- "chrono",
- "flate2",
- "futures-util",
- "reqwest",
- "serde",
- "serde_json",
- "tar",
- "tokio",
- "tokio-util",
- "tower-http",
- "utoipa",
- "utoipa-axum",
- "uuid",
  "wings-rs",
- "zip",
 ]
 
 [[package]]
@@ -4510,7 +4490,7 @@ checksum = "271414315aff87387382ec3d271b52d7ae78726f5d44ac98b4f4030c91880486"
 
 [[package]]
 name = "wings-rs"
-version = "0.8.0"
+version = "0.7.6"
 dependencies = [
  "ansi_term",
  "anyhow",
@@ -4532,7 +4512,6 @@ dependencies = [
  "ignore",
  "infer",
  "jwt",
- "libloading",
  "md5",
  "nestify",
  "rand 0.9.1",

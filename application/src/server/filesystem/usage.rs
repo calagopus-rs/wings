@@ -1,18 +1,13 @@
 use std::collections::HashMap;
 
+#[repr(C)]
+#[derive(Default)]
 pub struct DiskUsage {
     pub size: u64,
     pub entries: HashMap<String, DiskUsage>,
 }
 
 impl DiskUsage {
-    pub fn new() -> Self {
-        DiskUsage {
-            size: 0,
-            entries: HashMap::new(),
-        }
-    }
-
     pub fn get_size(&self, path: &[String]) -> Option<u64> {
         if path.is_empty() {
             return Some(self.size);
@@ -36,10 +31,7 @@ impl DiskUsage {
         let mut current = self;
         for component in path {
             current = {
-                let entry = current
-                    .entries
-                    .entry(component.clone())
-                    .or_insert_with(DiskUsage::new);
+                let entry = current.entries.entry(component.clone()).or_default();
 
                 if delta >= 0 {
                     entry.size = entry.size.saturating_add(delta as u64);
@@ -94,10 +86,7 @@ impl DiskUsage {
 
         let mut current = self;
         for component in parents {
-            let entry = current
-                .entries
-                .entry(component.clone())
-                .or_insert_with(DiskUsage::new);
+            let entry = current.entries.entry(component.clone()).or_default();
 
             current.size = current.size.saturating_add(source_dir.size);
             current = entry;

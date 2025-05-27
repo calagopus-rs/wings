@@ -8,23 +8,12 @@ use axum::{
 use bollard::Docker;
 use clap::{Arg, Command};
 use colored::Colorize;
-use routes::ApiError;
 use russh::{keys::ssh_key::rand_core::OsRng, server::Server};
 use std::{net::SocketAddr, path::Path, sync::Arc, time::Instant};
 use tower_http::catch_panic::CatchPanicLayer;
 use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityScheme};
 use utoipa_axum::router::OpenApiRouter;
-
-mod commands;
-mod config;
-mod models;
-mod remote;
-mod routes;
-mod server;
-mod sftp;
-
-const VERSION: &str = env!("CARGO_PKG_VERSION");
-const GIT_COMMIT: &str = env!("CARGO_GIT_COMMIT");
+use wings_rs::routes::ApiError;
 
 fn cli() -> Command {
     Command::new("wings-rs")
@@ -62,6 +51,15 @@ fn cli() -> Command {
                 .long("ignore-certificate-errors")
                 .default_value("false")
                 .value_parser(clap::value_parser!(bool))
+                .required(false),
+        )
+        .arg(
+            Arg::new("extensions")
+                .help("set the location for the extensions directory")
+                .num_args(1)
+                .long("extensions")
+                .default_value("/etc/pterodactyl/extensions")
+                .global(true)
                 .required(false),
         )
         .subcommand(
@@ -163,7 +161,7 @@ async fn handle_request(req: Request<Body>, next: Next) -> Result<Response<Body>
 }
 
 async fn handle_cors(
-    state: routes::GetState,
+    state: wings_rs::routes::GetState,
     req: Request,
     next: Next,
 ) -> Result<Response<Body>, StatusCode> {
@@ -223,22 +221,31 @@ async fn main() {
     let matches = cli().get_matches();
 
     let config_path = matches.get_one::<String>("config").unwrap();
+    let extensions_path = matches.get_one::<String>("extensions").unwrap();
     let debug = *matches.get_one::<bool>("debug").unwrap();
     let ignore_certificate_errors = *matches
         .get_one::<bool>("ignore_certificate_errors")
         .unwrap_or(&false);
-    let config = config::Config::open(config_path, debug, ignore_certificate_errors);
+    let config = wings_rs::config::Config::open(config_path, debug, ignore_certificate_errors);
 
     match matches.subcommand() {
         Some(("version", sub_matches)) => std::process::exit(
-            commands::version::version(sub_matches, config.as_ref().ok().map(|c| &c.0)).await,
+            wings_rs::commands::version::version(sub_matches, config.as_ref().ok().map(|c| &c.0))
+                .await,
         ),
         Some(("configure", sub_matches)) => std::process::exit(
-            commands::configure::configure(sub_matches, config.as_ref().ok().map(|c| &c.0)).await,
+            wings_rs::commands::configure::configure(
+                sub_matches,
+                config.as_ref().ok().map(|c| &c.0),
+            )
+            .await,
         ),
         Some(("diagnostics", sub_matches)) => std::process::exit(
-            commands::diagnostics::diagnostics(sub_matches, config.as_ref().ok().map(|c| &c.0))
-                .await,
+            wings_rs::commands::diagnostics::diagnostics(
+                sub_matches,
+                config.as_ref().ok().map(|c| &c.0),
+            )
+            .await,
         ),
         _ => {}
     }
@@ -252,6 +259,7 @@ async fn main() {
             .context("failed to connect to docker")
             .unwrap(),
     );
+
     tracing::info!("ensuring docker network exists");
     config
         .ensure_network(&docker)
@@ -259,8 +267,12 @@ async fn main() {
         .context("failed to ensure docker network")
         .unwrap();
 
+    tracing::info!("loading extensions");
+
+    let extension_manager = Arc::new(wings_rs::extensions::manager::Manager::new(extensions_path));
+
     tracing::info!("creating server manager");
-    let server_manager = server::manager::Manager::new(
+    let server_manager = wings_rs::server::manager::Manager::new(
         Arc::clone(&config),
         Arc::clone(&docker),
         config
@@ -272,17 +284,27 @@ async fn main() {
     )
     .await;
 
-    let state = Arc::new(routes::AppState {
+    let state = Arc::new(wings_rs::routes::AppState {
         config: Arc::clone(&config),
         start_time: Instant::now(),
-        version: format!("{}:{}", VERSION, GIT_COMMIT),
+        version: format!("{}:{}", wings_rs::VERSION, wings_rs::GIT_COMMIT),
 
         docker: Arc::clone(&docker),
         server_manager: Arc::clone(&server_manager),
+        extension_manager: Arc::clone(&extension_manager),
     });
 
+    let mut extension_router = OpenApiRouter::new();
+
+    for extension in extension_manager.get_extensions() {
+        extension.on_init(state.clone());
+
+        extension_router = extension_router.merge(extension.router(state.clone()));
+    }
+
     let app = OpenApiRouter::new()
-        .merge(routes::router(&state))
+        .merge(wings_rs::routes::router(&state))
+        .merge(extension_router)
         .fallback(|| async {
             (
                 StatusCode::NOT_FOUND,
@@ -323,7 +345,7 @@ async fn main() {
         let state = Arc::clone(&state);
 
         async move {
-            let mut server = sftp::Server {
+            let mut server = wings_rs::sftp::Server {
                 state: Arc::clone(&state),
             };
 
@@ -406,7 +428,7 @@ async fn main() {
                 address.to_string().cyan(),
                 format!(
                     "(app@{}, {}ms)",
-                    VERSION,
+                    wings_rs::VERSION,
                     state.start_time.elapsed().as_millis()
                 )
                 .bright_black()

@@ -19,6 +19,7 @@ pub mod pull;
 mod usage;
 pub mod writer;
 
+#[repr(C)]
 pub struct Filesystem {
     uuid: uuid::Uuid,
     checker_abort: Arc<AtomicBool>,
@@ -46,7 +47,7 @@ impl Filesystem {
         deny_list: &[String],
     ) -> Self {
         let base_path = Path::new(&config.system.data_directory).join(uuid.to_string());
-        let disk_usage = Arc::new(RwLock::new(usage::DiskUsage::new()));
+        let disk_usage = Arc::new(RwLock::new(usage::DiskUsage::default()));
         let disk_usage_cached = Arc::new(AtomicU64::new(0));
         let mut disk_ignored = ignore::overrides::OverrideBuilder::new(&base_path);
 
@@ -73,7 +74,7 @@ impl Filesystem {
                         "checking disk usage"
                     );
 
-                    let mut tmp_disk_usage = usage::DiskUsage::new();
+                    let mut tmp_disk_usage = usage::DiskUsage::default();
 
                     fn recursive_size(
                         path: &Path,

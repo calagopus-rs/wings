@@ -1,0 +1,31 @@
+[package]
+name = "extension"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wings-rs = { version = "*", path = "../application" }
+
+anyhow = { workspace = true }
+axum = { workspace = true }
+axum-server = { workspace = true }
+axum-extra = { workspace = true }
+bollard = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+utoipa = { workspace = true }
+utoipa-axum = { workspace = true }
+reqwest = { workspace = true }
+tower-http = { workspace = true }
+tokio = { workspace = true }
+chrono = { workspace = true }
+futures-util = { workspace = true }
+tokio-util = { workspace = true }
+uuid = { workspace = true }
+tar = { workspace = true }
+zip = { workspace = true }
+flate2 = { workspace = true }
+async-compression = { workspace = true }

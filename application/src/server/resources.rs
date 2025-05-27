@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 nestify::nest! {
+    #[repr(C)]
     #[derive(ToSchema, Deserialize, Serialize, Clone, Copy, PartialEq)]
     pub struct ResourceUsage {
         pub memory_bytes: u64,
@@ -12,7 +13,7 @@ nestify::nest! {
         pub state: ServerState,
 
         #[schema(inline)]
-        pub network: #[derive(ToSchema, Deserialize, Serialize, Clone, Copy, PartialEq)] pub struct ResourceUsageNetwork {
+        pub network: #[repr(C)] #[derive(ToSchema, Deserialize, Serialize, Clone, Copy, PartialEq)] pub struct ResourceUsageNetwork {
             pub rx_bytes: u64,
             pub tx_bytes: u64,
         },

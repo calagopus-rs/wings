@@ -15,6 +15,7 @@ pub enum ServerConfigurationFileParser {
     Xml,
 }
 
+#[repr(C)]
 #[derive(ToSchema, Deserialize, Clone)]
 pub struct ServerConfigurationFileReplacement {
     pub r#match: String,
@@ -22,6 +23,7 @@ pub struct ServerConfigurationFileReplacement {
     pub replace_with: serde_json::Value,
 }
 
+#[repr(C)]
 #[derive(ToSchema, Deserialize, Clone)]
 pub struct ServerConfigurationFile {
     pub file: String,
@@ -128,13 +130,14 @@ impl ServerConfigurationFile {
 }
 
 nestify::nest! {
+    #[repr(C)]
     #[derive(ToSchema, Deserialize)]
     pub struct ProcessConfiguration {
-        pub startup: #[derive(ToSchema, Deserialize, Clone)] pub struct ProcessConfigurationStartup {
+        pub startup: #[repr(C)] #[derive(ToSchema, Deserialize, Clone)] pub struct ProcessConfigurationStartup {
             pub done: Option<Vec<String>>,
             pub strip_ansi: bool,
         },
-        pub stop: #[derive(ToSchema, Deserialize)] pub struct ProcessConfigurationStop {
+        pub stop: #[repr(C)] #[derive(ToSchema, Deserialize)] pub struct ProcessConfigurationStop {
             pub r#type: String,
             pub value: Option<String>,
         },

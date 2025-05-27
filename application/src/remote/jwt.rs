@@ -7,6 +7,7 @@ use hmac::digest::KeyInit;
 use jwt::VerifyWithKey;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
+#[repr(C)]
 #[derive(Deserialize, Serialize)]
 pub struct BasePayload {
     #[serde(rename = "iss")]
@@ -61,6 +62,7 @@ impl BasePayload {
     }
 }
 
+#[repr(C)]
 pub struct JwtClient {
     pub key: hmac::Hmac<sha2::Sha256>,
 

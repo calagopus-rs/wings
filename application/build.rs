@@ -10,16 +10,16 @@ fn main() {
         .unwrap_or(false);
 
     if is_git_repo {
-        println!("cargo:rerun-if-changed=.git/HEAD");
+        println!("cargo:rerun-if-changed=../.git/HEAD");
 
-        if let Ok(head) = std::fs::read_to_string(".git/HEAD") {
+        if let Ok(head) = std::fs::read_to_string("../.git/HEAD") {
             if head.starts_with("ref: ") {
                 let head_ref = head.trim_start_matches("ref: ").trim();
-                println!("cargo:rerun-if-changed=.git/{}", head_ref);
+                println!("cargo:rerun-if-changed=../.git/{}", head_ref);
             }
         }
 
-        println!("cargo:rerun-if-changed=.git/index");
+        println!("cargo:rerun-if-changed=../.git/index");
     }
 
     let mut git_hash = "unknown".to_string();

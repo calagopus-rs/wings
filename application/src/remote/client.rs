@@ -3,6 +3,7 @@ use crate::server::{
 };
 use axum::http::HeaderMap;
 
+#[repr(C)]
 pub struct Client {
     pub(super) config: crate::config::RemoteQuery,
 

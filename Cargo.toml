@@ -1,22 +1,13 @@
-[package]
-name = "wings-rs"
-version = "0.7.6"
-edition = "2024"
+[workspace]
+resolver = "3"
+members = ["application", "extension"]
+default-members = ["application"]
 
-[profile.dev]
-debug = false
-
-[profile.release]
-opt-level = "z"
-lto = true
-
-[dependencies]
-tracing = "0.1.41"
-tracing-subscriber = "0.3.19"
-tracing-appender = "0.2.3"
+[workspace.dependencies]
 anyhow = "1.0.98"
 axum = { version = "0.8.1", features = ["ws", "multipart"] }
 axum-server = { version = "0.7.2", features = ["tls-rustls"] }
+axum-extra = { version = "0.10.1", features = ["query"] }
 bollard = "0.18.1"
 serde = { version = "1.0.138", features = ["derive"] }
 serde_json = { version = "1.0.139", features = ["preserve_order"] }
@@ -25,13 +16,7 @@ utoipa-axum = "0.2.0"
 reqwest = { version = "0.12.12", default-features = false, features = ["json", "multipart", "rustls-tls", "stream"] }
 tower-http = { version = "0.6.2", features = ["catch-panic"] }
 tokio = { version = "1.43.0", features = ["full"] }
-colored = "3.0.0"
 chrono = { version = "0.4.40", features = ["serde"] }
-nestify = "0.3.3"
-rayon = "1.10.0"
-serde_yml = "0.0.12"
-serde_default = "0.2.0"
-users = "0.11.0"
 futures-util = "0.3.31"
 tokio-util = { version = "0.7.15", features = ["full"] }
 uuid = { version = "1.16.0", features = ["serde", "v4"] }
@@ -39,21 +24,10 @@ tar = "0.4.44"
 zip = { version = "3.0.0", default-features = false, features = ["bzip2", "deflate", "sha1", "time", "zstd", "lzma-rs"] }
 flate2 = "1.1.1"
 async-compression = { version = "0.4.23", features = ["tokio", "bzip2", "gzip", "lz4", "xz", "zstd"] }
-jwt = "0.16.0"
-hmac = { version = "0.12.1", features = ["std"] }
-sha2 = "0.10.9"
-ddup-bak = "0.6.0"
-infer = "0.19.0"
-rustls = { version = "0.23.27", features = ["ring"] }
-rand = "0.9.1"
-ignore = { version = "0.4.23", features = ["simd-accel"] }
-sha1 = "0.10.6"
-futures = "0.3.31"
-russh = "0.52.1"
-russh-sftp = "2.1.1"
-md5 = "0.7.0"
-axum-extra = { version = "0.10.1", features = ["query"] }
-human_bytes = "0.4.3"
-ansi_term = "0.12.1"
-clap = "4.5.37"
-dialoguer = "0.11.0"
+
+[profile.dev]
+debug = false
+
+[profile.release]
+opt-level = "z"
+lto = true

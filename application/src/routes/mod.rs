@@ -4,10 +4,11 @@ use std::{sync::Arc, time::Instant};
 use utoipa::ToSchema;
 use utoipa_axum::router::OpenApiRouter;
 
-mod api;
+pub mod api;
 mod download;
 mod upload;
 
+#[repr(C)]
 pub struct AppState {
     pub config: Arc<crate::config::Config>,
     pub start_time: Instant,
@@ -15,6 +16,7 @@ pub struct AppState {
 
     pub docker: Arc<Docker>,
     pub server_manager: Arc<crate::server::manager::Manager>,
+    pub extension_manager: Arc<crate::extensions::manager::Manager>,
 }
 
 #[derive(ToSchema, Serialize)]
