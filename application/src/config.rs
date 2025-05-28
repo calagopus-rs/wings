@@ -261,6 +261,7 @@ nestify::nest! {
                 None,
                 BtrfsSubvolume,
                 ZfsDataset,
+                XfsQuota,
             },
             #[serde(default = "system_activity_send_interval")]
             pub activity_send_interval: u64,

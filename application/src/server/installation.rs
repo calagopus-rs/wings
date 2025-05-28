@@ -460,10 +460,7 @@ pub async fn install_server(
             }
         };
 
-        tokio::select! {
-            _ = thread => {},
-            _ = wait_thread => {},
-        }
+        tokio::join!(thread, wait_thread);
     })
     .await
     {

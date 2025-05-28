@@ -2,6 +2,7 @@
 
 pub mod btrfs_subvolume;
 pub mod none;
+pub mod xfs_quota;
 pub mod zfs_dataset;
 
 pub async fn setup(
@@ -39,6 +40,24 @@ pub async fn setup(
                     tracing::info!(
                         path = %filesystem.base_path.display(),
                         "successfully setup zfs dataset for server"
+                    );
+                    return Ok(());
+                }
+            }
+        }
+        crate::config::SystemDiskLimiterMode::XfsQuota => {
+            match xfs_quota::setup(filesystem).await {
+                Err(err) => {
+                    tracing::error!(
+                        path = %filesystem.base_path.display(),
+                        "failed to setup xfs quota for server, falling back to interval scan: {:#?}",
+                        err
+                    );
+                }
+                Ok(_) => {
+                    tracing::info!(
+                        path = %filesystem.base_path.display(),
+                        "successfully setup xfs quota for server"
                     );
                     return Ok(());
                 }
@@ -90,6 +109,24 @@ pub async fn attach(
                 }
             }
         }
+        crate::config::SystemDiskLimiterMode::XfsQuota => {
+            match xfs_quota::attach(filesystem).await {
+                Err(err) => {
+                    tracing::error!(
+                        path = %filesystem.base_path.display(),
+                        "failed to attach xfs quota for server, falling back to interval scan: {:#?}",
+                        err
+                    );
+                }
+                Ok(_) => {
+                    tracing::info!(
+                        path = %filesystem.base_path.display(),
+                        "successfully attached xfs quota for server"
+                    );
+                    return Ok(());
+                }
+            }
+        }
         _ => {}
     }
 
@@ -124,6 +161,18 @@ pub async fn disk_usage(
                 Ok(usage) => return Ok(usage),
             }
         }
+        crate::config::SystemDiskLimiterMode::XfsQuota => {
+            match xfs_quota::disk_usage(filesystem).await {
+                Err(err) => {
+                    tracing::debug!(
+                        path = %filesystem.base_path.display(),
+                        "failed to get xfs disk usage for server, falling back to interval scan: {:#?}",
+                        err
+                    );
+                }
+                Ok(usage) => return Ok(usage),
+            }
+        }
         _ => {}
     }
 
@@ -144,6 +193,9 @@ pub async fn update_disk_limit(
         crate::config::SystemDiskLimiterMode::ZfsDataset => {
             zfs_dataset::update_disk_limit(filesystem, limit).await
         }
+        crate::config::SystemDiskLimiterMode::XfsQuota => {
+            xfs_quota::update_disk_limit(filesystem, limit).await
+        }
     }
 }
 
@@ -156,5 +208,6 @@ pub async fn destroy(
             btrfs_subvolume::destroy(filesystem).await
         }
         crate::config::SystemDiskLimiterMode::ZfsDataset => zfs_dataset::destroy(filesystem).await,
+        crate::config::SystemDiskLimiterMode::XfsQuota => xfs_quota::destroy(filesystem).await,
     }
 }
