@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        build: [x86_64-linux, x86_64-linux-musl, x86_64-macos, aarch64-linux, aarch64-linux-musl, aarch64-macos]
+        build: [x86_64-linux, x86_64-linux-musl, aarch64-linux, aarch64-linux-musl, aarch64-macos]
         include:
         - build: x86_64-linux
           os: ubuntu-22.04
@@ -37,11 +37,6 @@ jobs:
           os: ubuntu-22.04-arm
           rust: stable
           target: aarch64-unknown-linux-musl
-          cross: false
-        - build: x86_64-macos
-          os: macos-latest
-          rust: stable
-          target: x86_64-apple-darwin
           cross: false
         - build: aarch64-macos
           os: macos-latest
@@ -176,7 +171,6 @@ jobs:
           mkdir -p .docker/amd64 .docker/arm64
           cp dist/${{ env.BIN_NAME }}-x86_64-linux/${{ env.BIN_NAME }}-x86_64-linux .docker/amd64/wings-rs
           cp dist/${{ env.BIN_NAME }}-aarch64-linux/${{ env.BIN_NAME }}-aarch64-linux .docker/arm64/wings-rs
-          cp entrypoint.sh .docker/entrypoint.sh
 
       - name: Build and push multi-arch Docker image
         uses: docker/build-push-action@v5
