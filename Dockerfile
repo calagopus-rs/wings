@@ -1,16 +1,26 @@
-FROM --platform=$TARGETPLATFORM debian:bookworm-slim
-LABEL author="Robert Jansen" maintainer="me@rjns.dev"
+# Build Stage
+FROM alpine:latest AS builder
+WORKDIR /build
+USER root
 
-RUN apt-get update
-RUN apt-get install -y --no-install-recommends btrfs-progs
+# Install needed binaries and tools
+RUN apk add --no-cache bash coreutils curl btrfs-progs zfs
 
+# Environment and helper
+ENV TO_GATHER="curl,btrfs,zfs"
+ENV OUTPUT_DIR="/build/gathered"
+COPY .docker/helpers/gather.sh /usr/local/bin/gather
+RUN chmod +x /usr/local/bin/gather && /usr/local/bin/gather
+
+# Run Stage
+FROM gcr.io/distroless/cc-debian12
+
+# Copy gathered binaries and libs
+COPY --from=builder /build/gathered/ /
+
+# Add wings-rs and entrypoint
 ARG TARGETPLATFORM
+COPY .docker/${TARGETPLATFORM#linux/}/wings-rs /usr/bin/wings-rs
 
-COPY .docker/${TARGETPLATFORM#linux/}/wings-rs /app/server/wings-rs
-COPY .docker/entrypoint.sh /entrypoint.sh
-
-WORKDIR /app
-
-RUN chmod +x /app/server/wings-rs
-
-CMD [ "/bin/bash", "/entrypoint.sh" ]
+ENV LD_LIBRARY_PATH=/lib:/usr/lib
+ENTRYPOINT ["/usr/bin/zfs"]
