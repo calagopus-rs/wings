@@ -31,11 +31,7 @@ static DISK_USAGE: LazyLock<Arc<RwLock<DiskUsageMap>>> = LazyLock::new(|| {
                             .arg("-x")
                             .arg("-c")
                             .arg("report -p -b")
-                            .arg(
-                                get_mount_point(&path)
-                                    .await
-                                    .unwrap_or_else(|_| path.clone()),
-                            )
+                            .arg(get_mount_point(path).await.unwrap_or_else(|_| path.clone()))
                             .output()
                             .await;
 
@@ -102,7 +98,7 @@ fn uuid_to_project_id(uuid: &uuid::Uuid) -> u32 {
 async fn get_mount_point(path: &Path) -> Result<PathBuf, std::io::Error> {
     let output = Command::new("df")
         .arg("--output=target")
-        .arg(&path)
+        .arg(path)
         .output()
         .await?;
 
@@ -141,30 +137,44 @@ pub async fn setup(
     }
 
     let mut projects = OpenOptions::new()
+        .read(true)
         .append(true)
         .create(true)
         .open(Path::new("/etc/projects"))
         .await?;
 
-    projects
-        .write_all(
-            format!(
-                "{}:{}\n",
-                uuid_to_project_id(&filesystem.uuid),
-                filesystem.base_path.display()
+    let mut contains_project = false;
+    let mut contents = String::new();
+    projects.read_to_string(&mut contents).await?;
+
+    for line in contents.lines() {
+        if line.starts_with(&format!("{}:", uuid_to_project_id(&filesystem.uuid))) {
+            contains_project = true;
+            break;
+        }
+    }
+
+    if !contains_project {
+        projects
+            .write_all(
+                format!(
+                    "{}:{}\n",
+                    uuid_to_project_id(&filesystem.uuid),
+                    filesystem.base_path.display()
+                )
+                .as_bytes(),
             )
-            .as_bytes(),
-        )
-        .await?;
-    projects.sync_all().await?;
-    drop(projects);
+            .await?;
+        projects.sync_all().await?;
+        drop(projects);
+    }
 
     let project_id = uuid_to_project_id(&filesystem.uuid);
 
     let output = Command::new("xfs_quota")
         .arg("-x")
         .arg("-c")
-        .arg(format!("project -s {}", project_id,))
+        .arg(format!("project -s {}", project_id))
         .arg(get_mount_point(&filesystem.base_path).await?)
         .output()
         .await?;

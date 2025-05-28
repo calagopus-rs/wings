@@ -1,5 +1,3 @@
-#![allow(clippy::single_match)]
-
 pub mod btrfs_subvolume;
 pub mod none;
 pub mod xfs_quota;
