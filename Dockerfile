@@ -4,7 +4,7 @@ WORKDIR /build
 USER root
 
 # Install needed binaries and tools
-RUN apk add --no-cache bash coreutils curl btrfs-progs xfsprogs zfs
+RUN apk add --no-cache bash coreutils curl btrfs-progs xfsprogs-extra zfs
 
 # Environment and helper
 ENV TO_GATHER="df,curl,btrfs,xfs_quota,zfs"
