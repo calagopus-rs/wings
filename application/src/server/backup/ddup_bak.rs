@@ -42,12 +42,12 @@ pub async fn create_backup(
     server: crate::server::Server,
     uuid: uuid::Uuid,
     overrides: ignore::overrides::Override,
-) -> Result<RawServerBackup, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<RawServerBackup, anyhow::Error> {
     let repository = get_repository(&server).await;
     let path = repository.archive_path(&uuid.to_string());
 
     let size = tokio::task::spawn_blocking(
-        move || -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
+        move || -> Result<u64, anyhow::Error> {
             let archive = repository.create_archive(
                 &uuid.to_string(),
                 Some(
@@ -108,12 +108,12 @@ pub async fn create_backup(
 pub async fn restore_backup(
     server: crate::server::Server,
     uuid: uuid::Uuid,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(), anyhow::Error> {
     let repository = get_repository(&server).await;
 
     let runtime = tokio::runtime::Handle::current();
     tokio::task::spawn_blocking(
-        move || -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        move || -> Result<(), anyhow::Error> {
             let archive = repository.get_archive(&uuid.to_string())?;
 
             fn recursive_restore(
@@ -188,7 +188,7 @@ pub async fn restore_backup(
 pub async fn download_backup(
     server: &crate::server::Server,
     uuid: uuid::Uuid,
-) -> Result<(StatusCode, HeaderMap, Body), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(StatusCode, HeaderMap, Body), anyhow::Error> {
     let repository = get_repository(server).await;
     let archive = repository.get_archive(&uuid.to_string())?;
 
@@ -353,11 +353,11 @@ fn tar_recursive_convert_entries(
 pub async fn delete_backup(
     server: &crate::server::Server,
     uuid: uuid::Uuid,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(), anyhow::Error> {
     let repository = get_repository(server).await;
 
     tokio::task::spawn_blocking(
-        move || -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        move || -> Result<(), anyhow::Error> {
             repository.delete_archive(&uuid.to_string(), None)?;
             repository.save()?;
 
@@ -370,7 +370,7 @@ pub async fn delete_backup(
 
 pub async fn list_backups(
     server: &crate::server::Server,
-) -> Result<Vec<uuid::Uuid>, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<Vec<uuid::Uuid>, anyhow::Error> {
     let repository = get_repository(server).await;
     let mut backups = Vec::new();
 

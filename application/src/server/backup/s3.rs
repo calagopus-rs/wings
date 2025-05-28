@@ -97,7 +97,7 @@ pub async fn create_backup(
     server: crate::server::Server,
     uuid: uuid::Uuid,
     overrides: ignore::overrides::Override,
-) -> Result<RawServerBackup, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<RawServerBackup, anyhow::Error> {
     let file_name = get_file_name(&server, uuid);
     let writer = std::io::BufWriter::new(std::fs::File::create(&file_name)?);
 
@@ -105,7 +105,7 @@ pub async fn create_backup(
     tokio::task::spawn_blocking({
         let server = server.clone();
 
-        move || -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        move || -> Result<(), anyhow::Error> {
             let mut tar = tar::Builder::new(flate2::write::GzEncoder::new(
                 writer,
                 flate2::Compression::new(compression_level.into()),
@@ -169,7 +169,7 @@ pub async fn create_backup(
         loop {
             attempts += 1;
             if attempts > 50 {
-                return Err("Failed to upload part after 50 attempts".into());
+                return Err(anyhow::anyhow!("Failed to upload part after 50 attempts"));
             }
 
             tracing::debug!(
@@ -227,7 +227,7 @@ pub async fn create_backup(
     }
 
     if remaining_size > 0 {
-        return Err("Failed to upload all parts".into());
+        return Err(anyhow::anyhow!("Failed to upload all parts"));
     }
 
     tokio::fs::remove_file(&file_name).await?;
@@ -244,7 +244,7 @@ pub async fn create_backup(
 pub async fn restore_backup(
     server: crate::server::Server,
     download_url: Option<String>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(), anyhow::Error> {
     let response = get_client(&server)
         .await
         .get(download_url.unwrap())
@@ -256,68 +256,64 @@ pub async fn restore_backup(
     let reader = BufReader::with_capacity(1024 * 1024, reader);
 
     let runtime = tokio::runtime::Handle::current();
-    tokio::task::spawn_blocking(
-        move || -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-            let reader = SyncIoBridge::new(reader);
-            let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(reader));
+    tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
+        let reader = SyncIoBridge::new(reader);
+        let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(reader));
 
-            for entry in archive.entries().unwrap() {
-                let mut entry = entry.unwrap();
-                let path = entry.path().unwrap();
+        for entry in archive.entries().unwrap() {
+            let mut entry = entry.unwrap();
+            let path = entry.path().unwrap();
 
-                if path.is_absolute() {
-                    continue;
-                }
-
-                let destination_path = server.filesystem.base_path.join(&path);
-                if !server.filesystem.is_safe_path_sync(&destination_path) {
-                    continue;
-                }
-
-                let header = entry.header();
-                match header.entry_type() {
-                    tar::EntryType::Directory => {
-                        std::fs::create_dir_all(&destination_path).unwrap();
-                        std::fs::set_permissions(
-                            &destination_path,
-                            Permissions::from_mode(header.mode().unwrap_or(0o755)),
-                        )
-                        .unwrap();
-                        std::os::unix::fs::chown(
-                            &destination_path,
-                            header.uid().map(|u| u as u32).ok(),
-                            header.gid().map(|g| g as u32).ok(),
-                        )
-                        .unwrap();
-                    }
-                    tar::EntryType::Regular => {
-                        runtime.block_on(
-                            server.log_daemon(format!("(restoring): {}", path.display())),
-                        );
-
-                        std::fs::create_dir_all(destination_path.parent().unwrap()).unwrap();
-
-                        let mut writer = crate::server::filesystem::writer::FileSystemWriter::new(
-                            server.clone(),
-                            destination_path,
-                            Some(Permissions::from_mode(header.mode().unwrap_or(0o644))),
-                            header
-                                .mtime()
-                                .map(|t| std::time::UNIX_EPOCH + std::time::Duration::from_secs(t))
-                                .ok(),
-                        )
-                        .unwrap();
-
-                        std::io::copy(&mut entry, &mut writer).unwrap();
-                        writer.flush().unwrap();
-                    }
-                    _ => {}
-                }
+            if path.is_absolute() {
+                continue;
             }
 
-            Ok(())
-        },
-    )
+            let destination_path = server.filesystem.base_path.join(&path);
+            if !server.filesystem.is_safe_path_sync(&destination_path) {
+                continue;
+            }
+
+            let header = entry.header();
+            match header.entry_type() {
+                tar::EntryType::Directory => {
+                    std::fs::create_dir_all(&destination_path).unwrap();
+                    std::fs::set_permissions(
+                        &destination_path,
+                        Permissions::from_mode(header.mode().unwrap_or(0o755)),
+                    )
+                    .unwrap();
+                    std::os::unix::fs::chown(
+                        &destination_path,
+                        header.uid().map(|u| u as u32).ok(),
+                        header.gid().map(|g| g as u32).ok(),
+                    )
+                    .unwrap();
+                }
+                tar::EntryType::Regular => {
+                    runtime.block_on(server.log_daemon(format!("(restoring): {}", path.display())));
+
+                    std::fs::create_dir_all(destination_path.parent().unwrap()).unwrap();
+
+                    let mut writer = crate::server::filesystem::writer::FileSystemWriter::new(
+                        server.clone(),
+                        destination_path,
+                        Some(Permissions::from_mode(header.mode().unwrap_or(0o644))),
+                        header
+                            .mtime()
+                            .map(|t| std::time::UNIX_EPOCH + std::time::Duration::from_secs(t))
+                            .ok(),
+                    )
+                    .unwrap();
+
+                    std::io::copy(&mut entry, &mut writer).unwrap();
+                    writer.flush().unwrap();
+                }
+                _ => {}
+            }
+        }
+
+        Ok(())
+    })
     .await??;
 
     Ok(())
@@ -326,7 +322,7 @@ pub async fn restore_backup(
 pub async fn delete_backup(
     server: &crate::server::Server,
     uuid: uuid::Uuid,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(), anyhow::Error> {
     let file_name = get_file_name(server, uuid);
     if file_name.exists() {
         tokio::fs::remove_file(&file_name).await?;
@@ -337,7 +333,7 @@ pub async fn delete_backup(
 
 pub async fn list_backups(
     server: &crate::server::Server,
-) -> Result<Vec<uuid::Uuid>, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<Vec<uuid::Uuid>, anyhow::Error> {
     let mut backups = Vec::new();
     let path = Path::new(&server.config.system.backup_directory);
 

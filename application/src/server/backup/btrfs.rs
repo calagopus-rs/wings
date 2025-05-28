@@ -33,7 +33,7 @@ pub async fn create_backup(
     uuid: uuid::Uuid,
     overrides: ignore::overrides::Override,
     overrides_raw: String,
-) -> Result<RawServerBackup, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<RawServerBackup, anyhow::Error> {
     let subvolume_path = get_subvolume_path(&server, uuid);
     let ignored_path = get_ignored(&server, uuid);
 
@@ -48,11 +48,11 @@ pub async fn create_backup(
         .await?;
 
     if !output.status.success() {
-        return Err(Box::new(std::io::Error::other(format!(
+        return Err(anyhow::anyhow!(
             "Failed to create Btrfs subvolume snapshot for {}: {}",
             server.filesystem.base_path.display(),
             String::from_utf8_lossy(&output.stderr)
-        ))));
+        ));
     }
 
     let output = Command::new("btrfs")
@@ -121,114 +121,109 @@ pub async fn create_backup(
 pub async fn restore_backup(
     server: crate::server::Server,
     uuid: uuid::Uuid,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(), anyhow::Error> {
     let subvolume_path = get_subvolume_path(&server, uuid);
     let ignored_path = get_ignored(&server, uuid);
 
     let server = server.clone();
     let runtime = tokio::runtime::Handle::current();
-    tokio::task::spawn_blocking(
-        move || -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-            let mut override_builder = OverrideBuilder::new(&subvolume_path);
+    tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
+        let mut override_builder = OverrideBuilder::new(&subvolume_path);
 
-            for line in std::fs::read_to_string(&ignored_path)?.lines() {
-                override_builder.add(line).ok();
-            }
+        for line in std::fs::read_to_string(&ignored_path)?.lines() {
+            override_builder.add(line).ok();
+        }
 
-            WalkBuilder::new(&subvolume_path)
-                .overrides(override_builder.build()?)
-                .add_custom_ignore_filename(".pteroignore")
-                .git_ignore(false)
-                .ignore(false)
-                .git_exclude(false)
-                .follow_links(false)
-                .hidden(false)
-                .threads(4)
-                .build_parallel()
-                .run(move || {
-                    let server = server.clone();
-                    let runtime = runtime.clone();
-                    let subvolume_path = subvolume_path.clone();
+        WalkBuilder::new(&subvolume_path)
+            .overrides(override_builder.build()?)
+            .add_custom_ignore_filename(".pteroignore")
+            .git_ignore(false)
+            .ignore(false)
+            .git_exclude(false)
+            .follow_links(false)
+            .hidden(false)
+            .threads(4)
+            .build_parallel()
+            .run(move || {
+                let server = server.clone();
+                let runtime = runtime.clone();
+                let subvolume_path = subvolume_path.clone();
 
-                    Box::new(move |entry| {
-                        let entry = match entry {
-                            Ok(entry) => entry,
-                            Err(_) => return WalkState::Continue,
-                        };
-                        let path = entry.path();
+                Box::new(move |entry| {
+                    let entry = match entry {
+                        Ok(entry) => entry,
+                        Err(_) => return WalkState::Continue,
+                    };
+                    let path = entry.path();
 
-                        let metadata = match entry.metadata() {
-                            Ok(metadata) => metadata,
-                            Err(_) => return WalkState::Continue,
-                        };
+                    let metadata = match entry.metadata() {
+                        Ok(metadata) => metadata,
+                        Err(_) => return WalkState::Continue,
+                    };
 
-                        if server.filesystem.is_ignored_sync(path, metadata.is_dir()) {
-                            return WalkState::Continue;
-                        }
+                    if server.filesystem.is_ignored_sync(path, metadata.is_dir()) {
+                        return WalkState::Continue;
+                    }
 
-                        let destination_path = server
-                            .filesystem
-                            .base_path
-                            .join(path.strip_prefix(&subvolume_path).unwrap_or(path));
-                        if !server.filesystem.is_safe_path_sync(&destination_path) {
-                            return WalkState::Continue;
-                        }
+                    let destination_path = server
+                        .filesystem
+                        .base_path
+                        .join(path.strip_prefix(&subvolume_path).unwrap_or(path));
+                    if !server.filesystem.is_safe_path_sync(&destination_path) {
+                        return WalkState::Continue;
+                    }
 
-                        if metadata.is_file() {
-                            runtime.block_on(
-                                server.log_daemon(format!("(restoring): {}", path.display())),
-                            );
+                    if metadata.is_file() {
+                        runtime.block_on(
+                            server.log_daemon(format!("(restoring): {}", path.display())),
+                        );
 
-                            std::fs::create_dir_all(destination_path.parent().unwrap()).ok();
+                        std::fs::create_dir_all(destination_path.parent().unwrap()).ok();
 
-                            let mut writer =
-                                crate::server::filesystem::writer::FileSystemWriter::new(
-                                    server.clone(),
-                                    destination_path,
-                                    Some(metadata.permissions()),
-                                    metadata.modified().ok(),
-                                )
-                                .unwrap();
+                        let mut writer = crate::server::filesystem::writer::FileSystemWriter::new(
+                            server.clone(),
+                            destination_path,
+                            Some(metadata.permissions()),
+                            metadata.modified().ok(),
+                        )
+                        .unwrap();
 
-                            let mut file = std::fs::File::open(path).unwrap();
-                            std::io::copy(&mut file, &mut writer).unwrap();
-                            writer.flush().unwrap();
-                        } else if metadata.is_dir() {
-                            std::fs::create_dir_all(&destination_path).ok();
-                            std::fs::set_permissions(&destination_path, metadata.permissions())
-                                .ok();
+                        let mut file = std::fs::File::open(path).unwrap();
+                        std::io::copy(&mut file, &mut writer).unwrap();
+                        writer.flush().unwrap();
+                    } else if metadata.is_dir() {
+                        std::fs::create_dir_all(&destination_path).ok();
+                        std::fs::set_permissions(&destination_path, metadata.permissions()).ok();
+                        std::os::unix::fs::chown(
+                            &destination_path,
+                            Some(metadata.uid()),
+                            Some(metadata.gid()),
+                        )
+                        .ok();
+                    } else if metadata.is_symlink() {
+                        if let Ok(target) = std::fs::read_link(path) {
+                            let destination_path = &destination_path;
+                            if !server.filesystem.is_safe_path_sync(destination_path) {
+                                return WalkState::Continue;
+                            }
+
+                            std::os::unix::fs::symlink(target, destination_path).ok();
+                            std::fs::set_permissions(destination_path, metadata.permissions()).ok();
                             std::os::unix::fs::chown(
-                                &destination_path,
+                                destination_path,
                                 Some(metadata.uid()),
                                 Some(metadata.gid()),
                             )
                             .ok();
-                        } else if metadata.is_symlink() {
-                            if let Ok(target) = std::fs::read_link(path) {
-                                let destination_path = &destination_path;
-                                if !server.filesystem.is_safe_path_sync(destination_path) {
-                                    return WalkState::Continue;
-                                }
-
-                                std::os::unix::fs::symlink(target, destination_path).ok();
-                                std::fs::set_permissions(destination_path, metadata.permissions())
-                                    .ok();
-                                std::os::unix::fs::chown(
-                                    destination_path,
-                                    Some(metadata.uid()),
-                                    Some(metadata.gid()),
-                                )
-                                .ok();
-                            }
                         }
+                    }
 
-                        WalkState::Continue
-                    })
-                });
+                    WalkState::Continue
+                })
+            });
 
-            Ok(())
-        },
-    )
+        Ok(())
+    })
     .await??;
 
     Ok(())
@@ -237,7 +232,7 @@ pub async fn restore_backup(
 pub async fn download_backup(
     server: &crate::server::Server,
     uuid: uuid::Uuid,
-) -> Result<(StatusCode, HeaderMap, Body), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(StatusCode, HeaderMap, Body), anyhow::Error> {
     let subvolume_path = get_subvolume_path(server, uuid);
     let ignored_path = get_ignored(server, uuid);
 
@@ -322,7 +317,43 @@ pub async fn download_backup(
 pub async fn delete_backup(
     server: &crate::server::Server,
     uuid: uuid::Uuid,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(), anyhow::Error> {
+    let subvolume_path = get_subvolume_path(server, uuid);
+
+    let output = Command::new("btrfs")
+        .arg("qgroup")
+        .arg("show")
+        .arg(&subvolume_path)
+        .output()
+        .await?;
+
+    if output.status.success() {
+        let uuid_str = uuid.to_string();
+        let output_str = String::from_utf8_lossy(&output.stdout);
+
+        for line in output_str.lines() {
+            if line.ends_with(&uuid_str) {
+                if let Some(qgroup_id) = line.split_whitespace().next() {
+                    let output = Command::new("btrfs")
+                        .arg("qgroup")
+                        .arg("destroy")
+                        .arg(qgroup_id)
+                        .arg(&subvolume_path)
+                        .output()
+                        .await?;
+
+                    if !output.status.success() {
+                        return Err(anyhow::anyhow!(
+                            "Failed to destroy Btrfs qgroup for {}: {}",
+                            subvolume_path.display(),
+                            String::from_utf8_lossy(&output.stderr)
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
     tokio::fs::remove_dir_all(get_backup_path(server, uuid)).await?;
 
     Ok(())
@@ -330,7 +361,7 @@ pub async fn delete_backup(
 
 pub async fn list_backups(
     server: &crate::server::Server,
-) -> Result<Vec<uuid::Uuid>, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<Vec<uuid::Uuid>, anyhow::Error> {
     let mut backups = Vec::new();
     let path = Path::new(&server.config.system.backup_directory).join("btrfs");
 

@@ -28,7 +28,7 @@ pub async fn create_backup(
     server: &crate::server::Server,
     uuid: uuid::Uuid,
     ignore: String,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(), anyhow::Error> {
     tracing::info!(
         server = %server.uuid,
         backup = %uuid,
@@ -140,9 +140,9 @@ pub async fn restore_backup(
     uuid: uuid::Uuid,
     truncate_directory: bool,
     download_url: Option<String>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(), anyhow::Error> {
     if server.is_locked_state() {
-        return Err("Server is in a locked state".into());
+        return Err(anyhow::anyhow!("Server is in a locked state"));
     }
 
     server
@@ -219,7 +219,7 @@ pub async fn download_backup(
     adapter: BackupAdapter,
     server: &crate::server::Server,
     uuid: uuid::Uuid,
-) -> Result<(StatusCode, HeaderMap, Body), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(StatusCode, HeaderMap, Body), anyhow::Error> {
     tracing::info!(
         server = %server.uuid,
         backup = %uuid,
@@ -239,7 +239,7 @@ pub async fn delete_backup(
     adapter: BackupAdapter,
     server: &crate::server::Server,
     uuid: uuid::Uuid,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(), anyhow::Error> {
     tracing::info!(
         server = %server.uuid,
         backup = %uuid,
@@ -258,7 +258,7 @@ pub async fn delete_backup(
 pub async fn list_backups(
     adapter: BackupAdapter,
     server: &crate::server::Server,
-) -> Result<Vec<uuid::Uuid>, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<Vec<uuid::Uuid>, anyhow::Error> {
     match adapter {
         BackupAdapter::Wings => wings::list_backups(server).await,
         BackupAdapter::S3 => s3::list_backups(server).await,
