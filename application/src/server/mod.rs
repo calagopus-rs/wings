@@ -513,8 +513,6 @@ impl Server {
                 self.setup_websocket_sender(Arc::clone(&container), Arc::clone(client))
                     .await;
                 *self.container.write().await = Some(container);
-
-                self.filesystem.attach().await;
             }
         }
 

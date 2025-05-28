@@ -23,4 +23,4 @@ ARG TARGETPLATFORM
 COPY .docker/${TARGETPLATFORM#linux/}/wings-rs /usr/bin/wings-rs
 
 ENV LD_LIBRARY_PATH=/lib:/usr/lib
-ENTRYPOINT ["/usr/bin/zfs"]
+ENTRYPOINT ["/usr/bin/wings-rs"]

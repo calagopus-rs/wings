@@ -12,6 +12,7 @@ mod btrfs;
 mod ddup_bak;
 mod s3;
 mod wings;
+mod zfs;
 
 #[derive(ToSchema, Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "kebab-case")]
@@ -21,6 +22,7 @@ pub enum BackupAdapter {
     S3,
     DdupBak,
     Btrfs,
+    Zfs,
 }
 
 pub async fn create_backup(
@@ -81,6 +83,15 @@ pub async fn create_backup(
         }
         BackupAdapter::Btrfs => {
             btrfs::create_backup(
+                server.clone(),
+                uuid,
+                override_builder.build()?,
+                override_raw,
+            )
+            .await
+        }
+        BackupAdapter::Zfs => {
+            zfs::create_backup(
                 server.clone(),
                 uuid,
                 override_builder.build()?,
@@ -168,6 +179,7 @@ pub async fn restore_backup(
         BackupAdapter::S3 => s3::restore_backup(server.clone(), download_url).await,
         BackupAdapter::DdupBak => ddup_bak::restore_backup(server.clone(), uuid).await,
         BackupAdapter::Btrfs => btrfs::restore_backup(server.clone(), uuid).await,
+        BackupAdapter::Zfs => zfs::restore_backup(server.clone(), uuid).await,
     } {
         Ok(_) => {
             server
@@ -232,6 +244,7 @@ pub async fn download_backup(
         BackupAdapter::S3 => unimplemented!(),
         BackupAdapter::DdupBak => ddup_bak::download_backup(server, uuid).await,
         BackupAdapter::Btrfs => btrfs::download_backup(server, uuid).await,
+        BackupAdapter::Zfs => zfs::download_backup(server, uuid).await,
     }
 }
 
@@ -252,6 +265,7 @@ pub async fn delete_backup(
         BackupAdapter::S3 => s3::delete_backup(server, uuid).await,
         BackupAdapter::DdupBak => ddup_bak::delete_backup(server, uuid).await,
         BackupAdapter::Btrfs => btrfs::delete_backup(server, uuid).await,
+        BackupAdapter::Zfs => zfs::delete_backup(server, uuid).await,
     }
 }
 
@@ -264,5 +278,6 @@ pub async fn list_backups(
         BackupAdapter::S3 => s3::list_backups(server).await,
         BackupAdapter::DdupBak => ddup_bak::list_backups(server).await,
         BackupAdapter::Btrfs => btrfs::list_backups(server).await,
+        BackupAdapter::Zfs => zfs::list_backups(server).await,
     }
 }

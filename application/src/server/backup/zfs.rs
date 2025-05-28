@@ -14,13 +14,13 @@ use tokio::process::Command;
 #[inline]
 fn get_backup_path(server: &crate::server::Server, uuid: uuid::Uuid) -> PathBuf {
     Path::new(&server.config.system.backup_directory)
-        .join("btrfs")
+        .join("zfs")
         .join(uuid.to_string())
 }
 
 #[inline]
-fn get_subvolume_path(server: &crate::server::Server, uuid: uuid::Uuid) -> PathBuf {
-    get_backup_path(server, uuid).join("subvolume")
+fn get_snapshot_name(uuid: uuid::Uuid) -> String {
+    format!("backup-{}", uuid)
 }
 
 #[inline]
@@ -34,58 +34,55 @@ pub async fn create_backup(
     overrides: ignore::overrides::Override,
     overrides_raw: String,
 ) -> Result<RawServerBackup, anyhow::Error> {
-    let subvolume_path = get_subvolume_path(&server, uuid);
+    let backup_path = get_backup_path(&server, uuid);
     let ignored_path = get_ignored(&server, uuid);
+    let snapshot_name = get_snapshot_name(uuid);
 
-    tokio::fs::create_dir_all(get_backup_path(&server, uuid)).await?;
+    tokio::fs::create_dir_all(&backup_path).await?;
 
-    let output = Command::new("btrfs")
-        .arg("subvolume")
-        .arg("snapshot")
+    let output = Command::new("zfs")
+        .arg("list")
+        .arg("-o")
+        .arg("name")
+        .arg("-H")
         .arg(&server.filesystem.base_path)
-        .arg(&subvolume_path)
         .output()
         .await?;
 
     if !output.status.success() {
         return Err(anyhow::anyhow!(
-            "Failed to create Btrfs subvolume snapshot for {}: {}",
+            "Failed to get ZFS dataset name for {}: {}",
             server.filesystem.base_path.display(),
             String::from_utf8_lossy(&output.stderr)
         ));
     }
 
-    let output = Command::new("btrfs")
-        .arg("subvolume")
-        .arg("show")
-        .arg(&subvolume_path)
+    let dataset_name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+    let output = Command::new("zfs")
+        .arg("snapshot")
+        .arg(format!("{}@{}", dataset_name, snapshot_name))
         .output()
         .await?;
 
-    let mut generation = None;
-    if output.status.success() {
-        let output_str = String::from_utf8_lossy(&output.stdout);
-        for line in output_str.lines() {
-            let mut whitespace = line.split_whitespace();
-
-            if let Some(label) = line.split_whitespace().next() {
-                if label == "Generation:" {
-                    if let Some(parsed_generation) = whitespace.next() {
-                        if let Ok(parsed_generation) = parsed_generation.parse::<u64>() {
-                            generation = Some(parsed_generation);
-                        }
-
-                        break;
-                    }
-                }
-            }
-        }
+    if !output.status.success() {
+        return Err(anyhow::anyhow!(
+            "Failed to create ZFS snapshot for {}: {}",
+            server.filesystem.base_path.display(),
+            String::from_utf8_lossy(&output.stderr)
+        ));
     }
 
     tokio::fs::write(&ignored_path, overrides_raw).await?;
+    tokio::fs::write(backup_path.join("dataset"), &dataset_name).await?;
 
+    let snapshot_path = format!(
+        "{}/.zfs/snapshot/{}",
+        server.filesystem.base_path.display(),
+        snapshot_name
+    );
     let total_size = tokio::task::spawn_blocking(move || {
-        WalkBuilder::new(&subvolume_path)
+        WalkBuilder::new(&snapshot_path)
             .overrides(overrides)
             .git_ignore(false)
             .ignore(false)
@@ -110,8 +107,8 @@ pub async fn create_backup(
     .await?;
 
     Ok(RawServerBackup {
-        checksum: format!("generation-{}", generation.unwrap_or(0)),
-        checksum_type: "btrfs-subvolume".to_string(),
+        checksum: dataset_name,
+        checksum_type: "zfs-snapshot".to_string(),
         size: total_size,
         successful: true,
         parts: vec![],
@@ -122,19 +119,25 @@ pub async fn restore_backup(
     server: crate::server::Server,
     uuid: uuid::Uuid,
 ) -> Result<(), anyhow::Error> {
-    let subvolume_path = get_subvolume_path(&server, uuid);
     let ignored_path = get_ignored(&server, uuid);
+    let snapshot_name = get_snapshot_name(uuid);
+
+    let snapshot_path = format!(
+        "{}/.zfs/snapshot/{}",
+        server.filesystem.base_path.display(),
+        snapshot_name
+    );
 
     let server = server.clone();
     let runtime = tokio::runtime::Handle::current();
     tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
-        let mut override_builder = OverrideBuilder::new(&subvolume_path);
+        let mut override_builder = OverrideBuilder::new(&snapshot_path);
 
         for line in std::fs::read_to_string(&ignored_path)?.lines() {
             override_builder.add(line).ok();
         }
 
-        WalkBuilder::new(&subvolume_path)
+        WalkBuilder::new(&snapshot_path)
             .overrides(override_builder.build()?)
             .add_custom_ignore_filename(".pteroignore")
             .git_ignore(false)
@@ -147,7 +150,7 @@ pub async fn restore_backup(
             .run(move || {
                 let server = server.clone();
                 let runtime = runtime.clone();
-                let subvolume_path = subvolume_path.clone();
+                let snapshot_path = snapshot_path.clone();
 
                 Box::new(move |entry| {
                     let entry = match entry {
@@ -168,7 +171,12 @@ pub async fn restore_backup(
                     let destination_path = server
                         .filesystem
                         .base_path
-                        .join(path.strip_prefix(&subvolume_path).unwrap_or(path));
+                        .join(path.strip_prefix(&snapshot_path).unwrap_or(path));
+                    println!(
+                        "Restoring {} to {}",
+                        path.display(),
+                        destination_path.display()
+                    );
                     if !server.filesystem.is_safe_path_sync(&destination_path) {
                         return WalkState::Continue;
                     }
@@ -233,14 +241,17 @@ pub async fn download_backup(
     server: &crate::server::Server,
     uuid: uuid::Uuid,
 ) -> Result<(StatusCode, HeaderMap, Body), anyhow::Error> {
-    let subvolume_path = get_subvolume_path(server, uuid);
     let ignored_path = get_ignored(server, uuid);
+    let snapshot_name = get_snapshot_name(uuid);
 
-    if !subvolume_path.exists() {
-        return Err(anyhow::anyhow!(
-            "Backup subvolume does not exist: {}",
-            subvolume_path.display()
-        ));
+    let snapshot_path = format!(
+        "{}/.zfs/snapshot/{}",
+        server.filesystem.base_path.display(),
+        snapshot_name
+    );
+
+    if !Path::new(&snapshot_path).exists() {
+        return Err(anyhow::anyhow!("Snapshot {} does not exist", snapshot_name));
     }
 
     let (writer, reader) = tokio::io::duplex(65536);
@@ -254,13 +265,13 @@ pub async fn download_backup(
         tar.mode(tar::HeaderMode::Complete);
         tar.follow_symlinks(false);
 
-        let mut override_builder = OverrideBuilder::new(&subvolume_path);
+        let mut override_builder = OverrideBuilder::new(&snapshot_path);
 
         for line in std::fs::read_to_string(&ignored_path).unwrap().lines() {
             override_builder.add(line).ok();
         }
 
-        for entry in WalkBuilder::new(&subvolume_path)
+        for entry in WalkBuilder::new(&snapshot_path)
             .overrides(override_builder.build().unwrap())
             .add_custom_ignore_filename(".pteroignore")
             .git_ignore(false)
@@ -273,7 +284,7 @@ pub async fn download_backup(
         {
             let path = entry
                 .path()
-                .strip_prefix(&subvolume_path)
+                .strip_prefix(&snapshot_path)
                 .unwrap_or(entry.path());
             if path.display().to_string().is_empty() {
                 continue;
@@ -325,47 +336,29 @@ pub async fn delete_backup(
     server: &crate::server::Server,
     uuid: uuid::Uuid,
 ) -> Result<(), anyhow::Error> {
-    let subvolume_path = get_subvolume_path(server, uuid);
+    let backup_path = get_backup_path(server, uuid);
+    let snapshot_name = get_snapshot_name(uuid);
 
-    if !subvolume_path.exists() {
+    if !backup_path.exists() {
         return Ok(());
     }
 
-    let output = Command::new("btrfs")
-        .arg("qgroup")
-        .arg("show")
-        .arg(&subvolume_path)
-        .output()
-        .await?;
+    if let Ok(dataset_name) = tokio::fs::read_to_string(backup_path.join("dataset")).await {
+        let output = Command::new("zfs")
+            .arg("destroy")
+            .arg(format!("{}@{}", dataset_name.trim(), snapshot_name))
+            .output()
+            .await?;
 
-    if output.status.success() {
-        let uuid_str = uuid.to_string();
-        let output_str = String::from_utf8_lossy(&output.stdout);
-
-        for line in output_str.lines() {
-            if line.ends_with(&uuid_str) {
-                if let Some(qgroup_id) = line.split_whitespace().next() {
-                    let output = Command::new("btrfs")
-                        .arg("qgroup")
-                        .arg("destroy")
-                        .arg(qgroup_id)
-                        .arg(&subvolume_path)
-                        .output()
-                        .await?;
-
-                    if !output.status.success() {
-                        tracing::warn!(
-                            server = %server.uuid,
-                            "failed to destroy Btrfs qgroup: {}",
-                            String::from_utf8_lossy(&output.stderr)
-                        );
-                    }
-                }
-            }
+        if !output.status.success() {
+            return Err(anyhow::anyhow!(
+                "Failed to destroy ZFS snapshot: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
         }
     }
 
-    tokio::fs::remove_dir_all(get_backup_path(server, uuid)).await?;
+    tokio::fs::remove_dir_all(backup_path).await?;
 
     Ok(())
 }
@@ -374,7 +367,7 @@ pub async fn list_backups(
     server: &crate::server::Server,
 ) -> Result<Vec<uuid::Uuid>, anyhow::Error> {
     let mut backups = Vec::new();
-    let path = Path::new(&server.config.system.backup_directory).join("btrfs");
+    let path = Path::new(&server.config.system.backup_directory).join("zfs");
 
     if !path.exists() {
         return Ok(backups);

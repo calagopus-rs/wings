@@ -114,6 +114,15 @@ mod get {
         {
             return response;
         }
+        if let Ok(response) = crate::server::backup::download_backup(
+            crate::server::backup::BackupAdapter::Zfs,
+            &server,
+            payload.backup_uuid,
+        )
+        .await
+        {
+            return response;
+        }
 
         (
             StatusCode::NOT_FOUND,

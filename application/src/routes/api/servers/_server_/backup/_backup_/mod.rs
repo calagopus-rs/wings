@@ -67,6 +67,22 @@ mod delete {
                     err
                 );
             }
+
+            if let Err(err) = crate::server::backup::delete_backup(
+                crate::server::backup::BackupAdapter::Zfs,
+                &server,
+                backup_id,
+            )
+            .await
+            {
+                tracing::error!(
+                    "failed to delete backup {} (adapter = {:?}) for {}: {}",
+                    backup_id,
+                    crate::server::backup::BackupAdapter::Zfs,
+                    server.uuid,
+                    err
+                );
+            }
         });
 
         (

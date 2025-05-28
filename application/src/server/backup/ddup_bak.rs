@@ -46,41 +46,39 @@ pub async fn create_backup(
     let repository = get_repository(&server).await;
     let path = repository.archive_path(&uuid.to_string());
 
-    let size = tokio::task::spawn_blocking(
-        move || -> Result<u64, anyhow::Error> {
-            let archive = repository.create_archive(
-                &uuid.to_string(),
-                Some(
-                    WalkBuilder::new(&server.filesystem.base_path)
-                        .overrides(overrides)
-                        .add_custom_ignore_filename(".pteroignore")
-                        .follow_links(false)
-                        .git_global(false)
-                        .hidden(false)
-                        .build(),
-                ),
-                Some(&server.filesystem.base_path),
-                None,
-                None,
-                None,
-                4,
-            )?;
+    let size = tokio::task::spawn_blocking(move || -> Result<u64, anyhow::Error> {
+        let archive = repository.create_archive(
+            &uuid.to_string(),
+            Some(
+                WalkBuilder::new(&server.filesystem.base_path)
+                    .overrides(overrides)
+                    .add_custom_ignore_filename(".pteroignore")
+                    .follow_links(false)
+                    .git_global(false)
+                    .hidden(false)
+                    .build(),
+            ),
+            Some(&server.filesystem.base_path),
+            None,
+            None,
+            None,
+            4,
+        )?;
 
-            repository.save()?;
+        repository.save()?;
 
-            fn recursive_size(entry: Entry) -> u64 {
-                match entry {
-                    Entry::File(file) => file.size_real,
-                    Entry::Directory(directory) => {
-                        directory.entries.into_iter().map(recursive_size).sum()
-                    }
-                    Entry::Symlink(_) => 0,
+        fn recursive_size(entry: Entry) -> u64 {
+            match entry {
+                Entry::File(file) => file.size_real,
+                Entry::Directory(directory) => {
+                    directory.entries.into_iter().map(recursive_size).sum()
                 }
+                Entry::Symlink(_) => 0,
             }
+        }
 
-            Ok(archive.into_entries().into_iter().map(recursive_size).sum())
-        },
-    )
+        Ok(archive.into_entries().into_iter().map(recursive_size).sum())
+    })
     .await??;
 
     let mut sha1 = sha1::Sha1::new();
@@ -112,74 +110,70 @@ pub async fn restore_backup(
     let repository = get_repository(&server).await;
 
     let runtime = tokio::runtime::Handle::current();
-    tokio::task::spawn_blocking(
-        move || -> Result<(), anyhow::Error> {
-            let archive = repository.get_archive(&uuid.to_string())?;
+    tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
+        let archive = repository.get_archive(&uuid.to_string())?;
 
-            fn recursive_restore(
-                runtime: &tokio::runtime::Handle,
-                repository: &Arc<ddup_bak::repository::Repository>,
-                entry: Entry,
-                path: &Path,
-                server: &crate::server::Server,
-            ) {
-                let path = path.join(entry.name());
+        fn recursive_restore(
+            runtime: &tokio::runtime::Handle,
+            repository: &Arc<ddup_bak::repository::Repository>,
+            entry: Entry,
+            path: &Path,
+            server: &crate::server::Server,
+        ) {
+            let path = path.join(entry.name());
 
-                let destination_path = server.filesystem.base_path.join(&path);
-                if !server.filesystem.is_safe_path_sync(&destination_path) {
-                    return;
-                }
-
-                match entry {
-                    Entry::File(file) => {
-                        runtime.block_on(
-                            server.log_daemon(format!("(restoring): {}", path.display())),
-                        );
-
-                        if let Some(parent) = destination_path.parent() {
-                            if !parent.exists() {
-                                std::fs::create_dir_all(parent).unwrap();
-                            }
-                        }
-
-                        let mut writer = crate::server::filesystem::writer::FileSystemWriter::new(
-                            server.clone(),
-                            destination_path,
-                            Some(file.mode.into()),
-                            Some(file.mtime),
-                        )
-                        .unwrap();
-
-                        repository
-                            .read_entry_content(Entry::File(file), &mut writer)
-                            .unwrap();
-                        writer.flush().unwrap();
-                    }
-                    Entry::Directory(directory) => {
-                        std::fs::create_dir_all(&destination_path).unwrap();
-                        std::fs::set_permissions(&destination_path, directory.mode.into()).unwrap();
-                        std::os::unix::fs::chown(
-                            &destination_path,
-                            Some(directory.owner.0),
-                            Some(directory.owner.1),
-                        )
-                        .unwrap();
-
-                        for entry in directory.entries {
-                            recursive_restore(runtime, repository, entry, &path, server);
-                        }
-                    }
-                    Entry::Symlink(_) => {}
-                }
+            let destination_path = server.filesystem.base_path.join(&path);
+            if !server.filesystem.is_safe_path_sync(&destination_path) {
+                return;
             }
 
-            for entry in archive.into_entries() {
-                recursive_restore(&runtime, &repository, entry, Path::new("."), &server);
-            }
+            match entry {
+                Entry::File(file) => {
+                    runtime.block_on(server.log_daemon(format!("(restoring): {}", path.display())));
 
-            Ok(())
-        },
-    )
+                    if let Some(parent) = destination_path.parent() {
+                        if !parent.exists() {
+                            std::fs::create_dir_all(parent).unwrap();
+                        }
+                    }
+
+                    let mut writer = crate::server::filesystem::writer::FileSystemWriter::new(
+                        server.clone(),
+                        destination_path,
+                        Some(file.mode.into()),
+                        Some(file.mtime),
+                    )
+                    .unwrap();
+
+                    repository
+                        .read_entry_content(Entry::File(file), &mut writer)
+                        .unwrap();
+                    writer.flush().unwrap();
+                }
+                Entry::Directory(directory) => {
+                    std::fs::create_dir_all(&destination_path).unwrap();
+                    std::fs::set_permissions(&destination_path, directory.mode.into()).unwrap();
+                    std::os::unix::fs::chown(
+                        &destination_path,
+                        Some(directory.owner.0),
+                        Some(directory.owner.1),
+                    )
+                    .unwrap();
+
+                    for entry in directory.entries {
+                        recursive_restore(runtime, repository, entry, &path, server);
+                    }
+                }
+                Entry::Symlink(_) => {}
+            }
+        }
+
+        for entry in archive.into_entries() {
+            recursive_restore(&runtime, &repository, entry, Path::new("."), &server);
+        }
+
+        Ok(())
+    })
     .await??;
 
     Ok(())
@@ -356,14 +350,12 @@ pub async fn delete_backup(
 ) -> Result<(), anyhow::Error> {
     let repository = get_repository(server).await;
 
-    tokio::task::spawn_blocking(
-        move || -> Result<(), anyhow::Error> {
-            repository.delete_archive(&uuid.to_string(), None)?;
-            repository.save()?;
+    tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
+        repository.delete_archive(&uuid.to_string(), None)?;
+        repository.save()?;
 
-            Ok(())
-        },
-    );
+        Ok(())
+    });
 
     Ok(())
 }

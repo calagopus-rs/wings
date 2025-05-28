@@ -18,9 +18,11 @@ static DISK_USAGE: LazyLock<Arc<RwLock<DiskUsageMap>>> = LazyLock::new(|| {
 
                 for (server, (path, qgroup, server_usage)) in disk_usage.write().await.iter_mut() {
                     if let Some(line) = usage.lines().find(|line| line.ends_with(server)) {
-                        *qgroup = line.split_whitespace().next().unwrap_or("").to_string();
+                        let mut line = line.split_whitespace();
 
-                        if let Some(used_space) = line.split_whitespace().nth(1) {
+                        *qgroup = line.next().unwrap_or("").to_string();
+
+                        if let Some(used_space) = line.next() {
                             if let Ok(used_space) = used_space.parse::<u64>() {
                                 *server_usage = used_space;
                                 continue;
@@ -191,6 +193,12 @@ pub async fn destroy(
     );
 
     if let Some(usage) = DISK_USAGE.read().await.get(&filesystem.uuid.to_string()) {
+        tracing::debug!(
+            path = %filesystem.base_path.display(),
+            qgroup = %usage.1,
+            "destroying btrfs qgroup for server"
+        );
+
         let output = Command::new("btrfs")
             .arg("qgroup")
             .arg("destroy")

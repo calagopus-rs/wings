@@ -2,6 +2,7 @@
 
 pub mod btrfs_subvolume;
 pub mod none;
+pub mod zfs_dataset;
 
 pub async fn setup(
     filesystem: &crate::server::filesystem::Filesystem,
@@ -20,6 +21,24 @@ pub async fn setup(
                     tracing::info!(
                         path = %filesystem.base_path.display(),
                         "successfully setup btrfs subvolume for server"
+                    );
+                    return Ok(());
+                }
+            }
+        }
+        crate::config::SystemDiskLimiterMode::ZfsDataset => {
+            match zfs_dataset::setup(filesystem).await {
+                Err(err) => {
+                    tracing::error!(
+                        path = %filesystem.base_path.display(),
+                        "failed to setup zfs dataset for server, falling back to interval scan: {:#?}",
+                        err
+                    );
+                }
+                Ok(_) => {
+                    tracing::info!(
+                        path = %filesystem.base_path.display(),
+                        "successfully setup zfs dataset for server"
                     );
                     return Ok(());
                 }
@@ -53,6 +72,24 @@ pub async fn attach(
                 }
             }
         }
+        crate::config::SystemDiskLimiterMode::ZfsDataset => {
+            match zfs_dataset::attach(filesystem).await {
+                Err(err) => {
+                    tracing::error!(
+                        path = %filesystem.base_path.display(),
+                        "failed to attach zfs dataset for server, falling back to interval scan: {:#?}",
+                        err
+                    );
+                }
+                Ok(_) => {
+                    tracing::info!(
+                        path = %filesystem.base_path.display(),
+                        "successfully attached zfs dataset for server"
+                    );
+                    return Ok(());
+                }
+            }
+        }
         _ => {}
     }
 
@@ -69,6 +106,18 @@ pub async fn disk_usage(
                     tracing::debug!(
                         path = %filesystem.base_path.display(),
                         "failed to get btrfs disk usage for server, falling back to interval scan: {:#?}",
+                        err
+                    );
+                }
+                Ok(usage) => return Ok(usage),
+            }
+        }
+        crate::config::SystemDiskLimiterMode::ZfsDataset => {
+            match zfs_dataset::disk_usage(filesystem).await {
+                Err(err) => {
+                    tracing::debug!(
+                        path = %filesystem.base_path.display(),
+                        "failed to get zfs disk usage for server, falling back to interval scan: {:#?}",
                         err
                     );
                 }
@@ -92,6 +141,9 @@ pub async fn update_disk_limit(
         crate::config::SystemDiskLimiterMode::BtrfsSubvolume => {
             btrfs_subvolume::update_disk_limit(filesystem, limit).await
         }
+        crate::config::SystemDiskLimiterMode::ZfsDataset => {
+            zfs_dataset::update_disk_limit(filesystem, limit).await
+        }
     }
 }
 
@@ -103,5 +155,6 @@ pub async fn destroy(
         crate::config::SystemDiskLimiterMode::BtrfsSubvolume => {
             btrfs_subvolume::destroy(filesystem).await
         }
+        crate::config::SystemDiskLimiterMode::ZfsDataset => zfs_dataset::destroy(filesystem).await,
     }
 }

@@ -39,6 +39,8 @@ impl Manager {
             let server = Server::new(s.settings, s.process_configuration, Arc::clone(&config));
             let state = states.remove(&server.uuid).unwrap_or_default();
 
+            server.filesystem.attach().await;
+
             if config.remote_query.boot_servers_per_page > 0 {
                 tokio::spawn({
                     let client = Arc::clone(&client);
