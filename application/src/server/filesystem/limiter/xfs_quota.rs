@@ -10,7 +10,7 @@ use tokio::{
     sync::RwLock,
 };
 
-type DiskUsageMap = HashMap<String, (PathBuf, u32, u64)>;
+type DiskUsageMap = HashMap<String, (PathBuf, u32, i64)>;
 static DISK_USAGE: LazyLock<Arc<RwLock<DiskUsageMap>>> = LazyLock::new(|| {
     let disk_usage: Arc<RwLock<DiskUsageMap>> = Arc::new(RwLock::new(HashMap::new()));
 
@@ -24,6 +24,8 @@ static DISK_USAGE: LazyLock<Arc<RwLock<DiskUsageMap>>> = LazyLock::new(|| {
                 for (server, (path, project_id, server_usage)) in
                     disk_usage.write().await.iter_mut()
                 {
+                    *server_usage = -1;
+
                     let output_str = if let Some(cached) = quota_output_cache.get(path) {
                         cached.clone()
                     } else {
@@ -71,7 +73,7 @@ static DISK_USAGE: LazyLock<Arc<RwLock<DiskUsageMap>>> = LazyLock::new(|| {
                             if let Some(project_id_str) = parts[0].strip_prefix('#') {
                                 if let Ok(pid) = project_id_str.parse::<u32>() {
                                     if pid == *project_id {
-                                        if let Ok(used_bytes) = parts[1].parse::<u64>() {
+                                        if let Ok(used_bytes) = parts[1].parse::<i64>() {
                                             *server_usage = used_bytes * 1024;
                                             break;
                                         }
@@ -217,7 +219,9 @@ pub async fn disk_usage(
     filesystem: &crate::server::filesystem::Filesystem,
 ) -> Result<u64, std::io::Error> {
     if let Some(usage) = DISK_USAGE.read().await.get(&filesystem.uuid.to_string()) {
-        return Ok(usage.2);
+        if usage.2 >= 0 {
+            return Ok(usage.2 as u64);
+        }
     }
 
     Err(std::io::Error::other(format!(

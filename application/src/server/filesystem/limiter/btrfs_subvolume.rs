@@ -5,7 +5,7 @@ use std::{
 };
 use tokio::{process::Command, sync::RwLock};
 
-type DiskUsageMap = HashMap<String, (PathBuf, String, u64)>;
+type DiskUsageMap = HashMap<String, (PathBuf, String, i64)>;
 static DISK_USAGE: LazyLock<Arc<RwLock<DiskUsageMap>>> = LazyLock::new(|| {
     let disk_usage: Arc<RwLock<DiskUsageMap>> = Arc::new(RwLock::new(HashMap::new()));
 
@@ -17,13 +17,15 @@ static DISK_USAGE: LazyLock<Arc<RwLock<DiskUsageMap>>> = LazyLock::new(|| {
                 let mut usage = String::new();
 
                 for (server, (path, qgroup, server_usage)) in disk_usage.write().await.iter_mut() {
+                    *server_usage = -1;
+
                     if let Some(line) = usage.lines().find(|line| line.ends_with(server)) {
                         let mut line = line.split_whitespace();
 
                         *qgroup = line.next().unwrap_or("").to_string();
 
                         if let Some(used_space) = line.next() {
-                            if let Ok(used_space) = used_space.parse::<u64>() {
+                            if let Ok(used_space) = used_space.parse::<i64>() {
                                 *server_usage = used_space;
                                 continue;
                             }
@@ -43,7 +45,7 @@ static DISK_USAGE: LazyLock<Arc<RwLock<DiskUsageMap>>> = LazyLock::new(|| {
                             for line in output_str.lines() {
                                 if line.ends_with(server) {
                                     if let Some(used_space) = line.split_whitespace().nth(1) {
-                                        if let Ok(used_space) = used_space.parse::<u64>() {
+                                        if let Ok(used_space) = used_space.parse::<i64>() {
                                             *server_usage = used_space;
                                             break;
                                         }
@@ -142,7 +144,9 @@ pub async fn disk_usage(
     filesystem: &crate::server::filesystem::Filesystem,
 ) -> Result<u64, std::io::Error> {
     if let Some(usage) = DISK_USAGE.read().await.get(&filesystem.uuid.to_string()) {
-        return Ok(usage.2);
+        if usage.2 >= 0 {
+            return Ok(usage.2 as u64);
+        }
     }
 
     Err(std::io::Error::other(format!(

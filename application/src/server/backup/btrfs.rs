@@ -42,6 +42,7 @@ pub async fn create_backup(
     let output = Command::new("btrfs")
         .arg("subvolume")
         .arg("snapshot")
+        .arg("-r")
         .arg(&server.filesystem.base_path)
         .arg(&subvolume_path)
         .output()
