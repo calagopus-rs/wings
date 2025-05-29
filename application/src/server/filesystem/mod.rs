@@ -664,9 +664,8 @@ impl Filesystem {
             created: chrono::DateTime::from_timestamp(
                 metadata
                     .created()
-                    .unwrap()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default())
+                    .unwrap_or_default()
                     .as_secs() as i64,
                 0,
             )
@@ -674,9 +673,8 @@ impl Filesystem {
             modified: chrono::DateTime::from_timestamp(
                 metadata
                     .modified()
-                    .unwrap()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default())
+                    .unwrap_or_default()
                     .as_secs() as i64,
                 0,
             )
