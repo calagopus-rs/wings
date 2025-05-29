@@ -368,6 +368,7 @@ impl Server {
         } else {
             resources::ResourceUsage {
                 disk_bytes: self.filesystem.limiter_usage().await,
+                state: self.state.get_state(),
                 ..Default::default()
             }
         }
@@ -511,6 +512,20 @@ impl Server {
                 self.setup_websocket_sender(Arc::clone(&container), Arc::clone(client))
                     .await;
                 *self.container.write().await = Some(container);
+
+                tokio::spawn({
+                    let server = self.clone();
+
+                    async move {
+                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+                        if server.state.get_state() != state::ServerState::Offline {
+                            server
+                                .crash_handled
+                                .store(false, std::sync::atomic::Ordering::Relaxed);
+                        }
+                    }
+                });
             }
         }
 

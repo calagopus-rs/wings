@@ -44,6 +44,7 @@ impl Container {
 
         let resource_usage = Arc::new(RwLock::new(crate::server::resources::ResourceUsage {
             disk_bytes: server.filesystem.limiter_usage().await,
+            state: server.state.get_state(),
             ..Default::default()
         }));
 
@@ -131,6 +132,7 @@ impl Container {
                             usage.memory_bytes = stats.memory_stats.usage.unwrap_or(0);
                             usage.memory_limit_bytes = stats.memory_stats.limit.unwrap_or(0);
                             usage.disk_bytes = disk_usage;
+                            usage.state = server.state.get_state();
 
                             if let Some(networks) = stats.networks {
                                 if let Some(network) = networks.values().next() {
