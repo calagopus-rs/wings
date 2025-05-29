@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        build: [x86_64-linux, x86_64-linux-musl, aarch64-linux, aarch64-linux-musl, aarch64-macos]
+        build: [x86_64-linux, x86_64-linux-musl, aarch64-linux, aarch64-linux-musl]
         include:
         - build: x86_64-linux
           os: ubuntu-22.04
@@ -37,11 +37,6 @@ jobs:
           os: ubuntu-22.04-arm
           rust: stable
           target: aarch64-unknown-linux-musl
-          cross: false
-        - build: aarch64-macos
-          os: macos-latest
-          rust: stable
-          target: aarch64-apple-darwin
           cross: false
 
     steps:
@@ -82,7 +77,7 @@ jobs:
           args: --release --target ${{ matrix.target }}
 
       - name: Strip release binary (linux and macos)
-        if: matrix.build == 'x86_64-linux' || matrix.build == 'x86_64-macos'
+        if: matrix.build == 'x86_64-linux'
         run: strip "target/${{ matrix.target }}/release/$BIN_NAME"
 
       - name: Prepare binary with platform name

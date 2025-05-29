@@ -25,15 +25,10 @@ mod post {
         server: GetServer,
         axum::Json(data): axum::Json<Payload>,
     ) -> (StatusCode, axum::Json<serde_json::Value>) {
-        if server
-            .transferring
-            .load(std::sync::atomic::Ordering::SeqCst)
-        {
+        if server.is_locked_state() {
             return (
                 StatusCode::CONFLICT,
-                axum::Json(
-                    serde_json::to_value(ApiError::new("server is already transferring")).unwrap(),
-                ),
+                axum::Json(serde_json::to_value(ApiError::new("server is locked")).unwrap()),
             );
         }
 

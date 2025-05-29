@@ -5,12 +5,12 @@ mod post {
     use crate::routes::{ApiError, api::servers::_server_::GetServer};
     use axum::http::StatusCode;
     use serde::Deserialize;
-    use tokio::io::AsyncWriteExt;
     use utoipa::ToSchema;
 
     #[derive(ToSchema, Deserialize)]
     pub struct Payload {
         location: String,
+        name: Option<String>,
     }
 
     #[utoipa::path(post, path = "/", responses(
@@ -56,39 +56,23 @@ mod post {
             }
         };
 
-        if !server
-            .filesystem
-            .allocate_in_path(location.parent().unwrap(), metadata.len() as i64)
-            .await
-        {
-            return (
-                StatusCode::EXPECTATION_FAILED,
-                axum::Json(ApiError::new("failed to allocate space").to_json()),
-            );
-        }
+        let new_name = data.name.unwrap_or_else(|| {
+            let mut extension = location
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| format!(".{}", ext))
+                .unwrap_or("".to_string());
+            let mut base_name = location
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .unwrap_or("")
+                .to_string();
 
-        let mut extension = location
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .map(|ext| format!(".{}", ext))
-            .unwrap_or("".to_string());
-        let mut base_name = location
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .unwrap_or("")
-            .to_string();
+            if base_name.ends_with(".tar") {
+                extension = format!(".tar{}", extension);
+                base_name.truncate(base_name.len() - 4);
+            }
 
-        if base_name.ends_with(".tar") {
-            extension = format!("tar{}", extension);
-            base_name.truncate(base_name.len() - 4);
-        }
-
-        #[inline]
-        fn find_copy_suffix(
-            location: &std::path::Path,
-            base_name: &str,
-            extension: &str,
-        ) -> String {
             let parent = location.parent().unwrap_or(std::path::Path::new(""));
             let mut suffix = " copy".to_string();
 
@@ -114,31 +98,35 @@ mod post {
             }
 
             format!("{}{}{}", base_name, suffix, extension)
-        }
-
-        let new_name = find_copy_suffix(&location, &base_name, &extension);
+        });
         let file_name = location.parent().unwrap().join(&new_name);
 
-        let mut file = tokio::fs::File::open(&location).await.unwrap();
-        let mut new_file = tokio::fs::File::create(&file_name).await.unwrap();
+        if !server.filesystem.is_safe_path(&file_name).await {
+            return (
+                StatusCode::EXPECTATION_FAILED,
+                axum::Json(ApiError::new("invalid file name").to_json()),
+            );
+        }
 
-        tokio::io::copy(&mut file, &mut new_file).await.unwrap();
+        if !server
+            .filesystem
+            .allocate_in_path(location.parent().unwrap(), metadata.len() as i64)
+            .await
+        {
+            return (
+                StatusCode::EXPECTATION_FAILED,
+                axum::Json(ApiError::new("failed to allocate space").to_json()),
+            );
+        }
 
-        new_file.flush().await.unwrap();
-        new_file.sync_all().await.unwrap();
-
-        server.filesystem.chown_path(&file_name).await;
+        tokio::fs::copy(&location, &file_name).await.unwrap();
+        let metadata = tokio::fs::symlink_metadata(&file_name).await.unwrap();
 
         (
             StatusCode::OK,
             axum::Json(
-                serde_json::to_value(
-                    server
-                        .filesystem
-                        .to_api_entry(file_name, new_file.metadata().await.unwrap())
-                        .await,
-                )
-                .unwrap(),
+                serde_json::to_value(server.filesystem.to_api_entry(file_name, metadata).await)
+                    .unwrap(),
             ),
         )
     }

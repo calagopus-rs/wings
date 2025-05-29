@@ -11,8 +11,8 @@ mod get {
     use utoipa::ToSchema;
 
     #[derive(ToSchema, Deserialize, Default, Clone, Copy)]
-    #[serde(rename_all = "lowercase")]
-    #[schema(rename_all = "lowercase")]
+    #[serde(rename_all = "snake_case")]
+    #[schema(rename_all = "snake_case")]
     pub enum Game {
         #[default]
         MinecraftJava,
