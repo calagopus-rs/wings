@@ -27,13 +27,10 @@ pub struct Filesystem {
 
     pub base_path: PathBuf,
 
-    pub disk_limit: AtomicI64,
-    pub disk_usage_cached: Arc<AtomicU64>,
-    pub disk_usage: Arc<RwLock<usage::DiskUsage>>,
-    pub disk_ignored: Arc<RwLock<ignore::overrides::Override>>,
-
-    pub owner_uid: u32,
-    pub owner_gid: u32,
+    disk_limit: AtomicI64,
+    disk_usage_cached: Arc<AtomicU64>,
+    disk_usage: Arc<RwLock<usage::DiskUsage>>,
+    disk_ignored: Arc<RwLock<ignore::overrides::Override>>,
 
     pub pulls: RwLock<HashMap<uuid::Uuid, Arc<RwLock<pull::Download>>>>,
 }
@@ -147,9 +144,6 @@ impl Filesystem {
             disk_usage_cached,
             disk_usage,
             disk_ignored: Arc::new(RwLock::new(disk_ignored.build().unwrap())),
-
-            owner_uid: config.system.user.uid,
-            owner_gid: config.system.user.gid,
 
             pulls: RwLock::new(HashMap::new()),
         }
@@ -266,7 +260,7 @@ impl Filesystem {
 
     #[inline]
     pub fn relative_path(&self, path: &Path) -> Option<PathBuf> {
-        let parent = path.parent()?.canonicalize().ok()?;
+        let parent = Self::resolve_path(path.parent()?);
         if !parent.starts_with(&self.base_path) {
             return None;
         }
@@ -372,7 +366,7 @@ impl Filesystem {
             }
         }
 
-        let metadata = old_path.symlink_metadata()?;
+        let metadata = tokio::fs::symlink_metadata(old_path).await?;
         let is_dir = metadata.is_dir();
 
         let old_parent = old_path.parent().unwrap().canonicalize()?;
@@ -500,7 +494,7 @@ impl Filesystem {
         while let Ok(Some(entry)) = directory.next_entry().await {
             let path = entry.path();
 
-            if let Ok(metadata) = path.symlink_metadata() {
+            if let Ok(metadata) = tokio::fs::symlink_metadata(&path).await {
                 if metadata.is_dir() {
                     tokio::fs::remove_dir_all(&path).await.ok();
                 } else {
@@ -529,8 +523,8 @@ impl Filesystem {
 
         tokio::task::spawn_blocking({
             let path = path.to_path_buf();
-            let owner_uid = self.owner_uid;
-            let owner_gid = self.owner_gid;
+            let owner_uid = self.config.system.user.uid;
+            let owner_gid = self.config.system.user.gid;
 
             move || {
                 recursive_chown(&path, owner_uid, owner_gid);
@@ -565,8 +559,8 @@ impl Filesystem {
         }
 
         let base_path = self.base_path.clone();
-        let owner_uid = self.owner_uid;
-        let owner_gid = self.owner_gid;
+        let owner_uid = self.config.system.user.uid;
+        let owner_gid = self.config.system.user.gid;
 
         tokio::task::spawn_blocking(move || {
             std::os::unix::fs::chown(&base_path, Some(owner_uid), Some(owner_gid)).unwrap();
@@ -634,29 +628,24 @@ impl Filesystem {
             "application/octet-stream"
         };
 
-        #[inline]
-        fn format_mode(mode: u32) -> String {
-            let mut mode_str = String::new();
+        let mut mode_str = String::new();
+        let mode = metadata.permissions().mode();
+        const TYPE_CHARS: &str = "dalTLDpSugct?";
 
-            let type_chars = "dalTLDpSugct?";
+        let file_type = (mode >> 28) & 0xF;
+        if file_type < TYPE_CHARS.len() as u32 {
+            mode_str.push(TYPE_CHARS.chars().nth(file_type as usize).unwrap());
+        } else {
+            mode_str.push('?');
+        }
 
-            let file_type = (mode >> 28) & 0xF;
-            if file_type < type_chars.len() as u32 {
-                mode_str.push(type_chars.chars().nth(file_type as usize).unwrap());
+        const RWX: &str = "rwxrwxrwx";
+        for i in 0..9 {
+            if mode & (1 << (8 - i)) != 0 {
+                mode_str.push(RWX.chars().nth(i).unwrap());
             } else {
-                mode_str.push('?');
+                mode_str.push('-');
             }
-
-            const RWX: &str = "rwxrwxrwx";
-            for i in 0..9 {
-                if mode & (1 << (8 - i)) != 0 {
-                    mode_str.push(RWX.chars().nth(i).unwrap());
-                } else {
-                    mode_str.push('-');
-                }
-            }
-
-            mode_str
         }
 
         crate::models::DirectoryEntry {
@@ -679,7 +668,7 @@ impl Filesystem {
                 0,
             )
             .unwrap(),
-            mode: format_mode(metadata.permissions().mode()),
+            mode: mode_str,
             mode_bits: format!("{:o}", metadata.permissions().mode() & 0o777),
             size,
             directory: real_metadata.is_dir(),
@@ -699,7 +688,7 @@ impl Filesystem {
                 Ok(link) => {
                     let joined = self.base_path.join(link);
 
-                    if let Ok(joined) = joined.canonicalize() {
+                    if let Ok(joined) = tokio::fs::canonicalize(&joined).await {
                         if joined.starts_with(&self.base_path) {
                             Some(joined)
                         } else {

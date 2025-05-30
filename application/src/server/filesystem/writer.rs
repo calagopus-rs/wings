@@ -36,8 +36,8 @@ impl FileSystemWriter {
 
         std::os::unix::fs::chown(
             destination,
-            Some(server.filesystem.owner_uid),
-            Some(server.filesystem.owner_gid),
+            Some(server.config.system.user.uid),
+            Some(server.config.system.user.gid),
         )?;
 
         Ok(Self {
