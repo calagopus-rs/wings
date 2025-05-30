@@ -369,8 +369,8 @@ impl Filesystem {
         let metadata = tokio::fs::symlink_metadata(old_path).await?;
         let is_dir = metadata.is_dir();
 
-        let old_parent = old_path.parent().unwrap().canonicalize()?;
-        let new_parent = new_path.parent().unwrap().canonicalize()?;
+        let old_parent = tokio::fs::canonicalize(old_path.parent().unwrap()).await?;
+        let new_parent = tokio::fs::canonicalize(new_path.parent().unwrap()).await?;
 
         if !self.is_safe_path(&old_parent).await || !self.is_safe_path(&new_parent).await {
             return Err(tokio::io::Error::new(
