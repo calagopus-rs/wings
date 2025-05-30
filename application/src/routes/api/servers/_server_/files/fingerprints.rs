@@ -9,7 +9,7 @@ mod get {
     use std::collections::HashMap;
     use tokio::{
         fs::File,
-        io::{AsyncReadExt, AsyncSeekExt, BufReader},
+        io::{AsyncReadExt, AsyncSeekExt},
     };
     use utoipa::ToSchema;
 
@@ -139,7 +139,6 @@ mod get {
 
                             const MULTIPLEX: u32 = 1540483477;
 
-                            file.seek(std::io::SeekFrom::Start(0)).await.unwrap();
                             let mut buffer = [0; 8192];
                             let mut normalized_length: u32 = 0;
 
@@ -157,14 +156,13 @@ mod get {
                             }
 
                             file.seek(std::io::SeekFrom::Start(0)).await.unwrap();
-                            let mut reader = BufReader::new(&mut file);
 
                             let mut num2: u32 = 1 ^ normalized_length;
                             let mut num3: u32 = 0;
                             let mut num4: u32 = 0;
 
                             loop {
-                                let bytes_read = reader.read(&mut buffer).await.unwrap();
+                                let bytes_read = file.read(&mut buffer).await.unwrap();
                                 if bytes_read == 0 {
                                     break;
                                 }

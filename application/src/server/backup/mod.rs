@@ -131,7 +131,7 @@ pub async fn create_backup(
         .websocket
         .send(crate::server::websocket::WebsocketMessage::new(
             crate::server::websocket::WebsocketEvent::ServerBackupCompleted,
-            &[uuid.to_string()],
+            &[uuid.to_string(), serde_json::to_string(&backup).unwrap()],
         ))?;
 
     tracing::info!(
