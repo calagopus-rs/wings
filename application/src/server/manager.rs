@@ -9,7 +9,6 @@ use std::{
 use tokio::sync::{RwLock, Semaphore};
 
 pub struct Manager {
-    state_writer: tokio::task::JoinHandle<()>,
     config: Arc<crate::config::Config>,
     client: Arc<bollard::Docker>,
 
@@ -30,6 +29,16 @@ impl Manager {
                 .as_str(),
         )
         .unwrap_or_default();
+        let installing_path = Path::new(&config.system.root_directory).join("installing.json");
+        let mut installing: HashMap<uuid::Uuid, (bool, super::installation::InstallationScript)> =
+            serde_json::from_str(
+                tokio::fs::read_to_string(&installing_path)
+                    .await
+                    .unwrap_or_default()
+                    .as_str(),
+            )
+            .unwrap_or_default();
+
         let mut servers = Vec::new();
         let semaphore = Arc::new(Semaphore::new(
             config.remote_query.boot_servers_per_page as usize,
@@ -41,7 +50,35 @@ impl Manager {
 
             server.filesystem.attach().await;
 
-            if config.remote_query.boot_servers_per_page > 0 {
+            if let Some((reinstall, container_script)) = installing.remove(&server.uuid) {
+                tokio::spawn({
+                    let client = Arc::clone(&client);
+                    let server = server.clone();
+
+                    async move {
+                        tracing::info!(
+                            server = %server.uuid,
+                            "restoring installing state {:?}",
+                            state
+                        );
+
+                        if let Err(err) = super::installation::attach_install_container(
+                            &server,
+                            &client,
+                            container_script,
+                            reinstall,
+                        )
+                        .await
+                        {
+                            tracing::error!(
+                                server = %server.uuid,
+                                "failed to attach installation container: {:#?}",
+                                err
+                            );
+                        }
+                    }
+                });
+            } else if config.remote_query.boot_servers_per_page > 0 {
                 tokio::spawn({
                     let client = Arc::clone(&client);
                     let semaphore = Arc::clone(&semaphore);
@@ -76,31 +113,58 @@ impl Manager {
 
         let servers = Arc::new(RwLock::new(servers));
 
-        Arc::new(Self {
-            state_writer: tokio::spawn({
-                let servers = Arc::clone(&servers);
-                let mut states_file = File::create(&states_path).unwrap();
+        tokio::spawn({
+            let servers = Arc::clone(&servers);
+            let mut states_file = File::create(&states_path).unwrap();
 
-                async move {
-                    loop {
-                        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+            async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
 
-                        let servers = servers
-                            .read()
-                            .await
-                            .iter()
-                            .map(|s| (s.uuid, s.state.get_state()))
-                            .collect::<HashMap<_, _>>();
+                    let servers = servers
+                        .read()
+                        .await
+                        .iter()
+                        .map(|s| (s.uuid, s.state.get_state()))
+                        .collect::<HashMap<_, _>>();
 
-                        states_file.set_len(0).unwrap();
-                        states_file.seek(std::io::SeekFrom::Start(0)).unwrap();
-                        serde_json::to_writer(&mut states_file, &servers).unwrap();
-                        states_file.flush().unwrap();
-                        states_file.sync_all().unwrap();
-                    }
+                    states_file.set_len(0).unwrap();
+                    states_file.seek(std::io::SeekFrom::Start(0)).unwrap();
+                    serde_json::to_writer(&mut states_file, &servers).unwrap();
+                    states_file.flush().unwrap();
+                    states_file.sync_all().unwrap();
                 }
-            }),
+            }
+        });
 
+        tokio::spawn({
+            let servers = Arc::clone(&servers);
+            let mut installing_file = File::create(&installing_path).unwrap();
+
+            async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+
+                    let mut installing = HashMap::new();
+                    for server in servers.read().await.iter() {
+                        if let Some((reinstall, installation_script)) =
+                            server.installation_script.read().await.as_ref()
+                        {
+                            installing
+                                .insert(server.uuid, (*reinstall, installation_script.clone()));
+                        }
+                    }
+
+                    installing_file.set_len(0).unwrap();
+                    installing_file.seek(std::io::SeekFrom::Start(0)).unwrap();
+                    serde_json::to_writer(&mut installing_file, &installing).unwrap();
+                    installing_file.flush().unwrap();
+                    installing_file.sync_all().unwrap();
+                }
+            }
+        });
+
+        Arc::new(Self {
             config,
             client,
             servers,
@@ -177,11 +241,5 @@ impl Manager {
                 async move { server.destroy(&client).await }
             });
         }
-    }
-}
-
-impl Drop for Manager {
-    fn drop(&mut self) {
-        self.state_writer.abort();
     }
 }

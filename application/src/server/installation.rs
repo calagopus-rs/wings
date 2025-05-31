@@ -1,12 +1,12 @@
 use super::configuration::string_to_option;
 use futures_util::StreamExt;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap, fs::Permissions, os::unix::fs::PermissionsExt, path::Path, sync::Arc,
 };
 use tokio::{io::AsyncWriteExt, sync::Mutex};
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Serialize, Clone)]
 pub struct InstallationScript {
     pub container_image: String,
     pub entrypoint: String,
@@ -117,7 +117,7 @@ async fn cleanup_container(
     container_id: &str,
     container_script: &InstallationScript,
     container_env: Vec<String>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(), anyhow::Error> {
     let mut logs_stream = client.logs::<String>(
         container_id,
         Some(bollard::container::LogsOptions {
@@ -187,9 +187,9 @@ pub async fn install_server(
     server: &super::Server,
     client: &Arc<bollard::Docker>,
     reinstall: bool,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(), anyhow::Error> {
     if server.is_locked_state() {
-        return Err("Server is in a locked state".into());
+        return Err(anyhow::anyhow!("Server is in a locked state"));
     }
 
     server
@@ -217,6 +217,7 @@ pub async fn install_server(
         server
             .installing
             .store(false, std::sync::atomic::Ordering::SeqCst);
+        server.installation_script.write().await.take();
 
         let environment = server.configuration.read().await.environment();
         if let Some(container_id) = container_id.lock().await.take() {
@@ -298,17 +299,12 @@ pub async fn install_server(
         }
     };
 
+    *server.installation_script.write().await = Some((reinstall, script.clone()));
     *container_script.lock().await = Some(script.clone());
 
-    match server
-        .pull_image(client, script.container_image.clone())
-        .await
-    {
-        Ok(_) => {}
-        Err(err) => {
-            unset_installing(false).await?;
-            return Err(err.into());
-        }
+    if let Err(err) = server.pull_image(client, &script.container_image).await {
+        unset_installing(false).await?;
+        return Err(err.into());
     }
 
     let container = match client
@@ -336,7 +332,7 @@ pub async fn install_server(
 
     *container_id.lock().await = Some(container.id.clone());
 
-    match tokio::time::timeout(std::time::Duration::from_secs(15 * 60), async move {
+    if tokio::time::timeout(std::time::Duration::from_secs(15 * 60), async move {
         let thread = {
             let docker_id = container.id.clone();
             let server = Arc::clone(server);
@@ -465,12 +461,257 @@ pub async fn install_server(
         tokio::join!(thread, wait_thread);
     })
     .await
+    .is_err()
     {
-        Ok(_) => {}
-        Err(_) => {
-            unset_installing(false).await?;
-            return Err("Timeout while waiting for installation".into());
+        unset_installing(false).await?;
+        return Err(anyhow::anyhow!("Timeout while waiting for installation"));
+    }
+
+    unset_installing(true).await?;
+
+    Ok(())
+}
+
+pub async fn attach_install_container(
+    server: &super::Server,
+    client: &Arc<bollard::Docker>,
+    container_script: InstallationScript,
+    reinstall: bool,
+) -> Result<(), anyhow::Error> {
+    server
+        .installing
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    *server.installation_script.write().await = Some((reinstall, container_script.clone()));
+    server
+        .websocket
+        .send(super::websocket::WebsocketMessage::new(
+            super::websocket::WebsocketEvent::ServerInstallStarted,
+            &[],
+        ))?;
+
+    let container_id = Mutex::new(None);
+    if let Ok(containers) = client
+        .list_containers(Some(bollard::container::ListContainersOptions {
+            all: true,
+            filters: HashMap::from([("name".to_string(), vec![server.uuid.to_string()])]),
+            ..Default::default()
+        }))
+        .await
+    {
+        for container in containers {
+            if container
+                .names
+                .as_ref()
+                .is_some_and(|names| names.iter().any(|name| name.contains("installer")))
+            {
+                tracing::info!(
+                    server = %server.uuid,
+                    "attaching to existing installation container {}",
+                    container.id.clone().unwrap()
+                );
+
+                *container_id.lock().await = Some(container.id.unwrap());
+            }
         }
+    }
+
+    let unset_installing = async |successful: bool| {
+        server
+            .installing
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        server.installation_script.write().await.take();
+
+        let environment = server.configuration.read().await.environment();
+        if let Some(container_id) = container_id.lock().await.take() {
+            if let Err(err) = cleanup_container(
+                server,
+                client,
+                &container_id,
+                &container_script,
+                environment,
+            )
+            .await
+            {
+                tracing::error!(
+                    server = %server.uuid,
+                    container = %container_id,
+                    "failed to clean up container: {}",
+                    err
+                );
+            }
+        }
+
+        tokio::fs::remove_dir_all(
+            Path::new(&server.config.system.tmp_directory).join(server.uuid.to_string()),
+        )
+        .await
+        .ok();
+        if let Err(err) = server
+            .config
+            .client
+            .set_server_install(server.uuid, successful, reinstall)
+            .await
+        {
+            tracing::error!(
+                server = %server.uuid,
+                "failed to set server install status: {}",
+                err
+            );
+        }
+
+        server
+            .websocket
+            .send(super::websocket::WebsocketMessage::new(
+                super::websocket::WebsocketEvent::ServerInstallCompleted,
+                &[],
+            ))
+    };
+
+    if container_id.lock().await.is_none() {
+        tracing::info!(
+            server = %server.uuid,
+            "no existing installation container found, marking server as installed"
+        );
+
+        unset_installing(true).await?;
+        return Ok(());
+    }
+
+    let container_id = container_id.lock().await.clone().unwrap();
+
+    if tokio::time::timeout(std::time::Duration::from_secs(15 * 60), async move {
+        let thread = {
+            let docker_id = container_id.clone();
+            let server = Arc::clone(server);
+            let client = Arc::clone(client);
+
+            async move {
+                let mut stream = client
+                    .attach_container::<String>(
+                        &docker_id,
+                        Some(bollard::container::AttachContainerOptions {
+                            stdout: Some(true),
+                            stderr: Some(true),
+                            stream: Some(true),
+                            ..Default::default()
+                        }),
+                    )
+                    .await
+                    .unwrap();
+
+                let mut buffer = Vec::with_capacity(1024);
+                let mut line_start = 0;
+
+                while let Some(Ok(data)) = stream.output.next().await {
+                    buffer.extend_from_slice(&data.into_bytes());
+
+                    let mut search_start = line_start;
+
+                    loop {
+                        if let Some(pos) = buffer[search_start..].iter().position(|&b| b == b'\n') {
+                            let newline_pos = search_start + pos;
+
+                            if newline_pos - line_start <= 512 {
+                                let line =
+                                    String::from_utf8_lossy(&buffer[line_start..newline_pos])
+                                        .trim()
+                                        .to_string();
+                                server
+                                    .websocket
+                                    .send(super::websocket::WebsocketMessage::new(
+                                        super::websocket::WebsocketEvent::ServerInstallOutput,
+                                        &[line],
+                                    ))
+                                    .ok();
+
+                                line_start = newline_pos + 1;
+                                search_start = line_start;
+                            } else {
+                                let line = String::from_utf8_lossy(
+                                    &buffer[line_start..(line_start + 512)],
+                                )
+                                .trim()
+                                .to_string();
+                                server
+                                    .websocket
+                                    .send(super::websocket::WebsocketMessage::new(
+                                        super::websocket::WebsocketEvent::ServerInstallOutput,
+                                        &[line],
+                                    ))
+                                    .ok();
+
+                                line_start += 512;
+                                search_start = line_start;
+                            }
+                        } else {
+                            let current_line_length = buffer.len() - line_start;
+                            if current_line_length > 512 {
+                                let line = String::from_utf8_lossy(
+                                    &buffer[line_start..(line_start + 512)],
+                                )
+                                .trim()
+                                .to_string();
+                                server
+                                    .websocket
+                                    .send(super::websocket::WebsocketMessage::new(
+                                        super::websocket::WebsocketEvent::ServerInstallOutput,
+                                        &[line],
+                                    ))
+                                    .ok();
+
+                                line_start += 512;
+                                search_start = line_start;
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+
+                    if line_start > 1024 && line_start > buffer.len() / 2 {
+                        buffer.drain(0..line_start);
+                        line_start = 0;
+                    }
+                }
+
+                if line_start < buffer.len() {
+                    let line = String::from_utf8_lossy(&buffer[line_start..])
+                        .trim()
+                        .to_string();
+                    server
+                        .websocket
+                        .send(super::websocket::WebsocketMessage::new(
+                            super::websocket::WebsocketEvent::ServerInstallOutput,
+                            &[line],
+                        ))
+                        .ok();
+                }
+            }
+        };
+
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        client
+            .start_container::<String>(&container_id, None)
+            .await
+            .unwrap();
+
+        let wait_thread = {
+            let client = Arc::clone(client);
+
+            async move {
+                client
+                    .wait_container::<String>(&container_id, None)
+                    .next()
+                    .await;
+            }
+        };
+
+        tokio::join!(thread, wait_thread);
+    })
+    .await
+    .is_err()
+    {
+        unset_installing(false).await?;
+        return Err(anyhow::anyhow!("Timeout while waiting for installation"));
     }
 
     unset_installing(true).await?;

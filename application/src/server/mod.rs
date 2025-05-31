@@ -41,6 +41,7 @@ pub struct InnerServer {
     pub state: state::ServerStateLock,
     pub outgoing_transfer: RwLock<Option<transfer::OutgoingServerTransfer>>,
     pub incoming_transfer: RwLock<Option<tokio::task::JoinHandle<()>>>,
+    pub installation_script: RwLock<Option<(bool, installation::InstallationScript)>>,
 
     suspended: AtomicBool,
     installing: AtomicBool,
@@ -99,6 +100,7 @@ impl Server {
             state,
             outgoing_transfer: RwLock::new(None),
             incoming_transfer: RwLock::new(None),
+            installation_script: RwLock::new(None),
 
             suspended: AtomicBool::new(false),
             installing: AtomicBool::new(false),
@@ -506,7 +508,20 @@ impl Server {
             }))
             .await
         {
-            if let Some(container) = containers.first() {
+            for container in containers {
+                if container
+                    .names
+                    .as_ref()
+                    .is_some_and(|names| names.iter().any(|name| name.contains("installer")))
+                {
+                    tracing::debug!(
+                        server = %self.uuid,
+                        "installer container found, skipping attachment"
+                    );
+
+                    continue;
+                }
+
                 let container = container.id.clone().unwrap();
                 let container = Arc::new(
                     container::Container::new(
@@ -647,7 +662,7 @@ impl Server {
     pub async fn pull_image(
         &self,
         client: &Arc<bollard::Docker>,
-        image: String,
+        image: &str,
     ) -> Result<(), bollard::errors::Error> {
         tracing::info!(
             server = %self.uuid,
@@ -806,7 +821,7 @@ impl Server {
 
                     self.pull_image(
                         client,
-                        self.configuration.read().await.container.image.clone(),
+                        &self.configuration.read().await.container.image,
                     )
                     .await?;
 
@@ -1099,7 +1114,7 @@ impl Server {
             }))
             .await
         {
-            if let Some(container) = containers.first() {
+            for container in containers {
                 let container = container.id.clone().unwrap();
 
                 if let Err(err) = client
