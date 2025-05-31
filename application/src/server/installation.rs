@@ -188,10 +188,6 @@ pub async fn install_server(
     client: &Arc<bollard::Docker>,
     reinstall: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    if server.configuration.read().await.skip_egg_scripts && !reinstall {
-        return Ok(());
-    }
-
     if server.is_locked_state() {
         return Err("Server is in a locked state".into());
     }
@@ -282,6 +278,12 @@ pub async fn install_server(
                 &[],
             ))
     };
+
+    if server.configuration.read().await.skip_egg_scripts && !reinstall {
+        unset_installing(true).await?;
+
+        return Ok(());
+    }
 
     let script = match server
         .config
