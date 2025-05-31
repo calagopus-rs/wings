@@ -88,6 +88,10 @@ fn system_crash_detection_timeout() -> u64 {
     60
 }
 
+fn docker_socket() -> String {
+    "/var/run/docker.sock".to_string()
+}
+
 fn docker_network_interface() -> String {
     "172.18.0.1".to_string()
 }
@@ -141,6 +145,9 @@ fn docker_overhead_default_multiplier() -> f64 {
     1.05
 }
 
+fn docker_log_config_type() -> String {
+    "local".to_string()
+}
 fn docker_log_config_config() -> HashMap<String, String> {
     HashMap::from([
         ("max-size".to_string(), "5m".to_string()),
@@ -322,6 +329,9 @@ nestify::nest! {
         },
         #[serde(default)]
         pub docker: #[repr(C)] #[derive(Deserialize, Serialize, DefaultFromSerde)] #[serde(default)] pub struct Docker {
+            #[serde(default = "docker_socket")]
+            pub socket: String,
+
             #[serde(default)]
             pub network: #[repr(C)] #[derive(Deserialize, Serialize, DefaultFromSerde)] #[serde(default)] pub struct DockerNetwork {
                 #[serde(default = "docker_network_interface")]
@@ -405,12 +415,8 @@ nestify::nest! {
 
             #[serde(default)]
             pub log_config: #[repr(C)] #[derive(Deserialize, Serialize, DefaultFromSerde)] #[serde(default)] pub struct DockerLogConfig {
-                #[serde(default)]
-                pub r#type: #[derive(Deserialize, Serialize, Default)] #[serde(rename_all = "snake_case")] pub enum DockerLogConfigType {
-                    None,
-                    #[default]
-                    Local,
-                },
+                #[serde(default = "docker_log_config_type")]
+                pub r#type: String,
                 #[serde(default = "docker_log_config_config")]
                 pub config: HashMap<String, String>,
             },

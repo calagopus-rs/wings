@@ -368,10 +368,7 @@ impl ServerConfiguration {
                     format!("rw,exec,nosuid,size={}M", config.docker.tmpfs_size),
                 )])),
                 log_config: Some(bollard::secret::HostConfigLogConfig {
-                    typ: serde_json::to_value(&config.docker.log_config.r#type)
-                        .unwrap()
-                        .as_str()
-                        .map(|s| s.to_string()),
+                    typ: Some(config.docker.log_config.r#type.clone()),
                     config: Some(config.docker.log_config.config.clone()),
                 }),
                 security_opt: Some(vec!["no-new-privileges".to_string()]),

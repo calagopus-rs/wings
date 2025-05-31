@@ -231,6 +231,7 @@ impl Server {
                                     .stopping
                                     .store(false, std::sync::atomic::Ordering::Relaxed);
                             } else if server.config.system.crash_detection.enabled
+                                && server.configuration.read().await.crash_detection_enabled
                                 && !server
                                     .crash_handled
                                     .load(std::sync::atomic::Ordering::Relaxed)

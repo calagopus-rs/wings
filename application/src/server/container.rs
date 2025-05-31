@@ -117,14 +117,21 @@ impl Container {
                 let server = server.clone();
 
                 async move {
+                    let mut prev_cpu = (0, 0);
+
                     loop {
-                        let mut stats_stream = client.stats(&docker_id, None);
-                        let mut prev_cpu = (0, 0);
+                        let mut stats_stream = client.stats(
+                            &docker_id,
+                            Some(bollard::container::StatsOptions {
+                                stream: false,
+                                one_shot: true,
+                            }),
+                        );
 
                         while let Some(Ok(stats)) = stats_stream.next().await {
                             let (disk_usage, _) = tokio::join!(
                                 server.filesystem.limiter_usage(),
-                                tokio::time::sleep(std::time::Duration::from_millis(500))
+                                tokio::time::sleep(std::time::Duration::from_millis(500)),
                             );
 
                             let mut usage = resource_usage.write().await;

@@ -5,7 +5,6 @@ use axum::{
     http::{HeaderMap, Method, Response, StatusCode},
     middleware::Next,
 };
-use bollard::Docker;
 use clap::{Arg, Command};
 use colored::Colorize;
 use russh::{keys::ssh_key::rand_core::OsRng, server::Server};
@@ -255,9 +254,21 @@ async fn main() {
 
     tracing::info!("connecting to docker");
     let docker = Arc::new(
-        Docker::connect_with_local_defaults()
-            .context("failed to connect to docker")
-            .unwrap(),
+        if config.docker.socket.starts_with("http") {
+            bollard::Docker::connect_with_http(
+                &config.docker.socket,
+                120,
+                bollard::API_DEFAULT_VERSION,
+            )
+        } else {
+            bollard::Docker::connect_with_unix(
+                &config.docker.socket,
+                120,
+                bollard::API_DEFAULT_VERSION,
+            )
+        }
+        .context("failed to connect to docker")
+        .unwrap(),
     );
 
     tracing::info!("ensuring docker network exists");
