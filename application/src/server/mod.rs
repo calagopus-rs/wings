@@ -444,10 +444,20 @@ impl Server {
             "setting up container"
         );
 
+        let name = &self.configuration.read().await.meta.name;
+        let mut name_filtered = "".to_string();
+        for c in name.chars() {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                name_filtered.push(c);
+            }
+        }
+
+        name_filtered.truncate(63 - 36);
+
         let container = client
             .create_container(
                 Some(bollard::container::CreateContainerOptions {
-                    name: self.configuration.read().await.uuid,
+                    name: format!("{}.{}", name_filtered, self.configuration.read().await.uuid),
                     ..Default::default()
                 }),
                 self.configuration
