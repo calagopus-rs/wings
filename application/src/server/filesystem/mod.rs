@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicI64, AtomicU64},
+        atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering},
     },
 };
 use tokio::{
@@ -62,7 +62,7 @@ impl Filesystem {
 
             move || {
                 loop {
-                    if checker_abort.load(std::sync::atomic::Ordering::Relaxed) {
+                    if checker_abort.load(Ordering::Relaxed) {
                         break;
                     }
 
@@ -117,15 +117,12 @@ impl Filesystem {
                         tmp_disk_usage.entries.values().map(|e| e.size).sum::<u64>();
 
                     *disk_usage.blocking_write() = tmp_disk_usage;
-                    disk_usage_cached.store(
-                        total_size + total_entry_size,
-                        std::sync::atomic::Ordering::Relaxed,
-                    );
+                    disk_usage_cached.store(total_size + total_entry_size, Ordering::Relaxed);
 
                     tracing::debug!(
                         path = %base_path.display(),
                         "{} bytes disk usage",
-                        disk_usage_cached.load(std::sync::atomic::Ordering::Relaxed)
+                        disk_usage_cached.load(Ordering::Relaxed)
                     );
 
                     std::thread::sleep(std::time::Duration::from_secs(check_interval));
@@ -200,16 +197,14 @@ impl Filesystem {
 
     #[inline]
     pub async fn limiter_usage(&self) -> u64 {
-        limiter::disk_usage(self).await.unwrap_or_else(|_| {
-            self.disk_usage_cached
-                .load(std::sync::atomic::Ordering::Relaxed)
-        })
+        limiter::disk_usage(self)
+            .await
+            .unwrap_or_else(|_| self.disk_usage_cached.load(Ordering::Relaxed))
     }
 
     #[inline]
     pub async fn update_disk_limit(&self, limit: u64) {
-        self.disk_limit
-            .store(limit as i64, std::sync::atomic::Ordering::Relaxed);
+        self.disk_limit.store(limit as i64, Ordering::Relaxed);
         limiter::update_disk_limit(self, limit)
             .await
             .unwrap_or_else(|_| tracing::warn!("failed to update disk limit"));
@@ -217,7 +212,7 @@ impl Filesystem {
 
     #[inline]
     pub fn disk_limit(&self) -> i64 {
-        self.disk_limit.load(std::sync::atomic::Ordering::Relaxed)
+        self.disk_limit.load(Ordering::Relaxed)
     }
 
     #[inline]
@@ -428,9 +423,7 @@ impl Filesystem {
         }
 
         if delta > 0 {
-            let current_usage = self
-                .disk_usage_cached
-                .load(std::sync::atomic::Ordering::Relaxed) as i64;
+            let current_usage = self.disk_usage_cached.load(Ordering::Relaxed) as i64;
 
             if self.disk_limit() != 0 && current_usage + delta > self.disk_limit() {
                 return false;
@@ -439,19 +432,16 @@ impl Filesystem {
 
         if delta > 0 {
             self.disk_usage_cached
-                .fetch_add(delta as u64, std::sync::atomic::Ordering::Relaxed);
+                .fetch_add(delta as u64, Ordering::Relaxed);
         } else {
             let abs_size = delta.unsigned_abs();
-            let current = self
-                .disk_usage_cached
-                .load(std::sync::atomic::Ordering::Relaxed);
+            let current = self.disk_usage_cached.load(Ordering::Relaxed);
 
             if current >= abs_size {
                 self.disk_usage_cached
-                    .fetch_sub(abs_size, std::sync::atomic::Ordering::Relaxed);
+                    .fetch_sub(abs_size, Ordering::Relaxed);
             } else {
-                self.disk_usage_cached
-                    .store(0, std::sync::atomic::Ordering::Relaxed);
+                self.disk_usage_cached.store(0, Ordering::Relaxed);
             }
         }
 
@@ -487,8 +477,7 @@ impl Filesystem {
 
     pub async fn truncate_root(&self) {
         self.disk_usage.write().await.clear();
-        self.disk_usage_cached
-            .store(0, std::sync::atomic::Ordering::Relaxed);
+        self.disk_usage_cached.store(0, Ordering::Relaxed);
 
         let mut directory = tokio::fs::read_dir(&self.base_path).await.unwrap();
         while let Ok(Some(entry)) = directory.next_entry().await {
@@ -545,11 +534,8 @@ impl Filesystem {
             return;
         }
 
-        if let Err(err) = limiter::update_disk_limit(
-            self,
-            self.disk_limit.load(std::sync::atomic::Ordering::Relaxed) as u64,
-        )
-        .await
+        if let Err(err) =
+            limiter::update_disk_limit(self, self.disk_limit.load(Ordering::Relaxed) as u64).await
         {
             tracing::error!(
                 path = %self.base_path.display(),
@@ -580,8 +566,7 @@ impl Filesystem {
     }
 
     pub async fn destroy(&self) {
-        self.checker_abort
-            .store(true, std::sync::atomic::Ordering::Relaxed);
+        self.checker_abort.store(true, Ordering::Relaxed);
         if let Err(err) = limiter::destroy(self).await {
             tracing::error!(
                 path = %self.base_path.display(),
@@ -740,7 +725,6 @@ impl Filesystem {
 
 impl Drop for Filesystem {
     fn drop(&mut self) {
-        self.checker_abort
-            .store(true, std::sync::atomic::Ordering::Relaxed);
+        self.checker_abort.store(true, Ordering::Relaxed);
     }
 }

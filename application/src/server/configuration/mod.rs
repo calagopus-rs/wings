@@ -90,6 +90,7 @@ impl ServerConfiguration {
         filesystem: &super::filesystem::Filesystem,
     ) -> Vec<Mount> {
         let mut mounts = Vec::new();
+        mounts.reserve_exact(3 + self.mounts.len());
 
         mounts.push(Mount {
             default: true,

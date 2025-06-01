@@ -5,9 +5,12 @@ use std::{
     collections::HashMap,
     ops::Deref,
     pin::Pin,
-    sync::{Arc, atomic::AtomicBool},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 pub mod activity;
 pub mod backup;
@@ -50,7 +53,7 @@ pub struct InnerServer {
 
     restarting: AtomicBool,
     stopping: AtomicBool,
-    last_crash: RwLock<Option<std::time::Instant>>,
+    last_crash: Mutex<Option<std::time::Instant>>,
     crash_handled: AtomicBool,
 
     pub filesystem: filesystem::Filesystem,
@@ -109,7 +112,7 @@ impl Server {
 
             restarting: AtomicBool::new(false),
             stopping: AtomicBool::new(false),
-            last_crash: RwLock::new(None),
+            last_crash: Mutex::new(None),
             crash_handled: AtomicBool::new(false),
 
             filesystem,
@@ -167,7 +170,7 @@ impl Server {
 
                 if server.filesystem.is_full().await
                     && server.state.get_state() != state::ServerState::Offline
-                    && !server.stopping.load(std::sync::atomic::Ordering::Relaxed)
+                    && !server.stopping.load(Ordering::Relaxed)
                 {
                     server
                     .log_daemon_with_prelude("Server is exceeding the assigned disk space limit, stopping process now.")
@@ -202,16 +205,16 @@ impl Server {
                         | ContainerStateStatusEnum::EXITED => {
                             server.state.set_state(state::ServerState::Offline);
 
-                            if server.restarting.load(std::sync::atomic::Ordering::Relaxed) {
+                            if server.restarting.load(Ordering::Relaxed) {
                                 server
                                     .crash_handled
-                                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                                    .store(true, Ordering::Relaxed);
                                 server
                                     .restarting
-                                    .store(false, std::sync::atomic::Ordering::Relaxed);
+                                    .store(false, Ordering::Relaxed);
                                 server
                                     .stopping
-                                    .store(false, std::sync::atomic::Ordering::Relaxed);
+                                    .store(false, Ordering::Relaxed);
 
                                 let client = Arc::clone(&client);
                                 let server = server.clone();
@@ -224,23 +227,23 @@ impl Server {
                                         );
                                     }
                                 });
-                            } else if server.stopping.load(std::sync::atomic::Ordering::Relaxed)
+                            } else if server.stopping.load(Ordering::Relaxed)
                             {
                                 server
                                     .crash_handled
-                                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                                    .store(true, Ordering::Relaxed);
                                 server
                                     .stopping
-                                    .store(false, std::sync::atomic::Ordering::Relaxed);
+                                    .store(false, Ordering::Relaxed);
                             } else if server.config.system.crash_detection.enabled
                                 && server.configuration.read().await.crash_detection_enabled
                                 && !server
                                     .crash_handled
-                                    .load(std::sync::atomic::Ordering::Relaxed)
+                                    .load(Ordering::Relaxed)
                             {
                                 server
                                     .crash_handled
-                                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                                    .store(true, Ordering::Relaxed);
 
                                 if container_state.exit_code.is_some_and(|code| code == 0)
                                     && !container_state.oom_killed.unwrap_or(false)
@@ -271,7 +274,7 @@ impl Server {
                                     ))
                                     .await;
 
-                                let last_crash_lock = server.last_crash.read().await;
+                                let mut last_crash_lock = server.last_crash.lock().await;
                                 if let Some(last_crash) = *last_crash_lock {
                                     if last_crash.elapsed().as_secs()
                                         < server.config.system.crash_detection.timeout
@@ -296,12 +299,7 @@ impl Server {
                                             server.config.system.crash_detection.timeout
                                         );
 
-                                        drop(last_crash_lock);
-                                        server
-                                            .last_crash
-                                            .write()
-                                            .await
-                                            .replace(std::time::Instant::now());
+                                        last_crash_lock.replace(std::time::Instant::now());
                                     }
                                 } else {
                                     tracing::debug!(
@@ -309,13 +307,10 @@ impl Server {
                                         "no previous crash recorded, restarting server"
                                     );
 
-                                    drop(last_crash_lock);
-                                    server
-                                        .last_crash
-                                        .write()
-                                        .await
-                                        .replace(std::time::Instant::now());
+                                    last_crash_lock.replace(std::time::Instant::now());
                                 }
+
+                                drop(last_crash_lock);
 
                                 tracing::info!(
                                     server = %server.uuid,
@@ -424,18 +419,17 @@ impl Server {
 
     #[inline]
     pub fn is_locked_state(&self) -> bool {
-        self.suspended.load(std::sync::atomic::Ordering::SeqCst)
-            || self.installing.load(std::sync::atomic::Ordering::SeqCst)
-            || self.restoring.load(std::sync::atomic::Ordering::SeqCst)
-            || self.transferring.load(std::sync::atomic::Ordering::SeqCst)
+        self.suspended.load(Ordering::SeqCst)
+            || self.installing.load(Ordering::SeqCst)
+            || self.restoring.load(Ordering::SeqCst)
+            || self.transferring.load(Ordering::SeqCst)
     }
 
     pub async fn setup_container(
         &self,
         client: &Arc<bollard::Docker>,
     ) -> Result<(), bollard::errors::Error> {
-        self.crash_handled
-            .store(false, std::sync::atomic::Ordering::Relaxed);
+        self.crash_handled.store(false, Ordering::Relaxed);
 
         if self.container.read().await.is_some() {
             return Ok(());
@@ -533,8 +527,7 @@ impl Server {
                     .await?,
                 );
 
-                self.crash_handled
-                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                self.crash_handled.store(true, Ordering::Relaxed);
                 self.setup_websocket_sender(Arc::clone(&container), Arc::clone(client))
                     .await;
                 *self.container.write().await = Some(container);
@@ -546,9 +539,7 @@ impl Server {
                         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
                         if server.state.get_state() != state::ServerState::Offline {
-                            server
-                                .crash_handled
-                                .store(false, std::sync::atomic::Ordering::Relaxed);
+                            server.crash_handled.store(false, Ordering::Relaxed);
                         }
                     }
                 });
@@ -689,7 +680,7 @@ impl Server {
                 }
             }
 
-            let (image, tag) = image.split_once(':').unwrap_or((&image, "latest"));
+            let (image, tag) = image.split_once(':').unwrap_or((image, "latest"));
 
             let mut stream = client.create_image(
                 Some(bollard::image::CreateImageOptions {
@@ -878,8 +869,7 @@ impl Server {
             "killing server"
         );
 
-        self.stopping
-            .store(true, std::sync::atomic::Ordering::Relaxed);
+        self.stopping.store(true, Ordering::Relaxed);
         if client
             .kill_container(
                 &container,
@@ -1032,8 +1022,7 @@ impl Server {
                 .await;
             Err("another power action is currently being processed for this server, please try again later".into())
         } else {
-            self.stopping
-                .store(true, std::sync::atomic::Ordering::Relaxed);
+            self.stopping.store(true, Ordering::Relaxed);
 
             Ok(())
         }
@@ -1044,7 +1033,7 @@ impl Server {
         client: &Arc<bollard::Docker>,
         aquire_timeout: Option<std::time::Duration>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        if self.restarting.load(std::sync::atomic::Ordering::Relaxed) {
+        if self.restarting.load(Ordering::Relaxed) {
             self.log_daemon_error("server is already restarting").await;
             return Err("server is already restarting".into());
         }
@@ -1056,8 +1045,7 @@ impl Server {
 
         if self.state.get_state() != state::ServerState::Offline {
             self.stop(client, aquire_timeout).await?;
-            self.restarting
-                .store(true, std::sync::atomic::Ordering::Relaxed);
+            self.restarting.store(true, Ordering::Relaxed);
         } else {
             self.start(client, aquire_timeout).await?;
         }
@@ -1157,7 +1145,7 @@ impl Server {
     pub async fn to_api_response(&self) -> serde_json::Value {
         json!({
             "state": self.state.get_state(),
-            "is_suspended": self.suspended.load(std::sync::atomic::Ordering::Relaxed),
+            "is_suspended": self.suspended.load(Ordering::Relaxed),
             "utilization": self.resource_usage().await,
             "configuration": *self.configuration.read().await,
         })

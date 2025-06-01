@@ -148,6 +148,7 @@ impl Container {
                                 }
                             }
 
+                            // TODO: This requires urgent refactoring to handle multiple CPUs correctly (and fix podman support)
                             usage.cpu_absolute = {
                                 let cpu_delta = stats
                                     .cpu_stats

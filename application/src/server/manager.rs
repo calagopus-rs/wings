@@ -4,7 +4,7 @@ use std::{
     fs::File,
     io::{Seek, Write},
     path::Path,
-    sync::Arc,
+    sync::{Arc, atomic::Ordering},
 };
 use tokio::sync::{RwLock, Semaphore};
 
@@ -29,6 +29,7 @@ impl Manager {
                 .as_str(),
         )
         .unwrap_or_default();
+
         let installing_path = Path::new(&config.system.root_directory).join("installing.json");
         let mut installing: HashMap<uuid::Uuid, (bool, super::installation::InstallationScript)> =
             serde_json::from_str(
@@ -231,9 +232,7 @@ impl Manager {
 
         if let Some(pos) = servers.iter().position(|s| Arc::ptr_eq(s, server)) {
             let server = servers.remove(pos);
-            server
-                .suspended
-                .store(true, std::sync::atomic::Ordering::Relaxed);
+            server.suspended.store(true, Ordering::Relaxed);
 
             tokio::spawn({
                 let client = Arc::clone(&self.client);

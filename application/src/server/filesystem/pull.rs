@@ -2,7 +2,10 @@ use anyhow::Context;
 use rand::Rng;
 use std::{
     path::{Path, PathBuf},
-    sync::{Arc, LazyLock, atomic::AtomicU64},
+    sync::{
+        Arc, LazyLock,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 use tokio::io::AsyncWriteExt;
 
@@ -37,7 +40,7 @@ impl Download {
             .get(&url)
             .send()
             .await
-            .context("failed to send request")?;
+            .context("failed to send download request")?;
         let mut real_destination = destination.to_path_buf();
 
         if !response.status().is_success() {
@@ -111,7 +114,7 @@ impl Download {
 
             while let Ok(Some(chunk)) = response.chunk().await {
                 writer.write_all(&chunk).await.unwrap();
-                progress.fetch_add(chunk.len() as u64, std::sync::atomic::Ordering::Relaxed);
+                progress.fetch_add(chunk.len() as u64, Ordering::Relaxed);
             }
 
             writer.flush().await.unwrap();
@@ -121,7 +124,7 @@ impl Download {
     }
 
     pub fn to_api_response(&self) -> crate::models::Download {
-        let progress = self.progress.load(std::sync::atomic::Ordering::Relaxed);
+        let progress = self.progress.load(Ordering::Relaxed);
 
         crate::models::Download {
             identifier: self.identifier,

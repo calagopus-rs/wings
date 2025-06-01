@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicBool, AtomicU8};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use utoipa::ToSchema;
 
 #[derive(ToSchema, Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq)]
@@ -56,8 +56,7 @@ impl ServerStateLock {
             return;
         }
 
-        self.state
-            .store(state.into(), std::sync::atomic::Ordering::SeqCst);
+        self.state.store(state.into(), Ordering::SeqCst);
 
         let state_str = serde_json::to_value(state).unwrap();
         let state_str = state_str.as_str().unwrap();
@@ -71,7 +70,7 @@ impl ServerStateLock {
     }
 
     pub fn get_state(&self) -> ServerState {
-        ServerState::from(self.state.load(std::sync::atomic::Ordering::SeqCst))
+        ServerState::from(self.state.load(Ordering::SeqCst))
     }
 
     pub async fn execute_action<F, Fut>(
@@ -90,31 +89,29 @@ impl ServerStateLock {
         if let Some(timeout) = aquire_timeout {
             let instant = std::time::Instant::now();
             while instant.elapsed() < timeout {
-                if !self.locked.load(std::sync::atomic::Ordering::SeqCst) {
+                if !self.locked.load(Ordering::SeqCst) {
                     aquired = true;
                     break;
                 }
 
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             }
-        } else if self.locked.load(std::sync::atomic::Ordering::SeqCst) {
+        } else if self.locked.load(Ordering::SeqCst) {
             return false;
         }
 
-        self.locked.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.locked.store(true, Ordering::SeqCst);
 
         self.set_state(state);
         if let Err(err) = action(aquired).await {
             tracing::error!("failed to execute power action: {:#?}", err);
 
             self.set_state(old_state);
-            self.locked
-                .store(false, std::sync::atomic::Ordering::SeqCst);
+            self.locked.store(false, Ordering::SeqCst);
 
             false
         } else {
-            self.locked
-                .store(false, std::sync::atomic::Ordering::SeqCst);
+            self.locked.store(false, Ordering::SeqCst);
 
             true
         }

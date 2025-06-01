@@ -31,7 +31,7 @@ pub async fn handle_jwt(
 ) -> Result<Option<(WebsocketMessage, Arc<WebsocketJwtPayload>)>, JwtError> {
     match message {
         Message::Text(text) => {
-            let message = serde_json::from_str::<WebsocketMessage>(&text)?;
+            let message: WebsocketMessage = serde_json::from_str(&text)?;
 
             match message.event {
                 WebsocketEvent::Authentication => {

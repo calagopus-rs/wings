@@ -742,7 +742,7 @@ impl Config {
         }
 
         let user = users::get_user_by_name(&self.system.username)
-            .ok_or_else(|| anyhow::anyhow!("failed to get user {}", self.system.username))?;
+            .context(format!("failed to get user {}", self.system.username))?;
 
         self.system.user.uid = user.uid();
         self.system.user.gid = user.primary_group_id();
@@ -814,8 +814,8 @@ impl Config {
         if network.is_err() {
             client
                 .create_network(bollard::network::CreateNetworkOptions {
-                    name: self.docker.network.name.clone(),
-                    driver: self.docker.network.driver.clone(),
+                    name: self.docker.network.name.as_str(),
+                    driver: self.docker.network.driver.as_str(),
                     enable_ipv6: true,
                     internal: self.docker.network.is_internal,
                     ipam: bollard::models::Ipam {
@@ -834,30 +834,18 @@ impl Config {
                         ..Default::default()
                     },
                     options: HashMap::from([
-                        ("encryption".to_string(), "false".to_string()),
+                        ("encryption", "false"),
+                        ("com.docker.network.bridge.default_bridge", "false"),
                         (
-                            "com.docker.network.bridge.default_bridge".to_string(),
-                            "false".to_string(),
+                            "com.docker.network.bridge.enable_icc",
+                            &self.docker.network.enable_icc.to_string(),
                         ),
+                        ("com.docker.network.bridge.enable_ip_masquerade", "true"),
+                        ("com.docker.network.bridge.host_binding_ipv4", "0.0.0.0"),
+                        ("com.docker.network.bridge.name", &self.docker.network.name),
                         (
-                            "com.docker.network.bridge.enable_icc".to_string(),
-                            self.docker.network.enable_icc.to_string(),
-                        ),
-                        (
-                            "com.docker.network.bridge.enable_ip_masquerade".to_string(),
-                            "true".to_string(),
-                        ),
-                        (
-                            "com.docker.network.bridge.host_binding_ipv4".to_string(),
-                            "0.0.0.0".to_string(),
-                        ),
-                        (
-                            "com.docker.network.bridge.name".to_string(),
-                            self.docker.network.name.clone(),
-                        ),
-                        (
-                            "com.docker.network.driver.mtu".to_string(),
-                            self.docker.network.network_mtu.to_string(),
+                            "com.docker.network.driver.mtu",
+                            &self.docker.network.network_mtu.to_string(),
                         ),
                     ]),
                     ..Default::default()

@@ -1,7 +1,10 @@
 use human_bytes::human_bytes;
 use ignore::WalkBuilder;
 use sha2::Digest;
-use std::sync::{Arc, atomic::AtomicU64};
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 pub struct OutgoingServerTransfer {
@@ -44,9 +47,7 @@ impl OutgoingServerTransfer {
             .ok();
         server.outgoing_transfer.write().await.take();
 
-        server
-            .transferring
-            .store(false, std::sync::atomic::Ordering::SeqCst);
+        server.transferring.store(false, Ordering::SeqCst);
         server
             .websocket
             .send(super::websocket::WebsocketMessage::new(
@@ -131,8 +132,7 @@ impl OutgoingServerTransfer {
                         }
 
                         if metadata.is_file() {
-                            bytes_archived
-                                .fetch_add(metadata.len(), std::sync::atomic::Ordering::Relaxed);
+                            bytes_archived.fetch_add(metadata.len(), Ordering::Relaxed);
                         }
 
                         if metadata.is_dir() {
@@ -174,8 +174,7 @@ impl OutgoingServerTransfer {
                     let mut total_n_bytes_archived = 0.0;
 
                     loop {
-                        let bytes_archived =
-                            bytes_archived.load(std::sync::atomic::Ordering::SeqCst);
+                        let bytes_archived = bytes_archived.load(Ordering::SeqCst);
                         total_n_bytes_archived += 1.0;
 
                         let formatted_bytes_archived = human_bytes(bytes_archived as f64);
@@ -256,9 +255,7 @@ impl OutgoingServerTransfer {
 
             Self::log(&server, "Finished streaming archive to destination.");
 
-            server
-                .transferring
-                .store(false, std::sync::atomic::Ordering::SeqCst);
+            server.transferring.store(false, Ordering::SeqCst);
             server
                 .websocket
                 .send(super::websocket::WebsocketMessage::new(

@@ -2,7 +2,11 @@ use super::configuration::string_to_option;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap, fs::Permissions, os::unix::fs::PermissionsExt, path::Path, sync::Arc,
+    collections::HashMap,
+    fs::Permissions,
+    os::unix::fs::PermissionsExt,
+    path::Path,
+    sync::{Arc, atomic::Ordering},
 };
 use tokio::{io::AsyncWriteExt, sync::Mutex};
 
@@ -192,9 +196,7 @@ pub async fn install_server(
         return Err(anyhow::anyhow!("Server is in a locked state"));
     }
 
-    server
-        .installing
-        .store(true, std::sync::atomic::Ordering::SeqCst);
+    server.installing.store(true, Ordering::SeqCst);
     server
         .websocket
         .send(super::websocket::WebsocketMessage::new(
@@ -214,9 +216,7 @@ pub async fn install_server(
     let container_id: Mutex<Option<String>> = Mutex::new(None);
     let container_script: Mutex<Option<InstallationScript>> = Mutex::new(None);
     let unset_installing = async |successful: bool| {
-        server
-            .installing
-            .store(false, std::sync::atomic::Ordering::SeqCst);
+        server.installing.store(false, Ordering::SeqCst);
         server.installation_script.write().await.take();
 
         let environment = server.configuration.read().await.environment();
@@ -478,9 +478,7 @@ pub async fn attach_install_container(
     container_script: InstallationScript,
     reinstall: bool,
 ) -> Result<(), anyhow::Error> {
-    server
-        .installing
-        .store(true, std::sync::atomic::Ordering::SeqCst);
+    server.installing.store(true, Ordering::SeqCst);
     *server.installation_script.write().await = Some((reinstall, container_script.clone()));
     server
         .websocket
@@ -516,9 +514,7 @@ pub async fn attach_install_container(
     }
 
     let unset_installing = async |successful: bool| {
-        server
-            .installing
-            .store(false, std::sync::atomic::Ordering::SeqCst);
+        server.installing.store(false, Ordering::SeqCst);
         server.installation_script.write().await.take();
 
         let environment = server.configuration.read().await.environment();
