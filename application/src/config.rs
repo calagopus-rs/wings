@@ -331,6 +331,8 @@ nestify::nest! {
         pub docker: #[repr(C)] #[derive(Deserialize, Serialize, DefaultFromSerde)] #[serde(default)] pub struct Docker {
             #[serde(default = "docker_socket")]
             pub socket: String,
+            #[serde(default)]
+            pub server_name_in_container_name: bool,
 
             #[serde(default)]
             pub network: #[repr(C)] #[derive(Deserialize, Serialize, DefaultFromSerde)] #[serde(default)] pub struct DockerNetwork {

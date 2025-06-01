@@ -448,12 +448,16 @@ impl Server {
             }
         }
 
-        name_filtered.truncate(63 - 36);
+        name_filtered.truncate(63 - 1 - 36);
 
         let container = client
             .create_container(
                 Some(bollard::container::CreateContainerOptions {
-                    name: format!("{}.{}", name_filtered, self.configuration.read().await.uuid),
+                    name: if self.config.docker.server_name_in_container_name {
+                        format!("{}.{}", name_filtered, self.configuration.read().await.uuid)
+                    } else {
+                        self.configuration.read().await.uuid.to_string()
+                    },
                     ..Default::default()
                 }),
                 self.configuration
