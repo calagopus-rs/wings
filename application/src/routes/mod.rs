@@ -8,7 +8,6 @@ pub mod api;
 mod download;
 mod upload;
 
-#[repr(C)]
 pub struct AppState {
     pub config: Arc<crate::config::Config>,
     pub start_time: Instant,

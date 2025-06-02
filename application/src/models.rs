@@ -12,7 +12,6 @@ pub enum ServerPowerAction {
     Kill,
 }
 
-#[repr(C)]
 #[derive(ToSchema, Serialize)]
 pub struct Server {
     pub state: ServerState,
@@ -21,7 +20,6 @@ pub struct Server {
     pub configuration: crate::server::configuration::ServerConfiguration,
 }
 
-#[repr(C)]
 #[derive(ToSchema, Serialize)]
 pub struct DirectoryEntry {
     pub name: String,
@@ -36,7 +34,6 @@ pub struct DirectoryEntry {
     pub mime: &'static str,
 }
 
-#[repr(C)]
 #[derive(ToSchema, Serialize)]
 pub struct Download {
     pub identifier: uuid::Uuid,

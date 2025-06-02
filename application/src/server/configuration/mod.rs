@@ -24,14 +24,13 @@ pub struct Mount {
 }
 
 nestify::nest! {
-    #[repr(C)]
     #[derive(ToSchema, Deserialize, Serialize)]
     pub struct ServerConfiguration {
         pub uuid: uuid::Uuid,
         pub start_on_completion: Option<bool>,
 
         #[schema(inline)]
-        pub meta: #[repr(C)] #[derive(ToSchema, Deserialize, Serialize)] pub struct ServerConfigurationMeta {
+        pub meta: #[derive(ToSchema, Deserialize, Serialize)] pub struct ServerConfigurationMeta {
             pub name: String,
             pub description: String,
         },
@@ -47,11 +46,11 @@ nestify::nest! {
         pub labels: HashMap<String, String>,
 
         #[schema(inline)]
-        pub allocations: #[repr(C)] #[derive(ToSchema, Deserialize, Serialize)] pub struct ServerConfigurationAllocations {
+        pub allocations: #[derive(ToSchema, Deserialize, Serialize)] pub struct ServerConfigurationAllocations {
             pub force_outgoing_ip: bool,
 
             #[schema(inline)]
-            pub default: #[repr(C)] #[derive(ToSchema, Deserialize, Serialize)] pub struct ServerConfigurationAllocationsDefault {
+            pub default: #[derive(ToSchema, Deserialize, Serialize)] pub struct ServerConfigurationAllocationsDefault {
                 pub ip: String,
                 pub port: u16,
             },
@@ -59,7 +58,7 @@ nestify::nest! {
             pub mappings: HashMap<String, Vec<u16>>,
         },
         #[schema(inline)]
-        pub build: #[repr(C)] #[derive(ToSchema, Deserialize, Serialize)] pub struct ServerConfigurationBuild {
+        pub build: #[derive(ToSchema, Deserialize, Serialize)] pub struct ServerConfigurationBuild {
             pub memory_limit: i64,
             pub swap: i64,
             pub io_weight: u16,
@@ -70,14 +69,14 @@ nestify::nest! {
         },
         pub mounts: Vec<Mount>,
         #[schema(inline)]
-        pub egg: #[repr(C)] #[derive(ToSchema, Deserialize, Serialize)] pub struct ServerConfigurationEgg {
+        pub egg: #[derive(ToSchema, Deserialize, Serialize)] pub struct ServerConfigurationEgg {
             pub id: String,
             #[serde(default)]
             pub file_denylist: Vec<String>,
         },
 
         #[schema(inline)]
-        pub container: #[repr(C)] #[derive(ToSchema, Deserialize, Serialize)] pub struct ServerConfigurationContainer {
+        pub container: #[derive(ToSchema, Deserialize, Serialize)] pub struct ServerConfigurationContainer {
             pub image: String,
         },
     }

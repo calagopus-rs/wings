@@ -2,7 +2,6 @@ use wings_rs::{export_extension, extensions::Extension};
 
 export_extension!(ExampleExtension);
 
-#[repr(C)]
 #[derive(Default)]
 pub struct ExampleExtension;
 

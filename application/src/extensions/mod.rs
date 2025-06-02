@@ -7,7 +7,6 @@ pub mod manager;
 
 pub const API_VERSION: u32 = 1;
 
-#[repr(C)]
 #[derive(Debug, ToSchema, Serialize)]
 pub struct ExtensionInfo {
     pub name: &'static str,

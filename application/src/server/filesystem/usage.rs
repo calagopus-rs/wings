@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-#[repr(C)]
 #[derive(Default)]
 pub struct DiskUsage {
     pub size: u64,

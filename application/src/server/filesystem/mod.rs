@@ -19,7 +19,6 @@ pub mod pull;
 mod usage;
 pub mod writer;
 
-#[repr(C)]
 pub struct Filesystem {
     uuid: uuid::Uuid,
     checker_abort: Arc<AtomicBool>,
