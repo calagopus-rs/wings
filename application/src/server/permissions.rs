@@ -44,7 +44,7 @@ pub enum Permission {
 }
 
 impl Permission {
-    pub fn is_admin(&self) -> bool {
+    pub fn is_admin(self) -> bool {
         matches!(
             self,
             Permission::AdminWebsocketErrors
@@ -53,8 +53,8 @@ impl Permission {
         )
     }
 
-    pub fn matches(&self, other: Permission) -> bool {
-        *self == other || (other == Permission::All && !other.is_admin())
+    pub fn matches(self, other: Permission) -> bool {
+        self == other || (other == Permission::All && !other.is_admin())
     }
 }
 

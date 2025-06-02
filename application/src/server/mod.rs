@@ -58,7 +58,7 @@ pub struct InnerServer {
     pub filesystem: filesystem::Filesystem,
 }
 
-pub struct Server(pub Arc<InnerServer>);
+pub struct Server(Arc<InnerServer>);
 
 impl Server {
     pub fn new(

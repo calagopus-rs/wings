@@ -115,6 +115,7 @@ where
 }
 
 impl WebsocketMessage {
+    #[inline]
     pub fn new(event: WebsocketEvent, data: &[String]) -> Self {
         Self {
             event,
