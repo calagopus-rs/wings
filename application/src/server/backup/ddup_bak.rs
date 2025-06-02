@@ -61,8 +61,25 @@ pub async fn create_backup(
             Some(&server.filesystem.base_path),
             None,
             None,
-            None,
-            4,
+            Some({
+                let compression_format = server.config.system.backups.ddup_bak.compression_format;
+
+                Arc::new(move |_, _| match compression_format {
+                    crate::config::SystemBackupsDdupBakCompressionFormat::None => {
+                        ddup_bak::archive::CompressionFormat::None
+                    }
+                    crate::config::SystemBackupsDdupBakCompressionFormat::Deflate => {
+                        ddup_bak::archive::CompressionFormat::Deflate
+                    }
+                    crate::config::SystemBackupsDdupBakCompressionFormat::Gzip => {
+                        ddup_bak::archive::CompressionFormat::Gzip
+                    }
+                    crate::config::SystemBackupsDdupBakCompressionFormat::Brotli => {
+                        ddup_bak::archive::CompressionFormat::Brotli
+                    }
+                })
+            }),
+            server.config.system.backups.ddup_bak.create_threads,
         )?;
 
         repository.save()?;

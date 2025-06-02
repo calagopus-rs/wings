@@ -88,6 +88,21 @@ fn system_crash_detection_timeout() -> u64 {
     60
 }
 
+fn system_backup_ddup_bak_create_threads() -> usize {
+    4
+}
+
+fn system_backup_btrfs_restore_threads() -> usize {
+    4
+}
+fn system_backup_btrfs_create_read_only() -> bool {
+    true
+}
+
+fn system_backup_zfs_restore_threads() -> usize {
+    4
+}
+
 fn docker_socket() -> String {
     "/var/run/docker.sock".to_string()
 }
@@ -316,7 +331,35 @@ nestify::nest! {
                     #[default]
                     BestSpeed,
                     BestCompression,
-                }
+                },
+
+                #[serde(default)]
+                pub ddup_bak: #[derive(Deserialize, Serialize, DefaultFromSerde)] #[serde(default)] pub struct SystemBackupsDdupBak {
+                    #[serde(default = "system_backup_ddup_bak_create_threads")]
+                    pub create_threads: usize,
+
+                    #[serde(default)]
+                    pub compression_format: #[derive(Clone, Copy, Deserialize, Serialize, Default)] #[serde(rename_all = "snake_case")] pub enum SystemBackupsDdupBakCompressionFormat {
+                        None,
+                        #[default]
+                        Deflate,
+                        Gzip,
+                        Brotli
+                    },
+                },
+                #[serde(default)]
+                pub btrfs: #[derive(Deserialize, Serialize, DefaultFromSerde)] #[serde(default)] pub struct SystemBackupsBtrfs {
+                    #[serde(default = "system_backup_btrfs_restore_threads")]
+                    pub restore_threads: usize,
+
+                    #[serde(default = "system_backup_btrfs_create_read_only")]
+                    pub create_read_only: bool,
+                },
+                #[serde(default)]
+                pub zfs: #[derive(Deserialize, Serialize, DefaultFromSerde)] #[serde(default)] pub struct SystemBackupsZfs {
+                    #[serde(default = "system_backup_zfs_restore_threads")]
+                    pub restore_threads: usize,
+                },
             },
 
             #[serde(default)]

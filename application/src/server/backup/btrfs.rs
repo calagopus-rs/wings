@@ -42,7 +42,11 @@ pub async fn create_backup(
     let output = Command::new("btrfs")
         .arg("subvolume")
         .arg("snapshot")
-        .arg("-r")
+        .args(if server.config.system.backups.btrfs.create_read_only {
+            &["-r"]
+        } else {
+            &[] as &[&str]
+        })
         .arg(&server.filesystem.base_path)
         .arg(&subvolume_path)
         .output()
@@ -143,7 +147,7 @@ pub async fn restore_backup(
             .git_exclude(false)
             .follow_links(false)
             .hidden(false)
-            .threads(4)
+            .threads(server.config.system.backups.btrfs.restore_threads)
             .build_parallel()
             .run(move || {
                 let server = server.clone();

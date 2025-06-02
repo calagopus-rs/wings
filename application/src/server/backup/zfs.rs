@@ -145,7 +145,7 @@ pub async fn restore_backup(
             .git_exclude(false)
             .follow_links(false)
             .hidden(false)
-            .threads(4)
+            .threads(server.config.system.backups.zfs.restore_threads)
             .build_parallel()
             .run(move || {
                 let server = server.clone();
