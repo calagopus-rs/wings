@@ -89,8 +89,11 @@ fn system_crash_detection_timeout() -> u64 {
     60
 }
 
-fn system_backup_wings_restore_threads() -> usize {
-    4
+fn system_backup_mounting_enabled() -> bool {
+    true
+}
+fn system_backup_mounting_path() -> String {
+    ".backups".to_string()
 }
 
 fn system_backup_ddup_bak_create_threads() -> usize {
@@ -339,10 +342,15 @@ nestify::nest! {
                 },
 
                 #[serde(default)]
-                pub wings: #[derive(Deserialize, Serialize, DefaultFromSerde)] #[serde(default)] pub struct SystemBackupsWings {
-                    #[serde(default = "system_backup_wings_restore_threads")]
-                    pub restore_threads: usize,
+                pub mounting: #[derive(Deserialize, Serialize, DefaultFromSerde)] #[serde(default)] pub struct SystemBackupsMounting {
+                    #[serde(default = "system_backup_mounting_enabled")]
+                    pub enabled: bool,
+                    #[serde(default = "system_backup_mounting_path")]
+                    pub path: String,
+                },
 
+                #[serde(default)]
+                pub wings: #[derive(Deserialize, Serialize, DefaultFromSerde)] #[serde(default)] pub struct SystemBackupsWings {
                     #[serde(default)]
                     pub archive_format: #[derive(Clone, Copy, Deserialize, Serialize, Default)] #[serde(rename_all = "snake_case")] pub enum SystemBackupsWingsArchiveFormat {
                         #[default]

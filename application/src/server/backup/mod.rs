@@ -9,7 +9,7 @@ use std::sync::Arc;
 use utoipa::ToSchema;
 
 mod btrfs;
-mod ddup_bak;
+pub mod ddup_bak;
 mod s3;
 mod wings;
 mod zfs;
@@ -133,6 +133,7 @@ pub async fn create_backup(
             crate::server::websocket::WebsocketEvent::ServerBackupCompleted,
             &[uuid.to_string(), serde_json::to_string(&backup).unwrap()],
         ))?;
+    server.configuration.write().await.backups.push(uuid);
 
     tracing::info!(
         "completed backup {} (adapter = {:?}) for server {}",

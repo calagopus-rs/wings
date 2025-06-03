@@ -1,3 +1,4 @@
+use crate::server::backup::BackupAdapter;
 use std::{
     collections::HashMap,
     fs::Metadata,
@@ -14,6 +15,7 @@ use tokio::{
 };
 
 pub mod archive;
+pub mod backup;
 pub mod limiter;
 pub mod pull;
 mod usage;
@@ -322,6 +324,50 @@ impl Filesystem {
         } else {
             None
         }
+    }
+
+    pub async fn backup_fs(
+        &self,
+        server: &crate::server::Server,
+        path: &Path,
+    ) -> Option<(BackupAdapter, uuid::Uuid, PathBuf)> {
+        if !self.config.system.backups.mounting.enabled {
+            return None;
+        }
+
+        if !path.starts_with(
+            self.base_path
+                .join(&self.config.system.backups.mounting.path),
+        ) {
+            return None;
+        }
+
+        let backup_path = path
+            .strip_prefix(
+                self.base_path
+                    .join(&self.config.system.backups.mounting.path),
+            )
+            .ok()?;
+        let uuid: uuid::Uuid = backup_path
+            .components()
+            .next()?
+            .as_os_str()
+            .to_string_lossy()
+            .parse()
+            .ok()?;
+
+        if !server.configuration.read().await.backups.contains(&uuid) {
+            return None;
+        }
+
+        Some((
+            BackupAdapter::DdupBak,
+            uuid,
+            backup_path
+                .strip_prefix(uuid.to_string())
+                .ok()?
+                .to_path_buf(),
+        ))
     }
 
     pub async fn truncate_path(&self, path: &PathBuf) -> tokio::io::Result<()> {

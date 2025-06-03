@@ -114,6 +114,64 @@ mod get {
                 }
             }
             Err(_) => {
+                if let Some((adapter, uuid, path)) =
+                    server.filesystem.backup_fs(&server, &path).await
+                {
+                    match crate::server::filesystem::backup::reader(adapter, &server, uuid, &path)
+                        .await
+                    {
+                        Ok((mut reader, size)) => {
+                            let mut headers = HeaderMap::new();
+
+                            headers.insert("Content-Length", size.into());
+                            headers.insert(
+                                "Content-Disposition",
+                                format!(
+                                    "attachment; filename={}",
+                                    serde_json::Value::String(
+                                        path.file_name().unwrap().to_str().unwrap().to_string(),
+                                    )
+                                )
+                                .parse()
+                                .unwrap(),
+                            );
+                            headers.insert(
+                                "Content-Type",
+                                "application/octet-stream".parse().unwrap(),
+                            );
+
+                            let (writer, async_reader) = tokio::io::duplex(8192);
+                            tokio::task::spawn_blocking(move || {
+                                let mut sync_writer = tokio_util::io::SyncIoBridge::new(writer);
+
+                                std::io::copy(&mut reader, &mut sync_writer).ok();
+                            });
+
+                            return (
+                                StatusCode::OK,
+                                headers,
+                                Body::from_stream(tokio_util::io::ReaderStream::new(Box::pin(
+                                    async_reader,
+                                ))),
+                            );
+                        }
+                        Err(err) => {
+                            tracing::error!(
+                                server = %server.uuid,
+                                path = %path.display(),
+                                error = %err,
+                                "failed to get backup file contents",
+                            );
+
+                            return (
+                                StatusCode::EXPECTATION_FAILED,
+                                HeaderMap::new(),
+                                Body::from("Failed to retrieve file contents from backup"),
+                            );
+                        }
+                    }
+                }
+
                 return (
                     StatusCode::NOT_FOUND,
                     HeaderMap::new(),

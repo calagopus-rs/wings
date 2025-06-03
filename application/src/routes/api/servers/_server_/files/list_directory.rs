@@ -48,6 +48,33 @@ mod get {
                 );
             }
         } else {
+            if let Some((adapter, uuid, path)) = server.filesystem.backup_fs(&server, &path).await {
+                match crate::server::filesystem::backup::list(adapter, &server, uuid, &path).await {
+                    Ok(entries_list) => {
+                        entries.extend(entries_list);
+                    }
+                    Err(err) => {
+                        tracing::error!(
+                            server = %server.uuid,
+                            path = %path.display(),
+                            error = %err,
+                            "failed to list backup directory",
+                        );
+
+                        return (
+                            StatusCode::EXPECTATION_FAILED,
+                            axum::Json(ApiError::new("failed to list backup directory").to_json()),
+                        );
+                    }
+                }
+
+                entries.sort_by(|a, b| a.name.cmp(&b.name));
+                return (
+                    StatusCode::OK,
+                    axum::Json(serde_json::to_value(&entries).unwrap()),
+                );
+            }
+
             return (
                 StatusCode::NOT_FOUND,
                 axum::Json(ApiError::new("path not found").to_json()),

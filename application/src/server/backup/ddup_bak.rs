@@ -11,8 +11,9 @@ use tokio::{io::AsyncReadExt, sync::RwLock};
 
 static REPOSITORY: RwLock<Option<Arc<ddup_bak::repository::Repository>>> = RwLock::const_new(None);
 
-#[inline]
-async fn get_repository(server: &crate::server::Server) -> Arc<ddup_bak::repository::Repository> {
+pub async fn get_repository(
+    server: &crate::server::Server,
+) -> Arc<ddup_bak::repository::Repository> {
     if let Some(repository) = REPOSITORY.read().await.as_ref() {
         return Arc::clone(repository);
     }
@@ -244,7 +245,7 @@ pub async fn download_backup(
     ))
 }
 
-fn tar_recursive_convert_entries(
+pub fn tar_recursive_convert_entries(
     entry: Entry,
     exit_early: &mut bool,
     repository: &ddup_bak::repository::Repository,

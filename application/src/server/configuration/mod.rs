@@ -44,6 +44,8 @@ nestify::nest! {
         pub environment: HashMap<String, serde_json::Value>,
         #[serde(default)]
         pub labels: HashMap<String, String>,
+        #[serde(default)]
+        pub backups: Vec<uuid::Uuid>,
 
         #[schema(inline)]
         pub allocations: #[derive(ToSchema, Deserialize, Serialize)] pub struct ServerConfigurationAllocations {

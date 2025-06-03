@@ -99,6 +99,31 @@ mod get {
             }
         };
 
+        let file_name = path.file_name().unwrap().to_string_lossy().to_string();
+
+        let mut folder_ascii = "".to_string();
+        for c in file_name.chars() {
+            if c.is_ascii() {
+                folder_ascii.push(c);
+            } else {
+                folder_ascii.push('_');
+            }
+        }
+
+        folder_ascii.push_str(".tar.gz");
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "Content-Disposition",
+            format!(
+                "attachment; filename={}",
+                serde_json::Value::String(folder_ascii)
+            )
+            .parse()
+            .unwrap(),
+        );
+        headers.insert("Content-Type", "application/gzip".parse().unwrap());
+
         let metadata = tokio::fs::symlink_metadata(&path).await;
         if let Ok(metadata) = metadata {
             if !metadata.is_dir() || server.filesystem.is_ignored(&path, metadata.is_dir()).await {
@@ -108,9 +133,44 @@ mod get {
                     Body::from("Folder not found"),
                 );
             }
+        } else {
+            if let Some((adapter, uuid, path)) = server.filesystem.backup_fs(&server, &path).await {
+                match crate::server::filesystem::backup::directory_reader(
+                    adapter, &server, uuid, &path,
+                )
+                .await
+                {
+                    Ok(reader) => {
+                        return (
+                            StatusCode::OK,
+                            headers,
+                            Body::from_stream(tokio_util::io::ReaderStream::new(Box::pin(reader))),
+                        );
+                    }
+                    Err(err) => {
+                        tracing::error!(
+                            server = %server.uuid,
+                            path = %path.display(),
+                            error = %err,
+                            "failed to get backup directory contents",
+                        );
+
+                        return (
+                            StatusCode::EXPECTATION_FAILED,
+                            HeaderMap::new(),
+                            Body::from("Failed to retrieve backup folder contents"),
+                        );
+                    }
+                }
+            }
+
+            return (
+                StatusCode::NOT_FOUND,
+                HeaderMap::new(),
+                Body::from("Folder not found"),
+            );
         }
 
-        let file_name = path.file_name().unwrap().to_string_lossy().to_string();
         let (writer, reader) = tokio::io::duplex(65536);
 
         tokio::task::spawn_blocking(move || {
@@ -158,29 +218,6 @@ mod get {
 
             tar.finish().ok();
         });
-
-        let mut folder_ascii = "".to_string();
-        for c in file_name.chars() {
-            if c.is_ascii() {
-                folder_ascii.push(c);
-            } else {
-                folder_ascii.push('_');
-            }
-        }
-
-        folder_ascii.push_str(".tar.gz");
-
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            "Content-Disposition",
-            format!(
-                "attachment; filename={}",
-                serde_json::Value::String(folder_ascii)
-            )
-            .parse()
-            .unwrap(),
-        );
-        headers.insert("Content-Type", "application/gzip".parse().unwrap());
 
         (
             StatusCode::OK,
