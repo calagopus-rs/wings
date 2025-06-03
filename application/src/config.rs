@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 use serde_default::DefaultFromSerde;
 use std::{
     cell::UnsafeCell,
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
+    fs::File,
     ops::{Deref, DerefMut},
     os::unix::fs::PermissionsExt,
     sync::Arc,
@@ -86,6 +87,10 @@ fn system_crash_detection_detect_clean_exit_as_crash() -> bool {
 }
 fn system_crash_detection_timeout() -> u64 {
     60
+}
+
+fn system_backup_wings_restore_threads() -> usize {
+    4
 }
 
 fn system_backup_ddup_bak_create_threads() -> usize {
@@ -334,6 +339,18 @@ nestify::nest! {
                 },
 
                 #[serde(default)]
+                pub wings: #[derive(Deserialize, Serialize, DefaultFromSerde)] #[serde(default)] pub struct SystemBackupsWings {
+                    #[serde(default = "system_backup_wings_restore_threads")]
+                    pub restore_threads: usize,
+
+                    #[serde(default)]
+                    pub archive_format: #[derive(Clone, Copy, Deserialize, Serialize, Default)] #[serde(rename_all = "snake_case")] pub enum SystemBackupsWingsArchiveFormat {
+                        #[default]
+                        TarGz,
+                        Zip,
+                    },
+                },
+                #[serde(default)]
                 pub ddup_bak: #[derive(Deserialize, Serialize, DefaultFromSerde)] #[serde(default)] pub struct SystemBackupsDdupBak {
                     #[serde(default = "system_backup_ddup_bak_create_threads")]
                     pub create_threads: usize,
@@ -451,7 +468,7 @@ nestify::nest! {
 
                 #[serde(default)]
                 /// Memory Limit MiB -> Multiplier
-                pub multipliers: HashMap<i64, f64>,
+                pub multipliers: BTreeMap<i64, f64>,
             },
 
             #[serde(default)]
@@ -517,11 +534,7 @@ impl DockerOverhead {
             return 1.05;
         }
 
-        let mut multipliers = self.multipliers.keys().copied().collect::<Vec<i64>>();
-        multipliers.sort();
-        multipliers.reverse();
-
-        for m in multipliers {
+        for m in self.multipliers.keys().copied().rev() {
             if memory > m {
                 continue;
             }
@@ -532,6 +545,7 @@ impl DockerOverhead {
         self.default_multiplier
     }
 
+    #[inline]
     pub fn get_memory(&self, memory: i64) -> i64 {
         let multiplier = self.get_mutiplier(memory);
 
@@ -567,8 +581,7 @@ impl Config {
         debug: bool,
         ignore_certificate_errors: bool,
     ) -> Result<(Arc<Self>, WorkerGuard), anyhow::Error> {
-        let file =
-            std::fs::File::open(path).context(format!("failed to open config file {}", path))?;
+        let file = File::open(path).context(format!("failed to open config file {}", path))?;
         let reader = std::io::BufReader::new(file);
         let config: InnerConfig = serde_yml::from_reader(reader)
             .context(format!("failed to parse config file {}", path))?;
@@ -634,8 +647,7 @@ impl Config {
     pub fn save_new(path: &str, config: InnerConfig) -> Result<(), anyhow::Error> {
         std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap())
             .context(format!("failed to create config directory {}", path))?;
-        let file = std::fs::File::create(path)
-            .context(format!("failed to create config file {}", path))?;
+        let file = File::create(path).context(format!("failed to create config file {}", path))?;
         let writer = std::io::BufWriter::new(file);
         serde_yml::to_writer(writer, &config)
             .context(format!("failed to write config file {}", path))?;
@@ -644,7 +656,7 @@ impl Config {
     }
 
     pub fn save(&self) -> Result<(), anyhow::Error> {
-        let file = std::fs::File::create(&self.path)
+        let file = File::create(&self.path)
             .context(format!("failed to create config file {}", self.path))?;
         let writer = std::io::BufWriter::new(file);
         serde_yml::to_writer(writer, unsafe { &*self.inner.get() })
@@ -795,13 +807,12 @@ impl Config {
 
     fn ensure_passwd(&self) -> Result<(), anyhow::Error> {
         if self.system.passwd.enabled {
-            let v = format!(
-                "root:x:0:\ncontainer:x:{}:\nnogroup:x:65534:",
-                self.system.user.gid
-            );
             std::fs::write(
                 std::path::Path::new(&self.system.passwd.directory).join("group"),
-                v,
+                format!(
+                    "root:x:0:\ncontainer:x:{}:\nnogroup:x:65534:",
+                    self.system.user.gid
+                ),
             )
             .context(format!(
                 "failed to write group file {}",
@@ -820,13 +831,12 @@ impl Config {
                     .display()
             ))?;
 
-            let v = format!(
-                "root:x:0:0::/root:/bin/sh\ncontainer:x:{}:{}::/home/container:/bin/sh\nnobody:x:65534:65534::/var/empty:/bin/sh\n",
-                self.system.user.uid, self.system.user.gid
-            );
             std::fs::write(
                 std::path::Path::new(&self.system.passwd.directory).join("passwd"),
-                v,
+                format!(
+                    "root:x:0:0::/root:/bin/sh\ncontainer:x:{}:{}::/home/container:/bin/sh\nnobody:x:65534:65534::/var/empty:/bin/sh\n",
+                    self.system.user.uid, self.system.user.gid
+                ),
             )
             .context(format!(
                 "failed to write passwd file {}",

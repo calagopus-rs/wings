@@ -280,8 +280,12 @@ pub async fn install_server(
             ))
     };
 
-    if server.configuration.read().await.skip_egg_scripts && !reinstall {
+    if server.configuration.read().await.skip_egg_scripts {
         unset_installing(true).await?;
+        tracing::info!(
+            server = %server.uuid,
+            "skipping installation script execution as per configuration"
+        );
 
         return Ok(());
     }
