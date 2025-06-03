@@ -52,6 +52,67 @@ mod get {
             }
         };
 
+        if let Some((adapter, uuid, path)) = server.filesystem.backup_fs(&server, &path).await {
+            match crate::server::filesystem::backup::reader(adapter, &server, uuid, &path).await {
+                Ok((mut reader, size)) => {
+                    let mut headers = HeaderMap::new();
+
+                    headers.insert("Content-Length", size.into());
+                    if data.download {
+                        headers.insert(
+                            "Content-Disposition",
+                            format!(
+                                "attachment; filename={}",
+                                serde_json::Value::String(
+                                    path.file_name().unwrap().to_str().unwrap().to_string(),
+                                )
+                            )
+                            .parse()
+                            .unwrap(),
+                        );
+                        headers.insert("Content-Type", "application/octet-stream".parse().unwrap());
+                    }
+
+                    let (writer, async_reader) = tokio::io::duplex(8192);
+                    tokio::task::spawn_blocking(move || {
+                        let mut sync_writer = tokio_util::io::SyncIoBridge::new(writer);
+
+                        std::io::copy(&mut reader, &mut sync_writer).ok();
+                    });
+
+                    return (
+                        StatusCode::OK,
+                        headers,
+                        Body::from_stream(tokio_util::io::ReaderStream::new(Box::pin(
+                            async_reader,
+                        ))),
+                    );
+                }
+                Err(err) => {
+                    tracing::error!(
+                        server = %server.uuid,
+                        path = %path.display(),
+                        error = %err,
+                        "failed to get backup file contents",
+                    );
+
+                    return (
+                        StatusCode::EXPECTATION_FAILED,
+                        HeaderMap::from_iter([(
+                            "Content-Type".parse().unwrap(),
+                            "application/json".parse().unwrap(),
+                        )]),
+                        Body::from(
+                            serde_json::to_string(&ApiError::new(
+                                "failed to get backup file contents",
+                            ))
+                            .unwrap(),
+                        ),
+                    );
+                }
+            }
+        }
+
         let metadata = tokio::fs::symlink_metadata(&path).await;
         if let Ok(metadata) = metadata {
             if !metadata.is_file() || server.filesystem.is_ignored(&path, metadata.is_dir()).await {
@@ -72,80 +133,6 @@ mod get {
             {
                 Some(file) => file,
                 None => {
-                    if let Some((adapter, uuid, path)) =
-                        server.filesystem.backup_fs(&server, &path).await
-                    {
-                        match crate::server::filesystem::backup::reader(
-                            adapter, &server, uuid, &path,
-                        )
-                        .await
-                        {
-                            Ok((mut reader, size)) => {
-                                let mut headers = HeaderMap::new();
-
-                                headers.insert("Content-Length", size.into());
-                                if data.download {
-                                    headers.insert(
-                                        "Content-Disposition",
-                                        format!(
-                                            "attachment; filename={}",
-                                            serde_json::Value::String(
-                                                path.file_name()
-                                                    .unwrap()
-                                                    .to_str()
-                                                    .unwrap()
-                                                    .to_string(),
-                                            )
-                                        )
-                                        .parse()
-                                        .unwrap(),
-                                    );
-                                    headers.insert(
-                                        "Content-Type",
-                                        "application/octet-stream".parse().unwrap(),
-                                    );
-                                }
-
-                                let (writer, async_reader) = tokio::io::duplex(8192);
-                                tokio::task::spawn_blocking(move || {
-                                    let mut sync_writer = tokio_util::io::SyncIoBridge::new(writer);
-
-                                    std::io::copy(&mut reader, &mut sync_writer).ok();
-                                });
-
-                                return (
-                                    StatusCode::OK,
-                                    headers,
-                                    Body::from_stream(tokio_util::io::ReaderStream::new(Box::pin(
-                                        async_reader,
-                                    ))),
-                                );
-                            }
-                            Err(err) => {
-                                tracing::error!(
-                                    server = %server.uuid,
-                                    path = %path.display(),
-                                    error = %err,
-                                    "failed to get backup file contents",
-                                );
-
-                                return (
-                                    StatusCode::EXPECTATION_FAILED,
-                                    HeaderMap::from_iter([(
-                                        "Content-Type".parse().unwrap(),
-                                        "application/json".parse().unwrap(),
-                                    )]),
-                                    Body::from(
-                                        serde_json::to_string(&ApiError::new(
-                                            "failed to get backup file contents",
-                                        ))
-                                        .unwrap(),
-                                    ),
-                                );
-                            }
-                        }
-                    }
-
                     return (
                         StatusCode::NOT_FOUND,
                         HeaderMap::from_iter([(
