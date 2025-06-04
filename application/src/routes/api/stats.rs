@@ -112,7 +112,7 @@ static FIRST_RUN: LazyLock<Arc<Mutex<bool>>> = LazyLock::new(|| Arc::new(Mutex::
 mod get {
     use crate::routes::api::stats::{FIRST_RUN, HISTORY};
     use serde::Serialize;
-    use std::time::Instant;
+    use std::{path::Path, time::Instant};
     use sysinfo::{Disks, Networks, System};
     use utoipa::ToSchema;
 
@@ -135,7 +135,6 @@ mod get {
     struct MemoryStats {
         used: u64,
         total: u64,
-        percent: f64,
     }
 
     #[derive(ToSchema, Serialize)]
@@ -173,18 +172,15 @@ mod get {
 
         let total_memory = sys.total_memory() / (1024 * 1024);
         let used_memory = sys.used_memory() / (1024 * 1024);
-        let memory_percent = if total_memory > 0 {
-            (used_memory as f64 / total_memory as f64) * 100.0
-        } else {
-            0.0
-        };
 
-        let mut total_disk_space = 0;
-        let mut used_disk_space = 0;
-        for disk in &disks {
-            total_disk_space += disk.total_space() / (1024 * 1024);
-            used_disk_space += (disk.total_space() - disk.available_space()) / (1024 * 1024);
-        }
+        let disk = disks
+            .iter()
+            .find(|d| d.mount_point() == Path::new("/"))
+            .unwrap_or(&disks[0]);
+        let total_disk_space = disk.total_space() / (1024 * 1024);
+        let used_disk_space = (disk.total_space() - disk.available_space()) / (1024 * 1024);
+        let total_disk_read = disk.usage().total_read_bytes / (1024 * 1024);
+        let total_disk_write = disk.usage().total_written_bytes / (1024 * 1024);
 
         let mut total_received = 0;
         let mut total_transmitted = 0;
@@ -199,15 +195,6 @@ mod get {
             .cpus()
             .first()
             .map_or_else(|| "unknown".to_string(), |cpu| cpu.brand().to_string());
-
-        let mut total_disk_read = 0;
-        let mut total_disk_write = 0;
-        for disk in &disks {
-            let disk_usage = disk.usage();
-
-            total_disk_read += disk_usage.total_read_bytes / (1024 * 1024);
-            total_disk_write += disk_usage.total_written_bytes / (1024 * 1024);
-        }
 
         let now = Instant::now();
         let mut is_first_run = FIRST_RUN.lock().unwrap();
@@ -243,7 +230,6 @@ mod get {
             memory: MemoryStats {
                 used: used_memory,
                 total: total_memory,
-                percent: memory_percent,
             },
             disk: DiskStats {
                 used: used_disk_space,
