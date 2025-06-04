@@ -118,7 +118,7 @@ mod get {
 
     #[derive(ToSchema, Serialize)]
     struct CpuStats {
-        used: f64,
+        used: f32,
         threads: usize,
         model: String,
     }
@@ -156,7 +156,7 @@ mod get {
     }
 
     #[utoipa::path(get, path = "/", responses(
-        (status = 200, body = inline(Response)),
+        (status = OK, body = inline(Response)),
     ))]
     pub async fn route() -> axum::Json<Response> {
         let mut sys = System::new_all();
@@ -170,26 +170,26 @@ mod get {
         disks.refresh(true);
         networks.refresh(true);
 
-        let total_memory = sys.total_memory() / (1024 * 1024);
-        let used_memory = sys.used_memory() / (1024 * 1024);
+        let total_memory = sys.total_memory() / 1024 / 1024;
+        let used_memory = sys.used_memory() / 1024 / 1024;
 
         let disk = disks
             .iter()
             .find(|d| d.mount_point() == Path::new("/"))
             .unwrap_or(&disks[0]);
-        let total_disk_space = disk.total_space() / (1024 * 1024);
-        let used_disk_space = (disk.total_space() - disk.available_space()) / (1024 * 1024);
-        let total_disk_read = disk.usage().total_read_bytes / (1024 * 1024);
-        let total_disk_write = disk.usage().total_written_bytes / (1024 * 1024);
+        let total_disk_space = disk.total_space() / 1024 / 1024;
+        let used_disk_space = (disk.total_space() - disk.available_space()) / 1024 / 1024;
+        let total_disk_read = disk.usage().total_read_bytes / 1024 / 1024;
+        let total_disk_write = disk.usage().total_written_bytes / 1024 / 1024;
 
         let mut total_received = 0;
         let mut total_transmitted = 0;
         for (_, network) in networks.into_iter() {
-            total_received += network.total_received() / (1024 * 1024);
-            total_transmitted += network.total_transmitted() / (1024 * 1024);
+            total_received += network.total_received() / 1024 / 1024;
+            total_transmitted += network.total_transmitted() / 1024 / 1024;
         }
 
-        let cpu_usage = sys.global_cpu_usage() as f64;
+        let cpu_usage = sys.global_cpu_usage();
         let cpu_threads = sys.cpus().len();
         let cpu_model = sys
             .cpus()
