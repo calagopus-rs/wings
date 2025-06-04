@@ -10,6 +10,7 @@ use utoipa_axum::router::OpenApiRouter;
 
 mod extensions;
 pub mod servers;
+mod stats;
 mod system;
 mod transfers;
 mod update;
@@ -44,6 +45,11 @@ pub fn router(state: &State) -> OpenApiRouter<State> {
         .nest(
             "/system",
             system::router(state)
+                .route_layer(axum::middleware::from_fn_with_state(state.clone(), auth)),
+        )
+        .nest(
+            "/stats",
+            stats::router(state)
                 .route_layer(axum::middleware::from_fn_with_state(state.clone(), auth)),
         )
         .nest(
