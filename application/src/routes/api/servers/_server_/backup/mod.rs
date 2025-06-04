@@ -27,8 +27,10 @@ mod post {
         server: GetServer,
         axum::Json(data): axum::Json<Payload>,
     ) -> (StatusCode, axum::Json<serde_json::Value>) {
-        let backups = crate::server::backup::InternalBackup::list(&server).await;
-        if backups.into_iter().any(|b| b.uuid == data.uuid) {
+        if crate::server::backup::InternalBackup::find(&server, data.uuid)
+            .await
+            .is_some()
+        {
             return (
                 StatusCode::CONFLICT,
                 axum::Json(ApiError::new("backup already exists").to_json()),

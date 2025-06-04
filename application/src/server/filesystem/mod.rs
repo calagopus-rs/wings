@@ -360,19 +360,16 @@ impl Filesystem {
             return None;
         }
 
-        let backups = crate::server::backup::InternalBackup::list(server).await;
-        let backup = match backups.into_iter().find(|b| b.uuid == uuid) {
-            Some(backup) => backup,
-            None => return None,
-        };
-
-        Some((
-            backup,
-            backup_path
-                .strip_prefix(uuid.to_string())
-                .ok()?
-                .to_path_buf(),
-        ))
+        match crate::server::backup::InternalBackup::find(server, uuid).await {
+            Some(backup) => Some((
+                backup,
+                backup_path
+                    .strip_prefix(uuid.to_string())
+                    .ok()?
+                    .to_path_buf(),
+            )),
+            None => None,
+        }
     }
 
     pub async fn truncate_path(&self, path: &PathBuf) -> tokio::io::Result<()> {

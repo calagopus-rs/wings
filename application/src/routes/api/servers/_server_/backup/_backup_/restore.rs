@@ -37,8 +37,7 @@ mod post {
         }
 
         let backup = if data.adapter != crate::server::backup::BackupAdapter::S3 {
-            let backups = crate::server::backup::InternalBackup::list(&server).await;
-            match backups.into_iter().find(|b| b.uuid == backup_id) {
+            match crate::server::backup::InternalBackup::find(&server, backup_id).await {
                 Some(backup) => backup,
                 None => {
                     return (

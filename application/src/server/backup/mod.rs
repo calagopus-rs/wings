@@ -190,6 +190,37 @@ impl InternalBackup {
         backups
     }
 
+    pub async fn find(server: &crate::server::Server, uuid: uuid::Uuid) -> Option<Self> {
+        for adapter in BackupAdapter::variants() {
+            match match adapter {
+                BackupAdapter::Wings => wings::list_backups(server).await,
+                BackupAdapter::S3 => Ok(Vec::new()),
+                BackupAdapter::DdupBak => ddup_bak::list_backups(server).await,
+                BackupAdapter::Btrfs => btrfs::list_backups(server).await,
+                BackupAdapter::Zfs => zfs::list_backups(server).await,
+            } {
+                Ok(uuids) => {
+                    if uuids.contains(&uuid) {
+                        return Some(Self {
+                            adapter: *adapter,
+                            uuid,
+                        });
+                    }
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to find backup {} for adapter {:?}: {}",
+                        uuid,
+                        adapter,
+                        e
+                    );
+                }
+            }
+        }
+
+        None
+    }
+
     pub async fn restore(
         &self,
         client: &Arc<bollard::Docker>,

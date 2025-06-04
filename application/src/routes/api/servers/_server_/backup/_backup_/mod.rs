@@ -20,8 +20,7 @@ mod delete {
         server: GetServer,
         Path((_server, backup_id)): Path<(uuid::Uuid, uuid::Uuid)>,
     ) -> (StatusCode, axum::Json<serde_json::Value>) {
-        let backups = crate::server::backup::InternalBackup::list(&server).await;
-        let backup = match backups.into_iter().find(|b| b.uuid == backup_id) {
+        let backup = match crate::server::backup::InternalBackup::find(&server, backup_id).await {
             Some(backup) => backup,
             None => {
                 return (
