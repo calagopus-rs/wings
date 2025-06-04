@@ -1,4 +1,4 @@
-use crate::server::backup::BackupAdapter;
+use crate::server::backup::InternalBackup;
 use std::{
     collections::HashMap,
     fs::Metadata,
@@ -330,7 +330,7 @@ impl Filesystem {
         &self,
         server: &crate::server::Server,
         path: &Path,
-    ) -> Option<(BackupAdapter, uuid::Uuid, PathBuf)> {
+    ) -> Option<(InternalBackup, PathBuf)> {
         if !self.config.system.backups.mounting.enabled {
             return None;
         }
@@ -360,9 +360,14 @@ impl Filesystem {
             return None;
         }
 
+        let backups = crate::server::backup::InternalBackup::list(server).await;
+        let backup = match backups.into_iter().find(|b| b.uuid == uuid) {
+            Some(backup) => backup,
+            None => return None,
+        };
+
         Some((
-            BackupAdapter::DdupBak,
-            uuid,
+            backup,
             backup_path
                 .strip_prefix(uuid.to_string())
                 .ok()?

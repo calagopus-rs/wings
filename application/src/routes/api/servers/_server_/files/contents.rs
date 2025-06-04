@@ -52,8 +52,8 @@ mod get {
             }
         };
 
-        if let Some((adapter, uuid, path)) = server.filesystem.backup_fs(&server, &path).await {
-            match crate::server::filesystem::backup::reader(adapter, &server, uuid, &path).await {
+        if let Some((backup, path)) = server.filesystem.backup_fs(&server, &path).await {
+            match crate::server::filesystem::backup::reader(backup, &server, &path).await {
                 Ok((mut reader, size)) => {
                     let mut headers = HeaderMap::new();
 

@@ -124,9 +124,8 @@ mod get {
         );
         headers.insert("Content-Type", "application/gzip".parse().unwrap());
 
-        if let Some((adapter, uuid, path)) = server.filesystem.backup_fs(&server, &path).await {
-            match crate::server::filesystem::backup::directory_reader(adapter, &server, uuid, &path)
-                .await
+        if let Some((backup, path)) = server.filesystem.backup_fs(&server, &path).await {
+            match crate::server::filesystem::backup::directory_reader(backup, &server, &path).await
             {
                 Ok(reader) => {
                     return (

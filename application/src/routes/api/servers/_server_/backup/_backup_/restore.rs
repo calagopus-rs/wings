@@ -36,36 +36,39 @@ mod post {
             );
         }
 
-        if data.adapter != crate::server::backup::BackupAdapter::S3
-            && !crate::server::backup::list_backups(data.adapter, &server)
-                .await
-                .unwrap()
-                .iter()
-                .copied()
-                .any(|b| b == backup_id)
-        {
-            return (
-                StatusCode::NOT_FOUND,
-                axum::Json(ApiError::new("backup not found").to_json()),
-            );
-        }
+        let backup = if data.adapter != crate::server::backup::BackupAdapter::S3 {
+            let backups = crate::server::backup::InternalBackup::list(&server).await;
+            match backups.into_iter().find(|b| b.uuid == backup_id) {
+                Some(backup) => backup,
+                None => {
+                    return (
+                        StatusCode::NOT_FOUND,
+                        axum::Json(ApiError::new("backup not found").to_json()),
+                    );
+                }
+            }
+        } else {
+            crate::server::backup::InternalBackup {
+                adapter: data.adapter,
+                uuid: backup_id,
+            }
+        };
 
         tokio::spawn(async move {
-            if let Err(err) = crate::server::backup::restore_backup(
-                data.adapter,
-                &state.docker,
-                &server,
-                backup_id,
-                data.truncate_directory,
-                data.download_url,
-            )
-            .await
+            if let Err(err) = backup
+                .restore(
+                    &state.docker,
+                    &server,
+                    data.truncate_directory,
+                    data.download_url,
+                )
+                .await
             {
                 tracing::error!(
-                    "failed to restore backup {} (adapter = {:?}) for {}: {}",
-                    backup_id,
-                    data.adapter,
-                    server.uuid,
+                    server = %server.uuid,
+                    backup = %backup.uuid,
+                    adapter = ?backup.adapter,
+                    "failed to restore backup: {:#?}",
                     err
                 );
             }

@@ -330,26 +330,3 @@ pub async fn delete_backup(
 
     Ok(())
 }
-
-pub async fn list_backups(
-    server: &crate::server::Server,
-) -> Result<Vec<uuid::Uuid>, anyhow::Error> {
-    let mut backups = Vec::new();
-    let path = Path::new(&server.config.system.backup_directory);
-
-    let mut entries = tokio::fs::read_dir(path).await?;
-    while let Some(entry) = entries.next_entry().await? {
-        let file_name = entry.file_name();
-
-        if let Ok(uuid) = uuid::Uuid::parse_str(
-            file_name
-                .to_str()
-                .unwrap_or_default()
-                .trim_end_matches(".s3.tar.gz"),
-        ) {
-            backups.push(uuid);
-        }
-    }
-
-    Ok(backups)
-}

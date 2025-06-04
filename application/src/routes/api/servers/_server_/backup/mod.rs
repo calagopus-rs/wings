@@ -27,13 +27,8 @@ mod post {
         server: GetServer,
         axum::Json(data): axum::Json<Payload>,
     ) -> (StatusCode, axum::Json<serde_json::Value>) {
-        if crate::server::backup::list_backups(data.adapter, &server)
-            .await
-            .unwrap()
-            .iter()
-            .copied()
-            .any(|b| b == data.uuid)
-        {
+        let backups = crate::server::backup::InternalBackup::list(&server).await;
+        if backups.into_iter().any(|b| b.uuid == data.uuid) {
             return (
                 StatusCode::CONFLICT,
                 axum::Json(ApiError::new("backup already exists").to_json()),
@@ -41,9 +36,13 @@ mod post {
         }
 
         tokio::spawn(async move {
-            if let Err(err) =
-                crate::server::backup::create_backup(data.adapter, &server, data.uuid, data.ignore)
-                    .await
+            if let Err(err) = crate::server::backup::InternalBackup::create(
+                data.adapter,
+                &server,
+                data.uuid,
+                data.ignore,
+            )
+            .await
             {
                 tracing::error!(
                     "failed to create backup {} (adapter = {:?}) for {}: {}",

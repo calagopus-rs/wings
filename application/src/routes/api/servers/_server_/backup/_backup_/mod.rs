@@ -4,7 +4,7 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 mod restore;
 
 mod delete {
-    use crate::routes::api::servers::_server_::GetServer;
+    use crate::routes::{ApiError, api::servers::_server_::GetServer};
     use axum::{extract::Path, http::StatusCode};
     use serde::Serialize;
     use utoipa::ToSchema;
@@ -14,72 +14,30 @@ mod delete {
 
     #[utoipa::path(delete, path = "/", responses(
         (status = OK, body = inline(Response)),
+        (status = NOT_FOUND, body = inline(ApiError)),
     ))]
     pub async fn route(
         server: GetServer,
         Path((_server, backup_id)): Path<(uuid::Uuid, uuid::Uuid)>,
     ) -> (StatusCode, axum::Json<serde_json::Value>) {
+        let backups = crate::server::backup::InternalBackup::list(&server).await;
+        let backup = match backups.into_iter().find(|b| b.uuid == backup_id) {
+            Some(backup) => backup,
+            None => {
+                return (
+                    StatusCode::NOT_FOUND,
+                    axum::Json(ApiError::new("backup not found").to_json()),
+                );
+            }
+        };
+
         tokio::spawn(async move {
-            if let Err(err) = crate::server::backup::delete_backup(
-                crate::server::backup::BackupAdapter::Wings,
-                &server,
-                backup_id,
-            )
-            .await
-            {
+            if let Err(err) = backup.delete(&server).await {
                 tracing::error!(
-                    "failed to delete backup {} (adapter = {:?}) for {}: {}",
-                    backup_id,
-                    crate::server::backup::BackupAdapter::Wings,
-                    server.uuid,
-                    err
-                );
-            }
-
-            if let Err(err) = crate::server::backup::delete_backup(
-                crate::server::backup::BackupAdapter::DdupBak,
-                &server,
-                backup_id,
-            )
-            .await
-            {
-                tracing::error!(
-                    "failed to delete backup {} (adapter = {:?}) for {}: {}",
-                    backup_id,
-                    crate::server::backup::BackupAdapter::DdupBak,
-                    server.uuid,
-                    err
-                );
-            }
-
-            if let Err(err) = crate::server::backup::delete_backup(
-                crate::server::backup::BackupAdapter::Btrfs,
-                &server,
-                backup_id,
-            )
-            .await
-            {
-                tracing::error!(
-                    "failed to delete backup {} (adapter = {:?}) for {}: {}",
-                    backup_id,
-                    crate::server::backup::BackupAdapter::Btrfs,
-                    server.uuid,
-                    err
-                );
-            }
-
-            if let Err(err) = crate::server::backup::delete_backup(
-                crate::server::backup::BackupAdapter::Zfs,
-                &server,
-                backup_id,
-            )
-            .await
-            {
-                tracing::error!(
-                    "failed to delete backup {} (adapter = {:?}) for {}: {}",
-                    backup_id,
-                    crate::server::backup::BackupAdapter::Zfs,
-                    server.uuid,
+                    server = %server.uuid,
+                    backup = %backup.uuid,
+                    adapter = ?backup.adapter,
+                    "failed to delete backup: {:#?}",
                     err
                 );
             }

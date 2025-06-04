@@ -39,8 +39,8 @@ mod get {
             }
         };
 
-        if let Some((adapter, uuid, path)) = server.filesystem.backup_fs(&server, &path).await {
-            match crate::server::filesystem::backup::list(adapter, &server, uuid, &path).await {
+        if let Some((backup, path)) = server.filesystem.backup_fs(&server, &path).await {
+            match crate::server::filesystem::backup::list(backup, &server, &path).await {
                 Ok(entries_list) => {
                     entries.extend(entries_list);
                 }

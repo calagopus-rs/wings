@@ -87,48 +87,30 @@ mod get {
             }
         };
 
-        if let Ok(response) = crate::server::backup::download_backup(
-            crate::server::backup::BackupAdapter::Wings,
-            &server,
-            payload.backup_uuid,
-        )
-        .await
-        {
-            return response;
-        }
-        if let Ok(response) = crate::server::backup::download_backup(
-            crate::server::backup::BackupAdapter::DdupBak,
-            &server,
-            payload.backup_uuid,
-        )
-        .await
-        {
-            return response;
-        }
-        if let Ok(response) = crate::server::backup::download_backup(
-            crate::server::backup::BackupAdapter::Btrfs,
-            &server,
-            payload.backup_uuid,
-        )
-        .await
-        {
-            return response;
-        }
-        if let Ok(response) = crate::server::backup::download_backup(
-            crate::server::backup::BackupAdapter::Zfs,
-            &server,
-            payload.backup_uuid,
-        )
-        .await
-        {
-            return response;
-        }
+        let backups = crate::server::backup::InternalBackup::list(&server).await;
+        let backup = match backups.into_iter().find(|b| b.uuid == payload.backup_uuid) {
+            Some(backup) => backup,
+            None => {
+                return (
+                    StatusCode::NOT_FOUND,
+                    HeaderMap::new(),
+                    Body::from("Backup not found"),
+                );
+            }
+        };
 
-        (
-            StatusCode::NOT_FOUND,
-            HeaderMap::new(),
-            Body::from("Backup not found"),
-        )
+        match backup.download(&server).await {
+            Ok(response) => response,
+            Err(e) => {
+                tracing::error!("failed to download backup: {}", e);
+
+                (
+                    StatusCode::EXPECTATION_FAILED,
+                    HeaderMap::new(),
+                    Body::from("Failed to download backup"),
+                )
+            }
+        }
     }
 }
 
