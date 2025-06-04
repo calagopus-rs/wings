@@ -126,7 +126,7 @@ mod get {
     #[derive(ToSchema, Serialize)]
     struct NetworkStats {
         received: u64,
-        receiving_rate: f64,
+        recieving_rate: f64,
         sent: u64,
         sending_rate: f64,
     }
@@ -141,6 +141,7 @@ mod get {
     struct DiskStats {
         used: u64,
         total: u64,
+
         read: u64,
         reading_rate: f64,
         written: u64,
@@ -223,7 +224,7 @@ mod get {
             },
             network: NetworkStats {
                 received: total_received,
-                receiving_rate: net_in_rate,
+                recieving_rate: net_in_rate,
                 sent: total_transmitted,
                 sending_rate: net_out_rate,
             },
