@@ -22,6 +22,9 @@ fn api_host() -> String {
 fn api_port() -> u16 {
     8080
 }
+fn api_file_search_threads() -> usize {
+    4
+}
 fn api_upload_limit() -> usize {
     100
 }
@@ -233,6 +236,8 @@ nestify::nest! {
             pub disable_remote_download: bool,
             #[serde(default)]
             pub send_offline_server_logs: bool,
+            #[serde(default = "api_file_search_threads")]
+            pub file_search_threads: usize,
             #[serde(default = "api_upload_limit")]
             /// MB
             pub upload_limit: usize,

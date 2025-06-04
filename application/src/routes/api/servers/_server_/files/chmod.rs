@@ -47,7 +47,7 @@ mod post {
             }
         };
 
-        let metadata = root.symlink_metadata();
+        let metadata = tokio::fs::symlink_metadata(&root).await;
         if !metadata.map(|m| m.is_dir()).unwrap_or(true) {
             return (
                 StatusCode::EXPECTATION_FAILED,

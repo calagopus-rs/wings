@@ -2,7 +2,7 @@ use super::State;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod post {
-    use crate::routes::{ApiError, api::servers::_server_::GetServer};
+    use crate::routes::{ApiError, GetState, api::servers::_server_::GetServer};
     use axum::http::StatusCode;
     use ignore::{WalkBuilder, WalkState};
     use serde::{Deserialize, Serialize};
@@ -35,6 +35,7 @@ mod post {
         (status = NOT_FOUND, body = inline(ApiError)),
     ), request_body = inline(Payload))]
     pub async fn route(
+        state: GetState,
         server: GetServer,
         axum::Json(data): axum::Json<Payload>,
     ) -> (StatusCode, axum::Json<serde_json::Value>) {
@@ -51,7 +52,7 @@ mod post {
             }
         };
 
-        let metadata = root.symlink_metadata();
+        let metadata = tokio::fs::symlink_metadata(&root).await;
         if !metadata.map(|m| m.is_dir()).unwrap_or(true) {
             return (
                 StatusCode::EXPECTATION_FAILED,
@@ -72,6 +73,7 @@ mod post {
                     .ignore(false)
                     .git_exclude(false)
                     .follow_links(false)
+                    .threads(state.config.api.file_search_threads)
                     .build_parallel()
                     .run(move || {
                         let server = Arc::clone(&server);
