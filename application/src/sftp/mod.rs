@@ -233,7 +233,7 @@ impl russh_sftp::server::Handler for SftpSession {
 
             let file = match file {
                 Some(file) => file,
-                None => break,
+                None => return Err(StatusCode::Eof),
             };
 
             let path = file.path();
@@ -254,9 +254,11 @@ impl russh_sftp::server::Handler for SftpSession {
             files.push(Self::convert_entry(&path, metadata));
             handle.consumed += 1;
 
-            if handle.consumed >= self.state.config.system.sftp.directory_entry_limit
-                || files.len() >= self.state.config.system.sftp.directory_entry_send_amount
-            {
+            if handle.consumed >= self.state.config.system.sftp.directory_entry_limit {
+                return Err(StatusCode::Eof);
+            }
+
+            if files.len() >= self.state.config.system.sftp.directory_entry_send_amount {
                 break;
             }
         }
