@@ -298,9 +298,11 @@ impl Drop for AsyncFileSystemWriter {
             let parent = self.parent.clone();
             let bytes = self.accumulated_bytes;
 
-            tokio::spawn(async move {
-                server.filesystem.allocate_in_path_raw(&parent, bytes).await;
-            });
+            if bytes > 0 {
+                tokio::spawn(async move {
+                    server.filesystem.allocate_in_path_raw(&parent, bytes).await;
+                });
+            }
         }
     }
 }

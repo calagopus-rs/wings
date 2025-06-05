@@ -112,7 +112,8 @@ pub async fn list(
             let entry = match archive.find_archive_entry(&path)? {
                 Some(entry) => entry,
                 None => {
-                    let mut entries = Vec::with_capacity(archive.entries().len().min(directory_entry_limit));
+                    let mut entries =
+                        Vec::with_capacity(archive.entries().len().min(directory_entry_limit));
                     for entry in archive.into_entries() {
                         let path = path.join(entry.name());
 
@@ -133,7 +134,8 @@ pub async fn list(
 
             match entry {
                 ddup_bak::archive::entries::Entry::Directory(dir) => {
-                    let mut entries = Vec::with_capacity(dir.entries.len().min(directory_entry_limit));
+                    let mut entries =
+                        Vec::with_capacity(dir.entries.len().min(directory_entry_limit));
                     for entry in &dir.entries {
                         let path = path.join(&dir.name).join(entry.name());
 

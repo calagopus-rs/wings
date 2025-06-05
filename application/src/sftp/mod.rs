@@ -47,6 +47,7 @@ struct FileHandle {
     path_components: Vec<String>,
 
     file: Option<Arc<std::fs::File>>,
+    dir: Option<tokio::fs::ReadDir>,
 
     consumed: u64,
     size: u64,
@@ -184,6 +185,10 @@ impl russh_sftp::server::Handler for SftpSession {
             }
 
             let path_components = self.server.filesystem.path_to_components(&path);
+            let dir = match tokio::fs::read_dir(&path).await {
+                Ok(dir) => dir,
+                Err(_) => return Err(StatusCode::NoSuchFile),
+            };
 
             self.handles.insert(
                 handle.clone(),
@@ -191,6 +196,7 @@ impl russh_sftp::server::Handler for SftpSession {
                     path,
                     path_components,
                     file: None,
+                    dir: Some(dir),
                     consumed: 0,
                     size: 0,
                 },
@@ -212,14 +218,24 @@ impl russh_sftp::server::Handler for SftpSession {
             None => return Err(StatusCode::NoSuchFile),
         };
 
-        if handle.consumed > 0 {
-            return Err(StatusCode::Eof);
-        }
+        let dir = match &mut handle.dir {
+            Some(dir) => dir,
+            None => return Err(StatusCode::NoSuchFile),
+        };
 
         let mut files = Vec::new();
 
-        let mut read_dir = tokio::fs::read_dir(&handle.path).await.unwrap();
-        while let Ok(Some(file)) = read_dir.next_entry().await {
+        loop {
+            let file = match dir.next_entry().await {
+                Ok(file) => file,
+                Err(_) => return Err(StatusCode::NoSuchFile),
+            };
+
+            let file = match file {
+                Some(file) => file,
+                None => break,
+            };
+
             let path = file.path();
             let metadata = match tokio::fs::symlink_metadata(&path).await {
                 Ok(metadata) => metadata,
@@ -236,13 +252,14 @@ impl russh_sftp::server::Handler for SftpSession {
             }
 
             files.push(Self::convert_entry(&path, metadata));
+            handle.consumed += 1;
 
-            if files.len() >= self.state.config.system.sftp.directory_entry_limit {
+            if handle.consumed >= self.state.config.system.sftp.directory_entry_limit
+                || files.len() >= self.state.config.system.sftp.directory_entry_send_amount
+            {
                 break;
             }
         }
-
-        handle.consumed = 1;
 
         Ok(Name { id, files })
     }
@@ -864,6 +881,7 @@ impl russh_sftp::server::Handler for SftpSession {
                     path,
                     path_components,
                     file: Some(Arc::new(file)),
+                    dir: None,
                     consumed: 0,
                     size: metadata.len(),
                 },
