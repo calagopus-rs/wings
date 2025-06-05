@@ -237,7 +237,13 @@ impl russh_sftp::server::Handler for SftpSession {
 
             let file = match file {
                 Some(file) => file,
-                None => return Err(StatusCode::Eof),
+                None => {
+                    if files.is_empty() {
+                        return Err(StatusCode::Eof);
+                    }
+
+                    break;
+                }
             };
 
             let path = file.path();
@@ -261,6 +267,12 @@ impl russh_sftp::server::Handler for SftpSession {
             if handle.consumed >= self.state.config.system.sftp.directory_entry_limit
                 || files.len() >= self.state.config.system.sftp.directory_entry_send_amount
             {
+                tracing::debug!(
+                    "{} entries sent early in sftp readdir ({} total)",
+                    files.len(),
+                    handle.consumed,
+                );
+
                 break;
             }
         }
