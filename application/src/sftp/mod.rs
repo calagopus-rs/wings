@@ -218,6 +218,10 @@ impl russh_sftp::server::Handler for SftpSession {
             None => return Err(StatusCode::NoSuchFile),
         };
 
+        if handle.consumed >= self.state.config.system.sftp.directory_entry_limit {
+            return Err(StatusCode::Eof);
+        }
+
         let dir = match &mut handle.dir {
             Some(dir) => dir,
             None => return Err(StatusCode::NoSuchFile),
@@ -254,11 +258,9 @@ impl russh_sftp::server::Handler for SftpSession {
             files.push(Self::convert_entry(&path, metadata));
             handle.consumed += 1;
 
-            if handle.consumed >= self.state.config.system.sftp.directory_entry_limit {
-                return Err(StatusCode::Eof);
-            }
-
-            if files.len() >= self.state.config.system.sftp.directory_entry_send_amount {
+            if handle.consumed >= self.state.config.system.sftp.directory_entry_limit
+                || files.len() >= self.state.config.system.sftp.directory_entry_send_amount
+            {
                 break;
             }
         }
