@@ -236,6 +236,10 @@ impl russh_sftp::server::Handler for SftpSession {
             }
 
             files.push(Self::convert_entry(&path, metadata));
+
+            if files.len() >= self.state.config.system.sftp.directory_entry_limit {
+                break;
+            }
         }
 
         handle.consumed = 1;

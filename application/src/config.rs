@@ -22,6 +22,9 @@ fn api_host() -> String {
 fn api_port() -> u16 {
     8080
 }
+fn api_directory_entry_limit() -> usize {
+    10000
+}
 fn api_file_search_threads() -> usize {
     4
 }
@@ -80,6 +83,9 @@ fn system_sftp_bind_port() -> u16 {
 }
 fn system_sftp_key_algorithm() -> String {
     "ssh-ed25519".to_string()
+}
+fn system_sftp_directory_entry_limit() -> usize {
+    20000
 }
 
 fn system_crash_detection_enabled() -> bool {
@@ -208,7 +214,7 @@ nestify::nest! {
         #[serde(default = "app_name")]
         pub app_name: String,
         #[serde(default)]
-        pub uuid: String,
+        pub uuid: uuid::Uuid,
 
         #[serde(default)]
         pub token_id: String,
@@ -234,6 +240,8 @@ nestify::nest! {
 
             #[serde(default)]
             pub disable_remote_download: bool,
+            #[serde(default = "api_directory_entry_limit")]
+            pub directory_entry_limit: usize,
             #[serde(default)]
             pub send_offline_server_logs: bool,
             #[serde(default = "api_file_search_threads")]
@@ -321,6 +329,8 @@ nestify::nest! {
                 pub key_algorithm: String,
                 #[serde(default)]
                 pub disable_password_auth: bool,
+                #[serde(default = "system_sftp_directory_entry_limit")]
+                pub directory_entry_limit: usize,
             },
 
             #[serde(default)]

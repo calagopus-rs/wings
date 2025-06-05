@@ -2,7 +2,7 @@ use super::State;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod get {
-    use crate::routes::{ApiError, api::servers::_server_::GetServer};
+    use crate::routes::{ApiError, GetState, api::servers::_server_::GetServer};
     use axum::{extract::Query, http::StatusCode};
     use serde::Deserialize;
     use utoipa::ToSchema;
@@ -24,6 +24,7 @@ mod get {
         ),
     ))]
     pub async fn route(
+        state: GetState,
         server: GetServer,
         Query(data): Query<Params>,
     ) -> (StatusCode, axum::Json<serde_json::Value>) {
@@ -94,6 +95,10 @@ mod get {
             }
 
             entries.push(server.filesystem.to_api_entry(path, metadata).await);
+
+            if entries.len() >= state.config.api.directory_entry_limit {
+                break;
+            }
         }
 
         entries.sort_by(|a, b| {

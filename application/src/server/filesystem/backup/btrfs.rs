@@ -16,7 +16,6 @@ pub async fn list(
     path: &Path,
 ) -> std::io::Result<Vec<DirectoryEntry>> {
     let full_path = tokio::fs::canonicalize(get_base_path(server, uuid).join(path)).await?;
-    let mut entries = Vec::new();
 
     if !full_path.starts_with(get_base_path(server, uuid)) {
         return Err(std::io::Error::new(
@@ -24,6 +23,8 @@ pub async fn list(
             "Access to this path is denied",
         ));
     }
+
+    let mut entries = Vec::new();
 
     let mut directory = tokio::fs::read_dir(full_path).await?;
     while let Ok(Some(entry)) = directory.next_entry().await {
@@ -43,6 +44,10 @@ pub async fn list(
         }
 
         entries.push(entry);
+
+        if entries.len() >= server.config.api.directory_entry_limit {
+            break;
+        }
     }
 
     Ok(entries)

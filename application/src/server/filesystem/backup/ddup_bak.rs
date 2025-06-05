@@ -105,13 +105,14 @@ pub async fn list(
     let repository = get_repository(server).await;
 
     let path = path.to_path_buf();
+    let directory_entry_limit = server.config.api.directory_entry_limit;
     let entries =
         tokio::task::spawn_blocking(move || -> Result<Vec<DirectoryEntry>, std::io::Error> {
             let archive = repository.get_archive(&uuid.to_string())?;
             let entry = match archive.find_archive_entry(&path)? {
                 Some(entry) => entry,
                 None => {
-                    let mut entries = Vec::with_capacity(archive.entries().len());
+                    let mut entries = Vec::with_capacity(archive.entries().len().min(directory_entry_limit));
                     for entry in archive.into_entries() {
                         let path = path.join(entry.name());
 
@@ -120,6 +121,10 @@ pub async fn list(
                             &repository,
                             &entry,
                         ));
+
+                        if entries.len() >= directory_entry_limit {
+                            break;
+                        }
                     }
 
                     return Ok(entries);
@@ -128,11 +133,15 @@ pub async fn list(
 
             match entry {
                 ddup_bak::archive::entries::Entry::Directory(dir) => {
-                    let mut entries = Vec::with_capacity(dir.entries.len());
+                    let mut entries = Vec::with_capacity(dir.entries.len().min(directory_entry_limit));
                     for entry in &dir.entries {
                         let path = path.join(&dir.name).join(entry.name());
 
                         entries.push(ddup_bak_entry_to_directory_entry(&path, &repository, entry));
+
+                        if entries.len() >= directory_entry_limit {
+                            break;
+                        }
                     }
 
                     Ok(entries)
