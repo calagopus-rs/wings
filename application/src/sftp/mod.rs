@@ -1100,17 +1100,28 @@ impl russh_sftp::server::Handler for SftpSession {
                                         .map_err(|_| StatusCode::Failure)?;
                                 }
                                 let mut total_bytes_read = 0;
+                                let hash_algorithm = request.hash.split(',').next().unwrap();
 
-                                let mut hash_algorithm = None;
-                                for h in request.hash.split(',') {
-                                    if ["md5", "sha1", "sha256", "sha512"].contains(&h) {
-                                        hash_algorithm = Some(h);
-                                        break;
+                                #[inline]
+                                fn bytes(
+                                    length: u64,
+                                    bytes_read: usize,
+                                    total_bytes_read: u64,
+                                ) -> usize {
+                                    if length > 0 {
+                                        if total_bytes_read > length {
+                                            (length - (total_bytes_read - bytes_read as u64))
+                                                as usize
+                                        } else {
+                                            bytes_read
+                                        }
+                                    } else {
+                                        bytes_read
                                     }
                                 }
 
                                 let hash: Vec<u8> = match hash_algorithm {
-                                    Some("md5") => {
+                                    "md5" => {
                                         let mut hasher = md5::Context::new();
 
                                         let mut buffer = [0; 8192];
@@ -1122,24 +1133,33 @@ impl russh_sftp::server::Handler for SftpSession {
                                                 break;
                                             }
 
-                                            let bytes_read = if request.length > 0 {
-                                                if total_bytes_read > request.length {
-                                                    (request.length
-                                                        - (total_bytes_read - bytes_read as u64))
-                                                        as usize
-                                                } else {
-                                                    bytes_read
-                                                }
-                                            } else {
-                                                bytes_read
-                                            };
-
+                                            let bytes_read =
+                                                bytes(request.length, bytes_read, total_bytes_read);
                                             hasher.consume(&buffer[..bytes_read]);
                                         }
 
                                         (*hasher.compute()).into()
                                     }
-                                    Some("sha1") => {
+                                    "crc32" => {
+                                        let mut hasher = crc32fast::Hasher::new();
+
+                                        let mut buffer = [0; 8192];
+                                        loop {
+                                            let bytes_read = file.read(&mut buffer).await.unwrap();
+                                            total_bytes_read += bytes_read as u64;
+
+                                            if bytes_read == 0 {
+                                                break;
+                                            }
+
+                                            let bytes_read =
+                                                bytes(request.length, bytes_read, total_bytes_read);
+                                            hasher.update(&buffer[..bytes_read]);
+                                        }
+
+                                        hasher.finalize().to_be_bytes().to_vec()
+                                    }
+                                    "sha1" => {
                                         let mut hasher = sha1::Sha1::new();
 
                                         let mut buffer = [0; 8192];
@@ -1151,24 +1171,33 @@ impl russh_sftp::server::Handler for SftpSession {
                                                 break;
                                             }
 
-                                            let bytes_read = if request.length > 0 {
-                                                if total_bytes_read > request.length {
-                                                    (request.length
-                                                        - (total_bytes_read - bytes_read as u64))
-                                                        as usize
-                                                } else {
-                                                    bytes_read
-                                                }
-                                            } else {
-                                                bytes_read
-                                            };
-
+                                            let bytes_read =
+                                                bytes(request.length, bytes_read, total_bytes_read);
                                             hasher.update(&buffer[..bytes_read]);
                                         }
 
                                         (*hasher.finalize()).into()
                                     }
-                                    Some("sha256") => {
+                                    "sha224" => {
+                                        let mut hasher = sha2::Sha224::new();
+
+                                        let mut buffer = [0; 8192];
+                                        loop {
+                                            let bytes_read = file.read(&mut buffer).await.unwrap();
+                                            total_bytes_read += bytes_read as u64;
+
+                                            if bytes_read == 0 {
+                                                break;
+                                            }
+
+                                            let bytes_read =
+                                                bytes(request.length, bytes_read, total_bytes_read);
+                                            hasher.update(&buffer[..bytes_read]);
+                                        }
+
+                                        (*hasher.finalize()).into()
+                                    }
+                                    "sha256" => {
                                         let mut hasher = sha2::Sha256::new();
 
                                         let mut buffer = [0; 8192];
@@ -1180,24 +1209,33 @@ impl russh_sftp::server::Handler for SftpSession {
                                                 break;
                                             }
 
-                                            let bytes_read = if request.length > 0 {
-                                                if total_bytes_read > request.length {
-                                                    (request.length
-                                                        - (total_bytes_read - bytes_read as u64))
-                                                        as usize
-                                                } else {
-                                                    bytes_read
-                                                }
-                                            } else {
-                                                bytes_read
-                                            };
-
+                                            let bytes_read =
+                                                bytes(request.length, bytes_read, total_bytes_read);
                                             hasher.update(&buffer[..bytes_read]);
                                         }
 
                                         (*hasher.finalize()).into()
                                     }
-                                    Some("sha512") => {
+                                    "sha384" => {
+                                        let mut hasher = sha2::Sha384::new();
+
+                                        let mut buffer = [0; 8192];
+                                        loop {
+                                            let bytes_read = file.read(&mut buffer).await.unwrap();
+                                            total_bytes_read += bytes_read as u64;
+
+                                            if bytes_read == 0 {
+                                                break;
+                                            }
+
+                                            let bytes_read =
+                                                bytes(request.length, bytes_read, total_bytes_read);
+                                            hasher.update(&buffer[..bytes_read]);
+                                        }
+
+                                        (*hasher.finalize()).into()
+                                    }
+                                    "sha512" => {
                                         let mut hasher = sha2::Sha512::new();
 
                                         let mut buffer = [0; 8192];
@@ -1209,18 +1247,8 @@ impl russh_sftp::server::Handler for SftpSession {
                                                 break;
                                             }
 
-                                            let bytes_read = if request.length > 0 {
-                                                if total_bytes_read > request.length {
-                                                    (request.length
-                                                        - (total_bytes_read - bytes_read as u64))
-                                                        as usize
-                                                } else {
-                                                    bytes_read
-                                                }
-                                            } else {
-                                                bytes_read
-                                            };
-
+                                            let bytes_read =
+                                                bytes(request.length, bytes_read, total_bytes_read);
                                             hasher.update(&buffer[..bytes_read]);
                                         }
 
@@ -1231,7 +1259,7 @@ impl russh_sftp::server::Handler for SftpSession {
 
                                 #[derive(Serialize)]
                                 struct CheckFileNameReply<'a> {
-                                    hash_algorithm: Option<&'a str>,
+                                    hash_algorithm: &'a str,
 
                                     #[serde(serialize_with = "russh_sftp::ser::data_serialize")]
                                     hash: Vec<u8>,

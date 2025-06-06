@@ -18,8 +18,11 @@ mod get {
     #[schema(rename_all = "lowercase")]
     pub enum Algorithm {
         Md5,
+        Crc32,
         Sha1,
+        Sha224,
         Sha256,
+        Sha384,
         Sha512,
         Curseforge,
     }
@@ -89,6 +92,20 @@ mod get {
 
                             format!("{:x}", hasher.compute())
                         }
+                        Algorithm::Crc32 => {
+                            let mut hasher = crc32fast::Hasher::new();
+                            let mut buffer = [0; 8192];
+                            loop {
+                                let bytes_read = file.read(&mut buffer).await.unwrap();
+                                if bytes_read == 0 {
+                                    break;
+                                }
+
+                                hasher.update(&buffer[..bytes_read]);
+                            }
+
+                            hasher.finalize().to_string()
+                        }
                         Algorithm::Sha1 => {
                             let mut hasher = sha1::Sha1::new();
                             let mut buffer = [0; 8192];
@@ -103,8 +120,36 @@ mod get {
 
                             format!("{:x}", hasher.finalize())
                         }
+                        Algorithm::Sha224 => {
+                            let mut hasher = sha2::Sha224::new();
+                            let mut buffer = [0; 8192];
+                            loop {
+                                let bytes_read = file.read(&mut buffer).await.unwrap();
+                                if bytes_read == 0 {
+                                    break;
+                                }
+
+                                hasher.update(&buffer[..bytes_read]);
+                            }
+
+                            format!("{:x}", hasher.finalize())
+                        }
                         Algorithm::Sha256 => {
                             let mut hasher = sha2::Sha256::new();
+                            let mut buffer = [0; 8192];
+                            loop {
+                                let bytes_read = file.read(&mut buffer).await.unwrap();
+                                if bytes_read == 0 {
+                                    break;
+                                }
+
+                                hasher.update(&buffer[..bytes_read]);
+                            }
+
+                            format!("{:x}", hasher.finalize())
+                        }
+                        Algorithm::Sha384 => {
+                            let mut hasher = sha2::Sha384::new();
                             let mut buffer = [0; 8192];
                             loop {
                                 let bytes_read = file.read(&mut buffer).await.unwrap();
