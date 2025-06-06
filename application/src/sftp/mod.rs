@@ -20,6 +20,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use sysinfo::Disks;
 use tokio::{
     io::{AsyncReadExt, AsyncSeekExt},
     sync::Mutex,
@@ -144,6 +145,12 @@ impl russh_sftp::server::Handler for SftpSession {
         version
             .extensions
             .insert("copy-file".to_string(), "1".to_string());
+        version
+            .extensions
+            .insert("space-available".to_string(), "1".to_string());
+        version
+            .extensions
+            .insert("statvfs@openssh.com".to_string(), "2".to_string());
 
         Ok(version)
     }
@@ -1047,6 +1054,8 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
+        tracing::debug!("sftp extended command: {}", command);
+
         match command.as_str() {
             "check-file" | "check-file-name" => {
                 if !self.has_permission(Permission::FileRead) {
@@ -1360,6 +1369,128 @@ impl russh_sftp::server::Handler for SftpSession {
                 }
 
                 Err(StatusCode::NoSuchFile)
+            }
+            "space-available" => {
+                #[derive(Serialize)]
+                struct SpaceAvailableReply {
+                    total_space: u64,
+                    available_space: u64,
+
+                    total_user_space: u64,
+                    available_user_space: u64,
+                }
+
+                let (total_space, free_space) = match self.server.filesystem.disk_limit() {
+                    0 => {
+                        let disks = Disks::new();
+
+                        let mut path = self.server.filesystem.base_path.clone();
+                        let disk;
+                        loop {
+                            if let Some(d) = disks.iter().find(|d| d.mount_point() == path) {
+                                disk = Some(d);
+                                break;
+                            }
+
+                            path.pop();
+                        }
+
+                        let total_space = disk
+                            .map(|d| d.total_space())
+                            .unwrap_or(disks[0].total_space());
+                        let free_space = disk
+                            .map(|d| d.available_space())
+                            .unwrap_or(disks[0].available_space());
+
+                        (total_space, free_space)
+                    }
+                    total => (
+                        total as u64,
+                        total as u64 - self.server.filesystem.limiter_usage().await,
+                    ),
+                };
+
+                Ok(russh_sftp::protocol::Packet::ExtendedReply(
+                    russh_sftp::protocol::ExtendedReply {
+                        id,
+                        data: russh_sftp::ser::to_bytes(&SpaceAvailableReply {
+                            total_space,
+                            available_space: free_space,
+
+                            total_user_space: total_space,
+                            available_user_space: free_space,
+                        })
+                        .unwrap()
+                        .into(),
+                    },
+                ))
+            }
+            "fstatvfs@openssh.com" | "statvfs@openssh.com" => {
+                #[derive(Serialize)]
+                struct StatVfsReply {
+                    block_size: u64,
+                    fragment_size: u64,
+                    total_blocks: u64,
+                    free_blocks: u64,
+                    available_blocks: u64,
+                    total_file_nodes: u64,
+                    free_file_nodes: u64,
+                    available_file_nodes: u64,
+                    filesystem_id: u64,
+                    mount_flags: u64,
+                    max_filename_length: u64,
+                }
+
+                let (total_space, free_space) = match self.server.filesystem.disk_limit() {
+                    0 => {
+                        let disks = Disks::new();
+
+                        let mut path = self.server.filesystem.base_path.clone();
+                        let disk;
+                        loop {
+                            if let Some(d) = disks.iter().find(|d| d.mount_point() == path) {
+                                disk = Some(d);
+                                break;
+                            }
+
+                            path.pop();
+                        }
+
+                        let total_space = disk
+                            .map(|d| d.total_space())
+                            .unwrap_or(disks[0].total_space());
+                        let free_space = disk
+                            .map(|d| d.available_space())
+                            .unwrap_or(disks[0].available_space());
+
+                        (total_space, free_space)
+                    }
+                    total => (
+                        total as u64,
+                        total as u64 - self.server.filesystem.limiter_usage().await,
+                    ),
+                };
+
+                Ok(russh_sftp::protocol::Packet::ExtendedReply(
+                    russh_sftp::protocol::ExtendedReply {
+                        id,
+                        data: russh_sftp::ser::to_bytes(&StatVfsReply {
+                            block_size: 4096,
+                            fragment_size: 4096,
+                            total_blocks: total_space / 4096,
+                            free_blocks: free_space / 4096,
+                            available_blocks: free_space / 4096,
+                            total_file_nodes: 0,
+                            free_file_nodes: 0,
+                            available_file_nodes: 0,
+                            filesystem_id: 0,
+                            mount_flags: self.state.config.system.sftp.read_only as u64,
+                            max_filename_length: 255,
+                        })
+                        .unwrap()
+                        .into(),
+                    },
+                ))
             }
             _ => Err(StatusCode::OpUnsupported),
         }
