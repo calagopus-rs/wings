@@ -1040,18 +1040,15 @@ impl russh_sftp::server::Handler for SftpSession {
     async fn extended(
         &mut self,
         id: u32,
-        request: String,
+        command: String,
         data: Vec<u8>,
     ) -> Result<russh_sftp::protocol::Packet, Self::Error> {
         if !self.allow_action() {
             return Err(StatusCode::PermissionDenied);
         }
 
-        println!("Extended request: {}", request);
-        println!("Data: {:?}", data);
-
-        match request.as_str() {
-            "check-file-name" => {
+        match command.as_str() {
+            "check-file" | "check-file-name" => {
                 if !self.has_permission(Permission::FileRead) {
                     return Err(StatusCode::PermissionDenied);
                 }
@@ -1070,7 +1067,16 @@ impl russh_sftp::server::Handler for SftpSession {
                     Err(_) => return Err(StatusCode::BadMessage),
                 };
 
-                if let Some(path) = self.server.filesystem.safe_path(&request.file_name).await {
+                let file_name = if command == "check-file-name" {
+                    request.file_name
+                } else {
+                    match self.handles.get(&request.file_name) {
+                        Some(handle) => handle.path.to_string_lossy().to_string(),
+                        None => return Err(StatusCode::NoSuchFile),
+                    }
+                };
+
+                if let Some(path) = self.server.filesystem.safe_path(&file_name).await {
                     if path.exists() {
                         if let Ok(metadata) = tokio::fs::symlink_metadata(&path).await {
                             if metadata.is_file() {
