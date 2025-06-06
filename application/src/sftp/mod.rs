@@ -8,16 +8,22 @@ use crate::{
 use russh_sftp::protocol::{
     Data, File, FileAttributes, Handle, Name, OpenFlags, Status, StatusCode,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sha1::Digest;
 use std::{
     collections::HashMap,
     fs::{Metadata, OpenOptions},
+    io::SeekFrom,
     net::{IpAddr, SocketAddr},
     os::unix::fs::{FileExt, PermissionsExt},
     path::{Path, PathBuf},
     sync::Arc,
 };
-use tokio::sync::Mutex;
+use tokio::{
+    io::{AsyncReadExt, AsyncSeekExt},
+    sync::Mutex,
+};
 
 mod auth;
 
@@ -124,6 +130,22 @@ impl russh_sftp::server::Handler for SftpSession {
     #[inline]
     fn unimplemented(&self) -> Self::Error {
         StatusCode::OpUnsupported
+    }
+
+    async fn init(
+        &mut self,
+        _version: u32,
+        _extensions: HashMap<String, String>,
+    ) -> Result<russh_sftp::protocol::Version, Self::Error> {
+        let mut version = russh_sftp::protocol::Version::new();
+        version
+            .extensions
+            .insert("check-file".to_string(), "1".to_string());
+        version
+            .extensions
+            .insert("copy-file".to_string(), "1".to_string());
+
+        Ok(version)
     }
 
     #[inline]
@@ -941,7 +963,7 @@ impl russh_sftp::server::Handler for SftpSession {
             let file = Arc::clone(file);
 
             move || {
-                let mut buf = vec![0; len as usize];
+                let mut buf = vec![0; len.min(16 * 1024 * 1024) as usize];
                 let bytes_read = file.read_at(&mut buf, offset).unwrap();
 
                 buf.truncate(bytes_read);
@@ -1013,5 +1035,299 @@ impl russh_sftp::server::Handler for SftpSession {
             error_message: "Ok".to_string(),
             language_tag: "en-US".to_string(),
         })
+    }
+
+    async fn extended(
+        &mut self,
+        id: u32,
+        request: String,
+        data: Vec<u8>,
+    ) -> Result<russh_sftp::protocol::Packet, Self::Error> {
+        if !self.allow_action() {
+            return Err(StatusCode::PermissionDenied);
+        }
+
+        println!("Extended request: {}", request);
+        println!("Data: {:?}", data);
+
+        match request.as_str() {
+            "check-file-name" => {
+                if !self.has_permission(Permission::FileRead) {
+                    return Err(StatusCode::PermissionDenied);
+                }
+
+                #[derive(Deserialize)]
+                struct CheckFileName {
+                    file_name: String,
+                    hash: String,
+
+                    start_offset: u64,
+                    length: u64,
+                }
+
+                let request: CheckFileName = match russh_sftp::de::from_bytes(&mut data.into()) {
+                    Ok(request) => request,
+                    Err(_) => return Err(StatusCode::BadMessage),
+                };
+
+                if let Some(path) = self.server.filesystem.safe_path(&request.file_name).await {
+                    if path.exists() {
+                        if let Ok(metadata) = tokio::fs::symlink_metadata(&path).await {
+                            if metadata.is_file() {
+                                if self
+                                    .server
+                                    .filesystem
+                                    .is_ignored(&path, metadata.is_dir())
+                                    .await
+                                {
+                                    return Err(StatusCode::NoSuchFile);
+                                }
+
+                                let mut file = match tokio::fs::File::open(&path).await {
+                                    Ok(file) => file,
+                                    Err(_) => return Err(StatusCode::NoSuchFile),
+                                };
+
+                                if request.start_offset != 0 {
+                                    file.seek(SeekFrom::Start(request.start_offset))
+                                        .await
+                                        .map_err(|_| StatusCode::Failure)?;
+                                }
+                                let mut total_bytes_read = 0;
+
+                                let mut hash_algorithm = None;
+                                for h in request.hash.split(',') {
+                                    if ["md5", "sha1", "sha256", "sha512"].contains(&h) {
+                                        hash_algorithm = Some(h);
+                                        break;
+                                    }
+                                }
+
+                                let hash: Vec<u8> = match hash_algorithm {
+                                    Some("md5") => {
+                                        let mut hasher = md5::Context::new();
+
+                                        let mut buffer = [0; 8192];
+                                        loop {
+                                            let bytes_read = file.read(&mut buffer).await.unwrap();
+                                            total_bytes_read += bytes_read as u64;
+
+                                            if bytes_read == 0 {
+                                                break;
+                                            }
+
+                                            let bytes_read = if request.length > 0 {
+                                                if total_bytes_read > request.length {
+                                                    (request.length
+                                                        - (total_bytes_read - bytes_read as u64))
+                                                        as usize
+                                                } else {
+                                                    bytes_read
+                                                }
+                                            } else {
+                                                bytes_read
+                                            };
+
+                                            hasher.consume(&buffer[..bytes_read]);
+                                        }
+
+                                        (*hasher.compute()).into()
+                                    }
+                                    Some("sha1") => {
+                                        let mut hasher = sha1::Sha1::new();
+
+                                        let mut buffer = [0; 8192];
+                                        loop {
+                                            let bytes_read = file.read(&mut buffer).await.unwrap();
+                                            total_bytes_read += bytes_read as u64;
+
+                                            if bytes_read == 0 {
+                                                break;
+                                            }
+
+                                            let bytes_read = if request.length > 0 {
+                                                if total_bytes_read > request.length {
+                                                    (request.length
+                                                        - (total_bytes_read - bytes_read as u64))
+                                                        as usize
+                                                } else {
+                                                    bytes_read
+                                                }
+                                            } else {
+                                                bytes_read
+                                            };
+
+                                            hasher.update(&buffer[..bytes_read]);
+                                        }
+
+                                        (*hasher.finalize()).into()
+                                    }
+                                    Some("sha256") => {
+                                        let mut hasher = sha2::Sha256::new();
+
+                                        let mut buffer = [0; 8192];
+                                        loop {
+                                            let bytes_read = file.read(&mut buffer).await.unwrap();
+                                            total_bytes_read += bytes_read as u64;
+
+                                            if bytes_read == 0 {
+                                                break;
+                                            }
+
+                                            let bytes_read = if request.length > 0 {
+                                                if total_bytes_read > request.length {
+                                                    (request.length
+                                                        - (total_bytes_read - bytes_read as u64))
+                                                        as usize
+                                                } else {
+                                                    bytes_read
+                                                }
+                                            } else {
+                                                bytes_read
+                                            };
+
+                                            hasher.update(&buffer[..bytes_read]);
+                                        }
+
+                                        (*hasher.finalize()).into()
+                                    }
+                                    Some("sha512") => {
+                                        let mut hasher = sha2::Sha512::new();
+
+                                        let mut buffer = [0; 8192];
+                                        loop {
+                                            let bytes_read = file.read(&mut buffer).await.unwrap();
+                                            total_bytes_read += bytes_read as u64;
+
+                                            if bytes_read == 0 {
+                                                break;
+                                            }
+
+                                            let bytes_read = if request.length > 0 {
+                                                if total_bytes_read > request.length {
+                                                    (request.length
+                                                        - (total_bytes_read - bytes_read as u64))
+                                                        as usize
+                                                } else {
+                                                    bytes_read
+                                                }
+                                            } else {
+                                                bytes_read
+                                            };
+
+                                            hasher.update(&buffer[..bytes_read]);
+                                        }
+
+                                        (*hasher.finalize()).into()
+                                    }
+                                    _ => return Err(StatusCode::BadMessage),
+                                };
+
+                                #[derive(Serialize)]
+                                struct CheckFileNameReply<'a> {
+                                    hash_algorithm: Option<&'a str>,
+
+                                    #[serde(serialize_with = "russh_sftp::ser::data_serialize")]
+                                    hash: Vec<u8>,
+                                }
+
+                                return Ok(russh_sftp::protocol::Packet::ExtendedReply(
+                                    russh_sftp::protocol::ExtendedReply {
+                                        id,
+                                        data: russh_sftp::ser::to_bytes(&CheckFileNameReply {
+                                            hash_algorithm,
+                                            hash,
+                                        })
+                                        .unwrap()
+                                        .into(),
+                                    },
+                                ));
+                            }
+                        }
+                    }
+                }
+
+                Err(StatusCode::OpUnsupported)
+            }
+            "copy-file" => {
+                if !self.has_permission(Permission::FileReadContent)
+                    || !self.has_permission(Permission::FileCreate)
+                {
+                    return Err(StatusCode::PermissionDenied);
+                }
+
+                #[derive(Deserialize)]
+                struct CopyFileRequest {
+                    source: String,
+                    destination: String,
+                    overwrite: u8,
+                }
+
+                let request: CopyFileRequest = match russh_sftp::de::from_bytes(&mut data.into()) {
+                    Ok(request) => request,
+                    Err(_) => return Err(StatusCode::BadMessage),
+                };
+
+                if let Some(source_path) = self.server.filesystem.safe_path(&request.source).await {
+                    let metadata = match tokio::fs::symlink_metadata(&source_path).await {
+                        Ok(metadata) => metadata,
+                        Err(_) => return Err(StatusCode::NoSuchFile),
+                    };
+
+                    if metadata.is_file() {
+                        if self.server.filesystem.is_ignored(&source_path, false).await {
+                            return Err(StatusCode::NoSuchFile);
+                        }
+
+                        if let Some(destination_path) =
+                            self.server.filesystem.safe_path(&request.destination).await
+                        {
+                            if destination_path.exists() && request.overwrite == 0 {
+                                return Err(StatusCode::NoSuchFile);
+                            }
+
+                            if !self
+                                .server
+                                .filesystem
+                                .allocate_in_path(
+                                    destination_path.parent().unwrap(),
+                                    metadata.len() as i64,
+                                )
+                                .await
+                            {
+                                return Err(StatusCode::Failure);
+                            }
+
+                            tokio::fs::copy(&source_path, &destination_path)
+                                .await
+                                .map_err(|_| StatusCode::NoSuchFile)?;
+
+                            self.server
+                                .activity
+                                .log_activity(Activity {
+                                    event: ActivityEvent::SftpCreate,
+                                    user: self.user_uuid,
+                                    ip: self.user_ip,
+                                    metadata: Some(json!({
+                                        "files": [self.server.filesystem.relative_path(&destination_path)],
+                                    })),
+                                    timestamp: chrono::Utc::now(),
+                                })
+                                .await;
+
+                            return Ok(russh_sftp::protocol::Packet::Status(Status {
+                                id,
+                                status_code: StatusCode::Ok,
+                                error_message: "Ok".to_string(),
+                                language_tag: "en-US".to_string(),
+                            }));
+                        }
+                    }
+                }
+
+                Err(StatusCode::NoSuchFile)
+            }
+            _ => Err(StatusCode::OpUnsupported),
+        }
     }
 }
