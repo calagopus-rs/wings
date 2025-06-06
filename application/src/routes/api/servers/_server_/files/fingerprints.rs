@@ -104,7 +104,7 @@ mod get {
                                 hasher.update(&buffer[..bytes_read]);
                             }
 
-                            hasher.finalize().to_string()
+                            format!("{:x}", hasher.finalize())
                         }
                         Algorithm::Sha1 => {
                             let mut hasher = sha1::Sha1::new();
