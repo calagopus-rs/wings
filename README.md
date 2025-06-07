@@ -98,6 +98,7 @@ docker:
 - add support for the [check-file](https://datatracker.ietf.org/doc/html/draft-ietf-secsh-filexfer-extensions-00#section-3) sftp extension
 - add support for the [copy-file](https://datatracker.ietf.org/doc/html/draft-ietf-secsh-filexfer-extensions-00#section-6) sftp extension
 - add support for the [space-available](https://datatracker.ietf.org/doc/html/draft-ietf-secsh-filexfer-extensions-00#section-4) sftp extension
+- add support for the [limits@openssh.com](https://github.com/openssh/openssh-portable/blob/master/PROTOCOL#L597) sftp extension
 - add support for the [statvfs@openssh.com](https://github.com/openssh/openssh-portable/blob/master/PROTOCOL#L510) sftp extension
 - properly support egg `file_denylist`
 

@@ -166,6 +166,7 @@ impl russh_sftp::server::Handler for SftpSession {
                 ("check-file".to_string(), "1".to_string()),
                 ("copy-file".to_string(), "1".to_string()),
                 ("space-available".to_string(), "1".to_string()),
+                ("limits@openssh.com".to_string(), "1".to_string()),
                 ("statvfs@openssh.com".to_string(), "2".to_string()),
             ]),
         })
@@ -990,7 +991,7 @@ impl russh_sftp::server::Handler for SftpSession {
         id: u32,
         handle: String,
         offset: u64,
-        data: Vec<u8>,
+        mut data: Vec<u8>,
     ) -> Result<Status, Self::Error> {
         if !self.allow_action() {
             return Err(StatusCode::PermissionDenied);
@@ -1004,6 +1005,8 @@ impl russh_sftp::server::Handler for SftpSession {
         if self.state.config.system.sftp.read_only {
             return Err(StatusCode::PermissionDenied);
         }
+
+        data.truncate(1024 * 1024);
 
         if !self
             .server
@@ -1432,6 +1435,29 @@ impl russh_sftp::server::Handler for SftpSession {
 
                             total_user_space: total_space,
                             available_user_space: free_space,
+                        })
+                        .unwrap()
+                        .into(),
+                    },
+                ))
+            }
+            "limits@openssh.com" => {
+                #[derive(Serialize)]
+                struct LimitsReply {
+                    max_packet_length: u64,
+                    max_read_length: u64,
+                    max_write_length: u64,
+                    max_handle_count: u64,
+                }
+
+                Ok(russh_sftp::protocol::Packet::ExtendedReply(
+                    russh_sftp::protocol::ExtendedReply {
+                        id,
+                        data: russh_sftp::ser::to_bytes(&LimitsReply {
+                            max_packet_length: 2 * 1024 * 1024,
+                            max_read_length: 1024 * 1024,
+                            max_write_length: 1024 * 1024,
+                            max_handle_count: HANDLE_LIMIT as u64,
                         })
                         .unwrap()
                         .into(),
