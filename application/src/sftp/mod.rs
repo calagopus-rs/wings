@@ -53,12 +53,34 @@ struct FileHandle {
     path: PathBuf,
     path_components: Vec<String>,
 
-    file: Option<Arc<std::fs::File>>,
-    dir: Option<tokio::fs::ReadDir>,
-
+    file: Arc<std::fs::File>,
     consumed: u64,
     size: u64,
 }
+
+struct DirHandle {
+    path: PathBuf,
+
+    dir: tokio::fs::ReadDir,
+    consumed: u64,
+}
+
+enum ServerHandle {
+    File(FileHandle),
+    Dir(DirHandle),
+}
+
+impl ServerHandle {
+    #[inline]
+    fn path(&self) -> &Path {
+        match self {
+            ServerHandle::File(handle) => handle.path.as_path(),
+            ServerHandle::Dir(handle) => handle.path.as_path(),
+        }
+    }
+}
+
+const HANDLE_LIMIT: usize = 16;
 
 struct SftpSession {
     state: State,
@@ -69,7 +91,7 @@ struct SftpSession {
     user_permissions: Permissions,
 
     handle_id: u64,
-    handles: HashMap<String, FileHandle>,
+    handles: HashMap<String, ServerHandle>,
 }
 
 impl SftpSession {
@@ -138,21 +160,15 @@ impl russh_sftp::server::Handler for SftpSession {
         _version: u32,
         _extensions: HashMap<String, String>,
     ) -> Result<russh_sftp::protocol::Version, Self::Error> {
-        let mut version = russh_sftp::protocol::Version::new();
-        version
-            .extensions
-            .insert("check-file".to_string(), "1".to_string());
-        version
-            .extensions
-            .insert("copy-file".to_string(), "1".to_string());
-        version
-            .extensions
-            .insert("space-available".to_string(), "1".to_string());
-        version
-            .extensions
-            .insert("statvfs@openssh.com".to_string(), "2".to_string());
-
-        Ok(version)
+        Ok(russh_sftp::protocol::Version {
+            version: russh_sftp::protocol::VERSION,
+            extensions: HashMap::from([
+                ("check-file".to_string(), "1".to_string()),
+                ("copy-file".to_string(), "1".to_string()),
+                ("space-available".to_string(), "1".to_string()),
+                ("statvfs@openssh.com".to_string(), "2".to_string()),
+            ]),
+        })
     }
 
     #[inline]
@@ -194,7 +210,7 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
-        if self.handles.len() >= 256 {
+        if self.handles.len() >= HANDLE_LIMIT {
             return Err(StatusCode::Failure);
         }
 
@@ -213,7 +229,6 @@ impl russh_sftp::server::Handler for SftpSession {
                 return Err(StatusCode::NoSuchFile);
             }
 
-            let path_components = self.server.filesystem.path_to_components(&path);
             let dir = match tokio::fs::read_dir(&path).await {
                 Ok(dir) => dir,
                 Err(_) => return Err(StatusCode::NoSuchFile),
@@ -221,14 +236,11 @@ impl russh_sftp::server::Handler for SftpSession {
 
             self.handles.insert(
                 handle.clone(),
-                FileHandle {
+                ServerHandle::Dir(DirHandle {
                     path,
-                    path_components,
-                    file: None,
-                    dir: Some(dir),
+                    dir,
                     consumed: 0,
-                    size: 0,
-                },
+                }),
             );
 
             Ok(Handle { id, handle })
@@ -243,23 +255,18 @@ impl russh_sftp::server::Handler for SftpSession {
         }
 
         let handle = match self.handles.get_mut(&handle) {
-            Some(handle) => handle,
-            None => return Err(StatusCode::NoSuchFile),
+            Some(ServerHandle::Dir(handle)) => handle,
+            _ => return Err(StatusCode::NoSuchFile),
         };
 
         if handle.consumed >= self.state.config.system.sftp.directory_entry_limit {
             return Err(StatusCode::Eof);
         }
 
-        let dir = match &mut handle.dir {
-            Some(dir) => dir,
-            None => return Err(StatusCode::NoSuchFile),
-        };
-
         let mut files = Vec::new();
 
         loop {
-            let file = match dir.next_entry().await {
+            let file = match handle.dir.next_entry().await {
                 Ok(file) => file,
                 Err(_) => return Err(StatusCode::NoSuchFile),
             };
@@ -609,7 +616,7 @@ impl russh_sftp::server::Handler for SftpSession {
 
                 tokio::fs::set_permissions(&path, permissions)
                     .await
-                    .unwrap();
+                    .map_err(|_| StatusCode::Failure)?;
             }
 
             Ok(Status {
@@ -634,8 +641,8 @@ impl russh_sftp::server::Handler for SftpSession {
         }
 
         let handle = match self.handles.get(&handle) {
-            Some(handle) => handle,
-            None => return Err(StatusCode::NoSuchFile),
+            Some(ServerHandle::File(handle)) => handle,
+            _ => return Err(StatusCode::NoSuchFile),
         };
 
         self.setstat(id, handle.path.to_string_lossy().to_string(), attrs)
@@ -691,7 +698,7 @@ impl russh_sftp::server::Handler for SftpSession {
             None => return Err(StatusCode::NoSuchFile),
         };
 
-        self.stat(id, handle.path.to_string_lossy().to_string())
+        self.stat(id, handle.path().to_string_lossy().to_string())
             .await
     }
 
@@ -853,7 +860,7 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
-        if self.handles.len() >= 256 {
+        if self.handles.len() >= HANDLE_LIMIT {
             return Err(StatusCode::Failure);
         }
 
@@ -894,14 +901,14 @@ impl russh_sftp::server::Handler for SftpSession {
                 let path = path.clone();
 
                 move || {
-                    let file = OpenOptions::from(pflags).open(&path).unwrap();
+                    let file = OpenOptions::from(pflags).open(path).unwrap();
                     let metadata = file.metadata().unwrap();
 
                     (file, metadata)
                 }
             })
             .await
-            .unwrap();
+            .map_err(|_| StatusCode::Failure)?;
 
             let path_components = self.server.filesystem.path_to_components(&path);
 
@@ -922,14 +929,13 @@ impl russh_sftp::server::Handler for SftpSession {
 
             self.handles.insert(
                 handle.clone(),
-                FileHandle {
+                ServerHandle::File(FileHandle {
                     path,
                     path_components,
-                    file: Some(Arc::new(file)),
-                    dir: None,
+                    file: Arc::new(file),
                     consumed: 0,
                     size: metadata.len(),
-                },
+                }),
             );
 
             Ok(Handle { id, handle })
@@ -951,26 +957,19 @@ impl russh_sftp::server::Handler for SftpSession {
         }
 
         let handle = match self.handles.get_mut(&handle) {
-            Some(handle) => handle,
-            None => return Err(StatusCode::NoSuchFile),
+            Some(ServerHandle::File(handle)) => handle,
+            _ => return Err(StatusCode::NoSuchFile),
         };
 
         if handle.consumed >= handle.size || offset >= handle.size {
             return Err(StatusCode::Eof);
         }
 
-        let file = match &handle.file {
-            Some(file) => file,
-            None => {
-                return Err(StatusCode::NoSuchFile);
-            }
-        };
-
         let buf = tokio::task::spawn_blocking({
-            let file = Arc::clone(file);
+            let file = Arc::clone(&handle.file);
 
             move || {
-                let mut buf = vec![0; len.min(16 * 1024 * 1024) as usize];
+                let mut buf = vec![0; len.min(1024 * 1024) as usize];
                 let bytes_read = file.read_at(&mut buf, offset).unwrap();
 
                 buf.truncate(bytes_read);
@@ -978,7 +977,7 @@ impl russh_sftp::server::Handler for SftpSession {
             }
         })
         .await
-        .unwrap();
+        .map_err(|_| StatusCode::Failure)?;
 
         handle.consumed += buf.len() as u64;
 
@@ -998,20 +997,13 @@ impl russh_sftp::server::Handler for SftpSession {
         }
 
         let handle = match self.handles.get_mut(&handle) {
-            Some(handle) => handle,
-            None => return Err(StatusCode::NoSuchFile),
+            Some(ServerHandle::File(handle)) => handle,
+            _ => return Err(StatusCode::NoSuchFile),
         };
 
         if self.state.config.system.sftp.read_only {
             return Err(StatusCode::PermissionDenied);
         }
-
-        let file = match &handle.file {
-            Some(file) => file,
-            None => {
-                return Err(StatusCode::NoSuchFile);
-            }
-        };
 
         if !self
             .server
@@ -1026,15 +1018,13 @@ impl russh_sftp::server::Handler for SftpSession {
         }
 
         tokio::task::spawn_blocking({
-            let file = Arc::clone(file);
+            let file = Arc::clone(&handle.file);
 
-            move || {
-                file.write_all_at(&data, offset).unwrap();
-                true
-            }
+            move || file.write_all_at(&data, offset)
         })
         .await
-        .unwrap();
+        .map_err(|_| StatusCode::Failure)?
+        .map_err(|_| StatusCode::Failure)?;
 
         Ok(Status {
             id,
@@ -1080,8 +1070,10 @@ impl russh_sftp::server::Handler for SftpSession {
                     request.file_name
                 } else {
                     match self.handles.get(&request.file_name) {
-                        Some(handle) => handle.path.to_string_lossy().to_string(),
-                        None => return Err(StatusCode::NoSuchFile),
+                        Some(ServerHandle::File(handle)) => {
+                            handle.path.to_string_lossy().to_string()
+                        }
+                        _ => return Err(StatusCode::NoSuchFile),
                     }
                 };
 
@@ -1135,7 +1127,10 @@ impl russh_sftp::server::Handler for SftpSession {
 
                                         let mut buffer = [0; 8192];
                                         loop {
-                                            let bytes_read = file.read(&mut buffer).await.unwrap();
+                                            let bytes_read = file
+                                                .read(&mut buffer)
+                                                .await
+                                                .map_err(|_| StatusCode::Failure)?;
                                             total_bytes_read += bytes_read as u64;
 
                                             if bytes_read == 0 {
@@ -1154,7 +1149,10 @@ impl russh_sftp::server::Handler for SftpSession {
 
                                         let mut buffer = [0; 8192];
                                         loop {
-                                            let bytes_read = file.read(&mut buffer).await.unwrap();
+                                            let bytes_read = file
+                                                .read(&mut buffer)
+                                                .await
+                                                .map_err(|_| StatusCode::Failure)?;
                                             total_bytes_read += bytes_read as u64;
 
                                             if bytes_read == 0 {
@@ -1173,7 +1171,10 @@ impl russh_sftp::server::Handler for SftpSession {
 
                                         let mut buffer = [0; 8192];
                                         loop {
-                                            let bytes_read = file.read(&mut buffer).await.unwrap();
+                                            let bytes_read = file
+                                                .read(&mut buffer)
+                                                .await
+                                                .map_err(|_| StatusCode::Failure)?;
                                             total_bytes_read += bytes_read as u64;
 
                                             if bytes_read == 0 {
@@ -1192,7 +1193,10 @@ impl russh_sftp::server::Handler for SftpSession {
 
                                         let mut buffer = [0; 8192];
                                         loop {
-                                            let bytes_read = file.read(&mut buffer).await.unwrap();
+                                            let bytes_read = file
+                                                .read(&mut buffer)
+                                                .await
+                                                .map_err(|_| StatusCode::Failure)?;
                                             total_bytes_read += bytes_read as u64;
 
                                             if bytes_read == 0 {
@@ -1211,7 +1215,10 @@ impl russh_sftp::server::Handler for SftpSession {
 
                                         let mut buffer = [0; 8192];
                                         loop {
-                                            let bytes_read = file.read(&mut buffer).await.unwrap();
+                                            let bytes_read = file
+                                                .read(&mut buffer)
+                                                .await
+                                                .map_err(|_| StatusCode::Failure)?;
                                             total_bytes_read += bytes_read as u64;
 
                                             if bytes_read == 0 {
@@ -1230,7 +1237,10 @@ impl russh_sftp::server::Handler for SftpSession {
 
                                         let mut buffer = [0; 8192];
                                         loop {
-                                            let bytes_read = file.read(&mut buffer).await.unwrap();
+                                            let bytes_read = file
+                                                .read(&mut buffer)
+                                                .await
+                                                .map_err(|_| StatusCode::Failure)?;
                                             total_bytes_read += bytes_read as u64;
 
                                             if bytes_read == 0 {
@@ -1249,7 +1259,10 @@ impl russh_sftp::server::Handler for SftpSession {
 
                                         let mut buffer = [0; 8192];
                                         loop {
-                                            let bytes_read = file.read(&mut buffer).await.unwrap();
+                                            let bytes_read = file
+                                                .read(&mut buffer)
+                                                .await
+                                                .map_err(|_| StatusCode::Failure)?;
                                             total_bytes_read += bytes_read as u64;
 
                                             if bytes_read == 0 {
