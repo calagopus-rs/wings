@@ -108,3 +108,4 @@ docker:
 - add [`btrfs`](https://github.com/kdave/btrfs-progs) backup driver
 - add [`zfs`](https://github.com/openzfs/zfs) backup driver
 - add ability to create `zip` archives on `wings` backup driver
+- add ability to browse backups (for some drivers)

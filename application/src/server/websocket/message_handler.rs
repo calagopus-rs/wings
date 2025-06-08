@@ -84,9 +84,12 @@ pub async fn handle_message(
                     if let Err(err) = server.start(&state.docker, None).await {
                         tracing::error!(
                             server = %server.uuid,
-                            "failed to start server: {}",
+                            "failed to start server: {:#?}",
                             err,
                         );
+
+                        server.log_daemon_error("an unexpected error occurred while starting the server. please contact an administrator.")
+                                .await;
                     } else {
                         server
                             .activity
@@ -117,9 +120,12 @@ pub async fn handle_message(
                     if let Err(err) = server.restart(&state.docker, None).await {
                         tracing::error!(
                             server = %server.uuid,
-                            "failed to restart server: {}",
+                            "failed to restart server: {:#?}",
                             err
                         );
+
+                        server.log_daemon_error("an unexpected error occurred while starting the server. please contact an administrator.")
+                                .await;
                     } else {
                         server
                             .activity
@@ -150,9 +156,12 @@ pub async fn handle_message(
                     if let Err(err) = server.stop(&state.docker, None).await {
                         tracing::error!(
                             server = %server.uuid,
-                            "failed to stop server: {}",
+                            "failed to stop server: {:#?}",
                             err
                         );
+
+                        server.log_daemon_error("an unexpected error occurred while starting the server. please contact an administrator.")
+                                .await;
                     } else {
                         server
                             .activity
@@ -183,9 +192,12 @@ pub async fn handle_message(
                     if let Err(err) = server.kill(&state.docker).await {
                         tracing::error!(
                             server = %server.uuid,
-                            "failed to kill server: {}",
+                            "failed to kill server: {:#?}",
                             err
                         );
+
+                        server.log_daemon_error("an unexpected error occurred while starting the server. please contact an administrator.")
+                                .await;
                     } else {
                         server
                             .activity

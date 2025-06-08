@@ -235,7 +235,13 @@ impl ServerConfiguration {
             memory_swap: match self.build.swap {
                 0 => None,
                 -1 => Some(-1),
-                limit => Some(limit * 1024 * 1024),
+                limit => match self.build.memory_limit {
+                    0 => Some(limit * 1024 * 1024),
+                    memory_limit => Some(
+                        config.docker.overhead.get_memory(memory_limit) * 1024 * 1024
+                            + limit * 1024 * 1024,
+                    ),
+                },
             },
             blkio_weight: Some(self.build.io_weight),
             oom_kill_disable: Some(self.build.oom_disabled),

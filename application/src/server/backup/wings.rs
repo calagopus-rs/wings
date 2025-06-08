@@ -101,7 +101,7 @@ pub async fn create_backup(
                 tar.finish()?;
             }
             crate::config::SystemBackupsWingsArchiveFormat::Zip => {
-                let mut zip = zip::ZipWriter::new(std::io::BufWriter::new(writer));
+                let mut zip = zip::ZipWriter::new(writer);
 
                 for entry in WalkBuilder::new(&server.filesystem.base_path)
                     .overrides(overrides)

@@ -60,7 +60,16 @@ mod get {
                 }
             }
 
-            entries.sort_by(|a, b| a.name.cmp(&b.name));
+            entries.sort_by(|a, b| {
+                if a.directory && !b.directory {
+                    std::cmp::Ordering::Less
+                } else if !a.directory && b.directory {
+                    std::cmp::Ordering::Greater
+                } else {
+                    a.name.cmp(&b.name)
+                }
+            });
+
             return (
                 StatusCode::OK,
                 axum::Json(serde_json::to_value(&entries).unwrap()),

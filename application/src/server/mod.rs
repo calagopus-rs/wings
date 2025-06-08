@@ -754,21 +754,23 @@ impl Server {
         &self,
         client: &Arc<bollard::Docker>,
         aquire_timeout: Option<std::time::Duration>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<(), anyhow::Error> {
         if self.is_locked_state() {
             self.log_daemon_error("Server is in a locked state, cannot start the server")
                 .await;
-            return Err("server is in a locked state, cannot start the server".into());
+            return Err(anyhow::anyhow!(
+                "server is in a locked state, cannot start the server"
+            ));
         }
 
         if self.state.get_state() != state::ServerState::Offline {
-            return Err("server is already running".into());
+            return Err(anyhow::anyhow!("server is already running"));
         }
 
         if self.filesystem.is_full().await {
-            self.log_daemon_error("disk space is full, cannot start the server")
-                .await;
-            return Err("disk space is full, cannot start the server".into());
+            return Err(anyhow::anyhow!(
+                "disk space is full, cannot start the server"
+            ));
         }
 
         tracing::info!(
@@ -848,11 +850,12 @@ impl Server {
             .await;
 
         if !success {
-            self.log_daemon_error("another power action is currently being processed for this server, please try again later")
-                .await;
+            Err(anyhow::anyhow!(
+                "another power action is currently being processed for this server, please try again later"
+            ))
+        } else {
+            Ok(())
         }
-
-        Ok(())
     }
 
     pub async fn kill(&self, client: &bollard::Docker) -> Result<(), bollard::errors::Error> {
@@ -893,15 +896,13 @@ impl Server {
         &self,
         client: &Arc<bollard::Docker>,
         aquire_timeout: Option<std::time::Duration>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<(), anyhow::Error> {
         if self.state.get_state() == state::ServerState::Offline {
-            self.log_daemon_error("server is already stopped").await;
-            return Err("server is already stopped".into());
+            return Err(anyhow::anyhow!("server is already stopped"));
         }
 
         if self.state.get_state() == state::ServerState::Stopping {
-            self.log_daemon_error("server is already stopping").await;
-            return Err("server is already stopping".into());
+            return Err(anyhow::anyhow!("server is already stopping"));
         }
 
         let container = match &*self.container.read().await {
@@ -1021,9 +1022,9 @@ impl Server {
             .await;
 
         if !success {
-            self.log_daemon_error("another power action is currently being processed for this server, please try again later")
-                .await;
-            Err("another power action is currently being processed for this server, please try again later".into())
+            Err(anyhow::anyhow!(
+                "another power action is currently being processed for this server, please try again later"
+            ))
         } else {
             self.stopping.store(true, Ordering::Relaxed);
 
@@ -1035,10 +1036,9 @@ impl Server {
         &self,
         client: &Arc<bollard::Docker>,
         aquire_timeout: Option<std::time::Duration>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<(), anyhow::Error> {
         if self.restarting.load(Ordering::Relaxed) {
-            self.log_daemon_error("server is already restarting").await;
-            return Err("server is already restarting".into());
+            return Err(anyhow::anyhow!("server is already restarting"));
         }
 
         tracing::info!(
