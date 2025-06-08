@@ -380,6 +380,8 @@ impl Server {
         self.filesystem
             .update_ignored(&configuration.egg.file_denylist)
             .await;
+        self.suspended
+            .store(configuration.suspended, Ordering::SeqCst);
         *self.configuration.write().await = configuration;
         *self.process_configuration.write().await = process_configuration;
 
@@ -1097,10 +1099,7 @@ impl Server {
         if let Ok(containers) = client
             .list_containers(Some(bollard::container::ListContainersOptions {
                 all: true,
-                filters: HashMap::from([(
-                    "name".to_string(),
-                    vec![self.uuid.to_string(), format!("{}_installer", self.uuid)],
-                )]),
+                filters: HashMap::from([("name".to_string(), vec![self.uuid.to_string()])]),
                 ..Default::default()
             }))
             .await
@@ -1140,15 +1139,21 @@ impl Server {
             "destroying server"
         );
 
+        self.suspended.store(true, Ordering::SeqCst);
         self.kill(client).await.ok();
         self.destroy_container(client).await;
-        self.filesystem.destroy().await;
+
+        tokio::spawn({
+            let server = self.clone();
+
+            async move { server.filesystem.destroy().await }
+        });
     }
 
     pub async fn to_api_response(&self) -> serde_json::Value {
         json!({
             "state": self.state.get_state(),
-            "is_suspended": self.suspended.load(Ordering::Relaxed),
+            "is_suspended": self.suspended.load(Ordering::SeqCst),
             "utilization": self.resource_usage().await,
             "configuration": *self.configuration.read().await,
         })

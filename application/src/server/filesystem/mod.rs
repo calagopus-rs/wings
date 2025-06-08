@@ -614,6 +614,7 @@ impl Filesystem {
 
     pub async fn destroy(&self) {
         self.checker_abort.store(true, Ordering::Relaxed);
+
         if let Err(err) = limiter::destroy(self).await {
             tracing::error!(
                 path = %self.base_path.display(),
