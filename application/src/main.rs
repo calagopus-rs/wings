@@ -415,8 +415,10 @@ async fn main() {
             };
 
             let config = russh::server::Config {
-                auth_rejection_time: std::time::Duration::from_secs(1),
+                auth_rejection_time: std::time::Duration::from_secs(0),
                 auth_rejection_time_initial: Some(std::time::Duration::from_secs(0)),
+                maximum_packet_size: 512 * 1024,
+                keepalive_interval: Some(std::time::Duration::from_secs(60)),
                 max_auth_attempts: 6,
                 keys: vec![key],
                 ..Default::default()

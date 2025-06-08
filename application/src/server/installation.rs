@@ -21,9 +21,10 @@ async fn container_config(
     server: &super::Server,
     script: &InstallationScript,
 ) -> tokio::io::Result<bollard::container::Config<String>> {
-    let mut labels = HashMap::with_capacity(2);
-    labels.insert("Service".to_string(), "Pterodactyl".to_string());
-    labels.insert("ContainerType".to_string(), "server_installer".to_string());
+    let labels = HashMap::from([
+        ("Service".to_string(), "Pterodactyl".to_string()),
+        ("ContainerType".to_string(), "server_installer".to_string()),
+    ]);
 
     let mut resources = server
         .configuration

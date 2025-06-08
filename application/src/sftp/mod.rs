@@ -21,10 +21,7 @@ use std::{
     sync::Arc,
 };
 use sysinfo::Disks;
-use tokio::{
-    io::{AsyncReadExt, AsyncSeekExt},
-    sync::Mutex,
-};
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 mod auth;
 
@@ -44,7 +41,7 @@ impl russh::server::Server for Server {
             user_uuid: None,
             user_permissions: Default::default(),
 
-            clients: Arc::new(Mutex::new(HashMap::new())),
+            clients: HashMap::new(),
         }
     }
 }
@@ -132,13 +129,7 @@ impl SftpSession {
 
     #[inline]
     fn has_permission(&self, permission: Permission) -> bool {
-        for p in self.user_permissions.iter().copied() {
-            if permission.matches(p) {
-                return true;
-            }
-        }
-
-        false
+        self.user_permissions.has_permission(permission)
     }
 
     #[inline]
@@ -172,7 +163,6 @@ impl russh_sftp::server::Handler for SftpSession {
         })
     }
 
-    #[inline]
     async fn close(&mut self, id: u32, handle: String) -> Result<Status, Self::Error> {
         self.handles.remove(&handle);
 
@@ -184,7 +174,6 @@ impl russh_sftp::server::Handler for SftpSession {
         })
     }
 
-    #[inline]
     async fn realpath(&mut self, id: u32, path: String) -> Result<Name, Self::Error> {
         if path == "/.." || path == "." {
             return Ok(Name {
@@ -945,7 +934,6 @@ impl russh_sftp::server::Handler for SftpSession {
         }
     }
 
-    #[inline]
     async fn read(
         &mut self,
         id: u32,
@@ -970,7 +958,7 @@ impl russh_sftp::server::Handler for SftpSession {
             let file = Arc::clone(&handle.file);
 
             move || {
-                let mut buf = vec![0; len.min(1024 * 1024) as usize];
+                let mut buf = vec![0; len.min(448 * 1024) as usize];
                 let bytes_read = file.read_at(&mut buf, offset).unwrap();
 
                 buf.truncate(bytes_read);
@@ -985,7 +973,6 @@ impl russh_sftp::server::Handler for SftpSession {
         Ok(Data { id, data: buf })
     }
 
-    #[inline]
     async fn write(
         &mut self,
         id: u32,
@@ -1006,7 +993,7 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
-        data.truncate(1024 * 1024);
+        data.truncate(448 * 1024);
 
         if !self
             .server
@@ -1454,9 +1441,9 @@ impl russh_sftp::server::Handler for SftpSession {
                     russh_sftp::protocol::ExtendedReply {
                         id,
                         data: russh_sftp::ser::to_bytes(&LimitsReply {
-                            max_packet_length: 2 * 1024 * 1024,
-                            max_read_length: 1024 * 1024,
-                            max_write_length: 1024 * 1024,
+                            max_packet_length: 512 * 1024,
+                            max_read_length: 448 * 1024,
+                            max_write_length: 448 * 1024,
                             max_handle_count: HANDLE_LIMIT as u64,
                         })
                         .unwrap()

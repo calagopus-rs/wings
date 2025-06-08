@@ -131,8 +131,8 @@ pub async fn handle_ws(
         futures.push({
             let socket_jwt = Arc::clone(&socket_jwt);
             let sender = Arc::clone(&sender);
-            let server = Arc::clone(&server);
             let mut reciever = server.websocket.subscribe();
+            let server = server.clone();
 
             Box::pin(async move {
                 loop {

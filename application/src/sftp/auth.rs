@@ -5,7 +5,6 @@ use russh::{
 };
 use russh_sftp::protocol::StatusCode;
 use std::{collections::HashMap, net::IpAddr, sync::Arc};
-use tokio::sync::Mutex;
 
 pub struct SshSession {
     pub state: State,
@@ -15,7 +14,7 @@ pub struct SshSession {
     pub user_uuid: Option<uuid::Uuid>,
     pub user_permissions: Permissions,
 
-    pub clients: Arc<Mutex<HashMap<ChannelId, Channel<Msg>>>>,
+    pub clients: HashMap<ChannelId, Channel<Msg>>,
 }
 
 impl SshSession {
@@ -30,9 +29,7 @@ impl SshSession {
     }
 
     pub async fn get_channel(&mut self, channel_id: ChannelId) -> Channel<Msg> {
-        let mut clients = self.clients.lock().await;
-
-        clients.remove(&channel_id).unwrap()
+        self.clients.remove(&channel_id).unwrap()
     }
 }
 
@@ -164,10 +161,7 @@ impl russh::server::Handler for SshSession {
         channel: Channel<Msg>,
         _session: &mut Session,
     ) -> Result<bool, Self::Error> {
-        {
-            let mut clients = self.clients.lock().await;
-            clients.insert(channel.id(), channel);
-        }
+        self.clients.insert(channel.id(), channel);
 
         Ok(true)
     }
