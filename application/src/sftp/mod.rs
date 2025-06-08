@@ -799,55 +799,55 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::NoSuchFile);
         }
 
-        if let Some(linkpath) = self.server.filesystem.safe_symlink_path(&linkpath).await {
-            if linkpath.exists() {
-                return Err(StatusCode::NoSuchFile);
-            }
+        let linkpath = PathBuf::from(linkpath);
+        let targetpath = match self.server.filesystem.canonicalize(&targetpath).await {
+            Ok(path) => path,
+            Err(_) => return Err(StatusCode::NoSuchFile),
+        };
 
-            if let Some(targetpath) = self.server.filesystem.safe_path(&targetpath).await {
-                let metadata = match tokio::fs::symlink_metadata(&targetpath).await {
-                    Ok(metadata) => metadata,
-                    Err(_) => return Err(StatusCode::NoSuchFile),
-                };
+        let metadata = match tokio::fs::symlink_metadata(&targetpath).await {
+            Ok(metadata) => metadata,
+            Err(_) => return Err(StatusCode::NoSuchFile),
+        };
 
-                if self
-                    .server
-                    .filesystem
-                    .is_ignored(&targetpath, metadata.is_dir())
-                    .await
-                {
-                    return Err(StatusCode::NoSuchFile);
-                }
-
-                if tokio::fs::symlink(&targetpath, &linkpath).await.is_err() {
-                    return Err(StatusCode::NoSuchFile);
-                }
-
-                self.server
-                    .activity
-                    .log_activity(Activity {
-                        event: ActivityEvent::SftpCreate,
-                        user: self.user_uuid,
-                        ip: self.user_ip,
-                        metadata: Some(json!({
-                            "files": [self.server.filesystem.relative_path(&linkpath)],
-                        })),
-                        timestamp: chrono::Utc::now(),
-                    })
-                    .await;
-
-                Ok(Status {
-                    id,
-                    status_code: StatusCode::Ok,
-                    error_message: "Ok".to_string(),
-                    language_tag: "en-US".to_string(),
-                })
-            } else {
-                Err(StatusCode::NoSuchFile)
-            }
-        } else {
-            Err(StatusCode::NoSuchFile)
+        if self
+            .server
+            .filesystem
+            .is_ignored(&targetpath, metadata.is_dir())
+            .await
+        {
+            return Err(StatusCode::NoSuchFile);
         }
+
+        if self
+            .server
+            .filesystem
+            .symlink(&targetpath, &linkpath)
+            .await
+            .is_err()
+        {
+            return Err(StatusCode::NoSuchFile);
+        }
+
+        self.server
+            .activity
+            .log_activity(Activity {
+                event: ActivityEvent::SftpCreate,
+                user: self.user_uuid,
+                ip: self.user_ip,
+                metadata: Some(json!({
+                    "files": [self.server.filesystem.relative_path(&linkpath)],
+                })),
+                timestamp: chrono::Utc::now(),
+            })
+            .await;
+
+        Ok(Status {
+            id,
+            status_code: StatusCode::Ok,
+            error_message: "Ok".to_string(),
+            language_tag: "en-US".to_string(),
+        })
     }
 
     async fn open(

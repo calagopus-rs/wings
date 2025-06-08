@@ -174,89 +174,65 @@ impl ProcessConfiguration {
 
             if let Some(parent) = full_path.parent() {
                 if !parent.as_os_str().is_empty() {
-                    let parent_path = parent.to_string_lossy().to_string();
-
                     tracing::debug!(
                         server = %server.uuid,
                         "checking if parent directory exists: {}",
-                        parent_path
+                        parent.display()
                     );
 
-                    if let Some(safe_path) = server.filesystem.safe_path(&parent_path).await {
-                        if !safe_path.exists() {
-                            tracing::info!(
-                                server = %server.uuid,
-                                "creating parent directory: {}",
-                                safe_path.display()
-                            );
-
-                            match tokio::fs::create_dir_all(&safe_path).await {
-                                Ok(_) => {
-                                    tracing::debug!(
-                                        server = %server.uuid,
-                                        "successfully created parent directory: {}",
-                                        safe_path.display()
-                                    );
-                                }
-                                Err(e) => {
-                                    tracing::error!(
-                                        server = %server.uuid,
-                                        "failed to create parent directory {}: {}",
-                                        safe_path.display(),
-                                        e
-                                    );
-                                    continue;
-                                }
-                            }
-
-                            tracing::debug!(
-                                server = %server.uuid,
-                                "setting ownership for directory: {}",
-                                safe_path.display()
-                            );
-                            server.filesystem.chown_path(&safe_path).await;
-                        } else {
-                            tracing::debug!(
-                                server = %server.uuid,
-                                "parent directory already exists: {}",
-                                safe_path.display()
-                            );
-                        }
-                    } else {
-                        tracing::error!(
+                    if server.filesystem.metadata(&parent).await.is_err() {
+                        tracing::info!(
                             server = %server.uuid,
-                            "could not resolve safe path for parent directory: {}",
-                            parent_path
+                            "creating parent directory: {}",
+                            parent.display()
                         );
-                        continue;
+
+                        match server.filesystem.create_dir_all(&parent).await {
+                            Ok(_) => {
+                                tracing::debug!(
+                                    server = %server.uuid,
+                                    "successfully created parent directory: {}",
+                                    parent.display()
+                                );
+                            }
+                            Err(e) => {
+                                tracing::error!(
+                                    server = %server.uuid,
+                                    "failed to create parent directory {}: {}",
+                                    parent.display(),
+                                    e
+                                );
+                                continue;
+                            }
+                        }
+
+                        tracing::debug!(
+                            server = %server.uuid,
+                            "setting ownership for directory: {}",
+                            parent.display()
+                        );
+                        server.filesystem.chown_path(&parent).await;
+                    } else {
+                        tracing::debug!(
+                            server = %server.uuid,
+                            "parent directory already exists: {}",
+                            parent.display()
+                        );
                     }
                 }
             }
 
             let mut file_content = String::new();
 
-            let safe_file_path = match server.filesystem.safe_path(&file_path).await {
-                Some(path) => path,
-                None => {
-                    tracing::error!(
-                        server = %server.uuid,
-                        "could not resolve safe path for file: {}",
-                        file_path
-                    );
-
-                    continue;
-                }
-            };
-
-            if let Ok(metadata) = safe_file_path.symlink_metadata() {
+            if let Ok(metadata) = server.filesystem.symlink_metadata(&file_path).await {
                 if !metadata.is_dir() {
                     tracing::debug!(
                         server = %server.uuid,
                         "file exists, reading content: {}",
-                        safe_file_path.display()
+                        file_path
                     );
 
-                    match tokio::fs::read_to_string(&safe_file_path).await {
+                    match server.filesystem.read_to_string(&file_path).await {
                         Ok(content) => {
                             file_content = content;
                             tracing::debug!(
@@ -277,14 +253,14 @@ impl ProcessConfiguration {
                     tracing::error!(
                         server = %server.uuid,
                         "path exists but is a directory: {}",
-                        safe_file_path.display()
+                        file_path
                     );
                 }
             } else {
                 tracing::debug!(
                     server = %server.uuid,
                     "file does not exist, will create new: {}",
-                    safe_file_path.display()
+                    file_path
                 );
             }
 
@@ -339,15 +315,19 @@ impl ProcessConfiguration {
                 updated_content.len()
             );
 
-            match tokio::fs::write(&safe_file_path, updated_content.as_bytes()).await {
+            match server
+                .filesystem
+                .write(&full_path, updated_content.as_bytes().to_vec())
+                .await
+            {
                 Ok(_) => {
                     tracing::debug!(
                         server = %server.uuid,
                         "successfully wrote content to file: {}",
-                        safe_file_path.display()
+                        file_path
                     );
 
-                    server.filesystem.chown_path(&safe_file_path).await;
+                    server.filesystem.chown_path(&file_path).await;
 
                     tracing::debug!(
                         server = %server.uuid,

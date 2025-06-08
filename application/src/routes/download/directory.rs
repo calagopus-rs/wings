@@ -88,9 +88,9 @@ mod get {
             }
         };
 
-        let path = match server.filesystem.safe_path(&payload.file_path).await {
-            Some(path) => path,
-            None => {
+        let path = match server.filesystem.canonicalize(payload.file_path).await {
+            Ok(path) => path,
+            Err(_) => {
                 return (
                     StatusCode::NOT_FOUND,
                     HeaderMap::new(),

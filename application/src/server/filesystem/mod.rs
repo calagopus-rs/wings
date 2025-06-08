@@ -331,52 +331,6 @@ impl Filesystem {
         }
     }
 
-    #[inline]
-    #[tracing::instrument(skip(self))]
-    pub async fn safe_path(&self, path: &str) -> Option<PathBuf> {
-        let path = self.base_path.join(path.trim_start_matches('/'));
-
-        if let Ok(safe_path) = tokio::fs::canonicalize(&path).await {
-            if safe_path.starts_with(&self.base_path) {
-                tracing::debug!(
-                    safe_path = %safe_path.display(),
-                    "resolved filesystem path"
-                );
-
-                Some(safe_path)
-            } else {
-                tracing::debug!(
-                    safe_path = %safe_path.display(),
-                    "resolved filesystem path, but it is out of bounds"
-                );
-
-                None
-            }
-        } else {
-            let safe_path = Self::resolve_path(&path);
-            if safe_path.starts_with(&self.base_path) {
-                Some(safe_path)
-            } else {
-                tracing::debug!(
-                    safe_path = %safe_path.display(),
-                    "resolved filesystem path, but it is out of bounds"
-                );
-
-                None
-            }
-        }
-    }
-
-    #[inline]
-    pub async fn safe_symlink_path(&self, path: &str) -> Option<PathBuf> {
-        let safe_path = Self::resolve_path(&self.base_path.join(path.trim_start_matches('/')));
-        if safe_path.starts_with(&self.base_path) {
-            Some(safe_path)
-        } else {
-            None
-        }
-    }
-
     pub async fn backup_fs(
         &self,
         server: &crate::server::Server,
@@ -579,6 +533,16 @@ impl Filesystem {
         Ok(link)
     }
 
+    pub async fn read_to_string(&self, path: impl Into<PathBuf>) -> Result<String, anyhow::Error> {
+        let filesystem = self.base_dir().await?;
+
+        let path = self.relative_path(&path.into());
+        let content =
+            tokio::task::spawn_blocking(move || filesystem.read_to_string(path)).await??;
+
+        Ok(content)
+    }
+
     pub async fn open(&self, path: impl Into<PathBuf>) -> Result<tokio::fs::File, anyhow::Error> {
         let filesystem = self.base_dir().await?;
 
@@ -586,6 +550,19 @@ impl Filesystem {
         let file = tokio::task::spawn_blocking(move || filesystem.open(path)).await??;
 
         Ok(tokio::fs::File::from_std(file.into_std()))
+    }
+
+    pub async fn write(
+        &self,
+        path: impl Into<PathBuf>,
+        data: Vec<u8>,
+    ) -> Result<(), anyhow::Error> {
+        let filesystem = self.base_dir().await?;
+
+        let path = self.relative_path(&path.into());
+        tokio::task::spawn_blocking(move || filesystem.write(path, data)).await??;
+
+        Ok(())
     }
 
     pub async fn create(&self, path: impl Into<PathBuf>) -> Result<tokio::fs::File, anyhow::Error> {
@@ -641,6 +618,21 @@ impl Filesystem {
                 tokio::task::spawn_blocking(move || filesystem.read_dir(path)).await??,
             )))
         })
+    }
+
+    pub async fn symlink(
+        &self,
+        target: impl Into<PathBuf>,
+        link: impl Into<PathBuf>,
+    ) -> Result<(), anyhow::Error> {
+        let filesystem = self.base_dir().await?;
+
+        let target = self.relative_path(&target.into());
+        let link = self.relative_path(&link.into());
+
+        tokio::task::spawn_blocking(move || filesystem.symlink(target, link)).await??;
+
+        Ok(())
     }
 
     /// Allocates (or deallocates) space for a path in the filesystem.
@@ -726,7 +718,7 @@ impl Filesystem {
         }
     }
 
-    pub async fn chown_path(&self, path: &Path) {
+    pub async fn chown_path(&self, path: impl Into<PathBuf>) {
         fn recursive_chown(path: &Path, owner_uid: u32, owner_gid: u32) {
             let metadata = path.symlink_metadata().unwrap();
             if metadata.is_dir() {
@@ -744,7 +736,7 @@ impl Filesystem {
         }
 
         tokio::task::spawn_blocking({
-            let path = self.base_path.join(self.relative_path(path));
+            let path = self.base_path.join(self.relative_path(&path.into()));
             let owner_uid = self.config.system.user.uid;
             let owner_gid = self.config.system.user.gid;
 
