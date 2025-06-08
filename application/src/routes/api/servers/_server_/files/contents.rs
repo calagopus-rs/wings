@@ -9,6 +9,7 @@ mod get {
         http::{HeaderMap, StatusCode},
     };
     use serde::Deserialize;
+    use std::path::PathBuf;
     use utoipa::ToSchema;
 
     #[derive(ToSchema, Deserialize)]
@@ -38,18 +39,9 @@ mod get {
         server: GetServer,
         Query(data): Query<Params>,
     ) -> (StatusCode, HeaderMap, Body) {
-        let path = match server.filesystem.safe_path(&data.file).await {
-            Some(path) => path,
-            None => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    HeaderMap::from_iter([(
-                        "Content-Type".parse().unwrap(),
-                        "application/json".parse().unwrap(),
-                    )]),
-                    Body::from(serde_json::to_string(&ApiError::new("file not found")).unwrap()),
-                );
-            }
+        let path = match server.filesystem.canonicalize(&data.file).await {
+            Ok(path) => path,
+            Err(_) => PathBuf::from(data.file),
         };
 
         if let Some((backup, path)) = server.filesystem.backup_fs(&server, &path).await {
@@ -113,7 +105,7 @@ mod get {
             }
         }
 
-        let metadata = tokio::fs::symlink_metadata(&path).await;
+        let metadata = server.filesystem.metadata(&path).await;
         if let Ok(metadata) = metadata {
             if !metadata.is_file() || server.filesystem.is_ignored(&path, metadata.is_dir()).await {
                 return (

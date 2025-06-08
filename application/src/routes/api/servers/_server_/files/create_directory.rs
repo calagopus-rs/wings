@@ -5,6 +5,7 @@ mod post {
     use crate::routes::{ApiError, api::servers::_server_::GetServer};
     use axum::http::StatusCode;
     use serde::{Deserialize, Serialize};
+    use std::path::Path;
     use utoipa::ToSchema;
 
     #[derive(ToSchema, Deserialize)]
@@ -25,17 +26,9 @@ mod post {
         server: GetServer,
         axum::Json(data): axum::Json<Payload>,
     ) -> (StatusCode, axum::Json<serde_json::Value>) {
-        let path = match server.filesystem.safe_path(&data.path).await {
-            Some(path) => path,
-            None => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    axum::Json(ApiError::new("path not found").to_json()),
-                );
-            }
-        };
+        let path = Path::new(&data.path);
 
-        let metadata = tokio::fs::symlink_metadata(&path).await;
+        let metadata = server.filesystem.metadata(&path).await;
         if !metadata.map(|m| m.is_dir()).unwrap_or(true) {
             return (
                 StatusCode::EXPECTATION_FAILED,
@@ -43,15 +36,27 @@ mod post {
             );
         }
 
-        let destination = path.join(&data.name);
-        if !server.filesystem.is_safe_path(&destination).await {
+        if server.filesystem.is_ignored(path, true).await {
             return (
                 StatusCode::NOT_FOUND,
                 axum::Json(ApiError::new("path not found").to_json()),
             );
         }
 
-        tokio::fs::create_dir_all(&destination).await.unwrap();
+        let destination = path.join(&data.name);
+
+        if server.filesystem.is_ignored(&destination, true).await {
+            return (
+                StatusCode::EXPECTATION_FAILED,
+                axum::Json(ApiError::new("destination not found").to_json()),
+            );
+        }
+
+        server
+            .filesystem
+            .create_dir_all(&destination)
+            .await
+            .unwrap();
         server.filesystem.chown_path(&destination).await;
 
         (

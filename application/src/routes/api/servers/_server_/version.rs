@@ -7,7 +7,8 @@ mod get {
     use axum_extra::extract::Query;
     use serde::{Deserialize, Serialize};
     use sha2::Digest;
-    use tokio::{fs::File, io::AsyncReadExt};
+    use std::path::PathBuf;
+    use tokio::io::AsyncReadExt;
     use utoipa::ToSchema;
 
     #[derive(ToSchema, Deserialize, Default, Clone, Copy)]
@@ -44,13 +45,11 @@ mod get {
     ) -> (StatusCode, axum::Json<serde_json::Value>) {
         match data.game {
             Game::MinecraftJava => {
-                let mut jar = server.filesystem.base_path.join("server.jar");
+                let mut jar = PathBuf::from("server.jar");
                 for (key, value) in &server.configuration.read().await.environment {
                     if let Some(value_str) = value.as_str() {
                         if key.contains("JAR") && value_str.contains(".jar") {
-                            if let Some(path) = server.filesystem.safe_path(value_str).await {
-                                jar = path;
-                            }
+                            jar = value_str.into();
 
                             break;
                         }
@@ -125,7 +124,7 @@ mod get {
                     }
                 }
 
-                let mut file = match File::open(&jar).await {
+                let mut file = match server.filesystem.open(&jar).await {
                     Ok(file) => file,
                     Err(_) => {
                         return (

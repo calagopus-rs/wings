@@ -5,6 +5,7 @@ mod put {
     use crate::routes::{ApiError, api::servers::_server_::GetServer};
     use axum::http::StatusCode;
     use serde::{Deserialize, Serialize};
+    use std::path::Path;
     use utoipa::ToSchema;
 
     #[derive(ToSchema, Deserialize)]
@@ -35,17 +36,9 @@ mod put {
         server: GetServer,
         axum::Json(data): axum::Json<Payload>,
     ) -> (StatusCode, axum::Json<serde_json::Value>) {
-        let root = match server.filesystem.safe_path(&data.root).await {
-            Some(path) => path,
-            None => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    axum::Json(ApiError::new("root not found").to_json()),
-                );
-            }
-        };
+        let root = Path::new(&data.root);
 
-        let metadata = tokio::fs::symlink_metadata(&root).await;
+        let metadata = server.filesystem.metadata(&root).await;
         if !metadata.map(|m| m.is_dir()).unwrap_or(true) {
             return (
                 StatusCode::EXPECTATION_FAILED,
@@ -55,12 +48,13 @@ mod put {
 
         let mut renamed_count = 0;
         for file in data.files {
-            let from = crate::server::filesystem::Filesystem::resolve_path(&root.join(file.from));
-            if !server.filesystem.is_safe_path(&from).await || from == root {
+            let from = root.join(file.from);
+            if from == root {
                 continue;
             }
-            let to = crate::server::filesystem::Filesystem::resolve_path(&root.join(file.to));
-            if !server.filesystem.is_safe_path(&to).await || to == root {
+
+            let to = root.join(file.to);
+            if to == root {
                 continue;
             }
 
@@ -68,12 +62,12 @@ mod put {
                 continue;
             }
 
-            let from_metadata = match tokio::fs::symlink_metadata(&from).await {
+            let from_metadata = match server.filesystem.metadata(&from).await {
                 Ok(metadata) => metadata,
                 Err(_) => continue,
             };
 
-            if to.exists()
+            if server.filesystem.metadata(&to).await.is_ok()
                 || server
                     .filesystem
                     .is_ignored(&from, from_metadata.is_dir())
@@ -86,7 +80,13 @@ mod put {
                 continue;
             }
 
-            if server.filesystem.rename_path(&from, &to).await.is_ok() {
+            if let Err(err) = server.filesystem.rename_path(from, to).await {
+                tracing::debug!(
+                    server = %server.uuid,
+                    "failed to rename file: {:#?}",
+                    err
+                );
+            } else {
                 renamed_count += 1;
             }
         }

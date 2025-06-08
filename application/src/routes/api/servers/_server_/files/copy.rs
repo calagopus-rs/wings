@@ -22,9 +22,9 @@ mod post {
         server: GetServer,
         axum::Json(data): axum::Json<Payload>,
     ) -> (StatusCode, axum::Json<serde_json::Value>) {
-        let location = match server.filesystem.safe_path(&data.location).await {
-            Some(path) => path,
-            None => {
+        let location = match server.filesystem.canonicalize(data.location).await {
+            Ok(path) => path,
+            Err(_) => {
                 return (
                     StatusCode::NOT_FOUND,
                     axum::Json(ApiError::new("file not found").to_json()),
@@ -32,7 +32,7 @@ mod post {
             }
         };
 
-        let metadata = match tokio::fs::symlink_metadata(&location).await {
+        let metadata = match server.filesystem.metadata(&location).await {
             Ok(metadata) => {
                 if !metadata.is_file()
                     || server
@@ -101,13 +101,6 @@ mod post {
         });
         let file_name = location.parent().unwrap().join(&new_name);
 
-        if !server.filesystem.is_safe_path(&file_name).await {
-            return (
-                StatusCode::EXPECTATION_FAILED,
-                axum::Json(ApiError::new("invalid file name").to_json()),
-            );
-        }
-
         if !server
             .filesystem
             .allocate_in_path(location.parent().unwrap(), metadata.len() as i64)
@@ -119,8 +112,8 @@ mod post {
             );
         }
 
-        tokio::fs::copy(&location, &file_name).await.unwrap();
-        let metadata = tokio::fs::symlink_metadata(&file_name).await.unwrap();
+        server.filesystem.copy(&location, &file_name).await.unwrap();
+        let metadata = server.filesystem.metadata(&file_name).await.unwrap();
 
         (
             StatusCode::OK,

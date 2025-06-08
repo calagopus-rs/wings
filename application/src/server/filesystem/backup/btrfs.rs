@@ -38,7 +38,10 @@ pub async fn list(
             continue;
         }
 
-        let mut entry = server.filesystem.to_api_entry(path, metadata).await;
+        let mut entry = server
+            .filesystem
+            .to_api_entry(path, cap_std::fs::Metadata::from_just_metadata(metadata))
+            .await;
         if entry.directory {
             entry.size = 0;
         }

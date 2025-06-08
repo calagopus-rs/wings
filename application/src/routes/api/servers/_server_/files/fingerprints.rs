@@ -7,10 +7,7 @@ mod get {
     use serde::{Deserialize, Serialize};
     use sha1::Digest;
     use std::collections::HashMap;
-    use tokio::{
-        fs::File,
-        io::{AsyncReadExt, AsyncSeekExt},
-    };
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
     use utoipa::ToSchema;
 
     #[derive(ToSchema, Deserialize, Clone, Copy)]
@@ -56,11 +53,11 @@ mod get {
     ) -> axum::Json<serde_json::Value> {
         let mut fingerprint_handles = Vec::new();
         for path_raw in data.files {
-            let path = match server.filesystem.safe_path(&path_raw).await {
-                Some(path) => path,
-                None => continue,
+            let path = match server.filesystem.canonicalize(&path_raw).await {
+                Ok(path) => path,
+                Err(_) => continue,
             };
-            let metadata = match tokio::fs::symlink_metadata(&path).await {
+            let metadata = match server.filesystem.symlink_metadata(&path).await {
                 Ok(metadata) => metadata,
                 Err(_) => continue,
             };
@@ -69,7 +66,7 @@ mod get {
                 continue;
             }
 
-            let mut file = match File::open(&path).await {
+            let mut file = match server.filesystem.open(&path).await {
                 Ok(file) => file,
                 Err(_) => continue,
             };

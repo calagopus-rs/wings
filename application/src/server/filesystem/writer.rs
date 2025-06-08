@@ -1,8 +1,9 @@
 use std::{
-    fs::{File, Permissions},
+    fs::Permissions,
     io::{BufWriter, Seek, SeekFrom, Write},
     path::PathBuf,
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
     time::SystemTime,
 };
@@ -13,7 +14,7 @@ const ALLOCATION_THRESHOLD: i64 = 1_024_000; // 1 MB
 pub struct FileSystemWriter {
     server: crate::server::Server,
     parent: Vec<String>,
-    writer: Option<BufWriter<File>>,
+    writer: Option<BufWriter<cap_std::fs::File>>,
     accumulated_bytes: i64,
     modified: Option<SystemTime>,
 }
@@ -24,21 +25,38 @@ impl FileSystemWriter {
         destination: PathBuf,
         permissions: Option<Permissions>,
         modified: Option<SystemTime>,
-    ) -> std::io::Result<Self> {
+    ) -> Result<Self, anyhow::Error> {
+        let filesystem = match &*server.filesystem.base_dir.blocking_read() {
+            Some(fs) => Arc::clone(fs),
+            None => {
+                return Err(anyhow::anyhow!("Base directory not initialized"));
+            }
+        };
+
+        let parent_path = destination.parent().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Destination has no parent",
+            )
+        })?;
+
         let parent = server
             .filesystem
-            .path_to_components(&destination.parent().unwrap().canonicalize()?);
-        let file = File::create(&destination)?;
+            .path_to_components(&server.filesystem.relative_path(parent_path));
+        let file = filesystem.create(&destination)?;
 
         if let Some(permissions) = permissions {
-            std::fs::set_permissions(&destination, permissions)?;
+            filesystem.set_permissions(
+                &destination,
+                cap_std::fs::Permissions::from_std(permissions),
+            )?;
         }
 
-        std::os::unix::fs::chown(
-            destination,
-            Some(server.config.system.user.uid),
-            Some(server.config.system.user.gid),
-        )?;
+        tokio::spawn({
+            let server = server.clone();
+
+            async move { server.filesystem.chown_path(&destination).await }
+        });
 
         Ok(Self {
             server,
@@ -119,7 +137,7 @@ impl Drop for FileSystemWriter {
         if let Some(modified) = self.modified {
             if let Some(writer) = self.writer.take() {
                 if let Ok(file) = writer.into_inner() {
-                    file.set_modified(modified).ok();
+                    file.into_std().set_modified(modified).ok();
                 }
             }
         }
@@ -139,7 +157,7 @@ impl AsyncFileSystemWriter {
         server: crate::server::Server,
         destination: PathBuf,
         permissions: Option<Permissions>,
-    ) -> std::io::Result<Self> {
+    ) -> Result<Self, anyhow::Error> {
         let parent_path = destination.parent().ok_or_else(|| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -147,12 +165,19 @@ impl AsyncFileSystemWriter {
             )
         })?;
 
-        let canonicalized = tokio::fs::canonicalize(parent_path).await?;
-        let parent = server.filesystem.path_to_components(&canonicalized);
-        let file = tokio::fs::File::create(&destination).await?;
+        let parent = server
+            .filesystem
+            .path_to_components(&server.filesystem.relative_path(parent_path));
+        let file = server.filesystem.create(&destination).await?;
 
         if let Some(permissions) = permissions {
-            tokio::fs::set_permissions(&destination, permissions).await?;
+            server
+                .filesystem
+                .set_permissions(
+                    &destination,
+                    cap_std::fs::Permissions::from_std(permissions),
+                )
+                .await?;
         }
 
         server.filesystem.chown_path(&destination).await;

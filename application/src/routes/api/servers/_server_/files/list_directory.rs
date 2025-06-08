@@ -5,6 +5,7 @@ mod get {
     use crate::routes::{ApiError, GetState, api::servers::_server_::GetServer};
     use axum::{extract::Query, http::StatusCode};
     use serde::Deserialize;
+    use std::path::PathBuf;
     use utoipa::ToSchema;
 
     #[derive(ToSchema, Deserialize)]
@@ -30,14 +31,9 @@ mod get {
     ) -> (StatusCode, axum::Json<serde_json::Value>) {
         let mut entries = Vec::new();
 
-        let path = match server.filesystem.safe_path(&data.directory).await {
-            Some(path) => path,
-            None => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    axum::Json(ApiError::new("path not found").to_json()),
-                );
-            }
+        let path = match server.filesystem.canonicalize(&data.directory).await {
+            Ok(path) => path,
+            Err(_) => PathBuf::from(data.directory),
         };
 
         if let Some((backup, path)) = server.filesystem.backup_fs(&server, &path).await {
@@ -76,7 +72,7 @@ mod get {
             );
         }
 
-        let metadata = tokio::fs::symlink_metadata(&path).await;
+        let metadata = server.filesystem.metadata(&path).await;
         if let Ok(metadata) = metadata {
             if !metadata.is_dir() || server.filesystem.is_ignored(&path, metadata.is_dir()).await {
                 return (
@@ -91,10 +87,10 @@ mod get {
             );
         }
 
-        let mut directory = tokio::fs::read_dir(path).await.unwrap();
-        while let Ok(Some(entry)) = directory.next_entry().await {
-            let path = entry.path();
-            let metadata = match entry.metadata().await {
+        let mut directory = server.filesystem.read_dir(&path).await.unwrap();
+        while let Some(Ok(entry)) = directory.next_entry().await {
+            let path = path.join(entry);
+            let metadata = match server.filesystem.symlink_metadata(&path).await {
                 Ok(metadata) => metadata,
                 Err(_) => continue,
             };

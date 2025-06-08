@@ -9,6 +9,7 @@ mod post {
     use std::{
         fs::File,
         io::Read,
+        path::PathBuf,
         sync::{Arc, Mutex},
     };
     use utoipa::ToSchema;
@@ -40,11 +41,15 @@ mod post {
         axum::Json(data): axum::Json<Payload>,
     ) -> (StatusCode, axum::Json<serde_json::Value>) {
         let limit = data.limit.unwrap_or(100).min(500);
-        let max_size = data.max_size.unwrap_or(1024 * 512);
+        let max_size = data.max_size.unwrap_or(512 * 1024);
 
-        let root = match server.filesystem.safe_path(&data.root).await {
-            Some(path) => path,
-            None => {
+        let root = match server
+            .filesystem
+            .canonicalize(PathBuf::from(data.root))
+            .await
+        {
+            Ok(path) => path,
+            Err(_) => {
                 return (
                     StatusCode::NOT_FOUND,
                     axum::Json(ApiError::new("root not found").to_json()),
@@ -52,7 +57,7 @@ mod post {
             }
         };
 
-        let metadata = tokio::fs::symlink_metadata(&root).await;
+        let metadata = server.filesystem.metadata(&root).await;
         if !metadata.map(|m| m.is_dir()).unwrap_or(true) {
             return (
                 StatusCode::EXPECTATION_FAILED,
@@ -61,6 +66,7 @@ mod post {
         }
 
         let results = Arc::new(Mutex::new(Vec::new()));
+        let root = server.filesystem.base_path.join(&root);
 
         tokio::task::spawn_blocking({
             let results = Arc::clone(&results);
@@ -123,7 +129,7 @@ mod post {
                                 let mut entry =
                                     runtime.block_on(server.filesystem.to_api_entry_buffer(
                                         path.to_path_buf(),
-                                        &metadata,
+                                        &cap_std::fs::Metadata::from_just_metadata(metadata),
                                         Some(&buffer[..bytes_read]),
                                         None,
                                         None,
@@ -134,6 +140,7 @@ mod post {
                                 };
 
                                 results.push(entry);
+                                return WalkState::Continue;
                             }
 
                             if data.include_content && metadata.len() <= max_size {
@@ -165,7 +172,9 @@ mod post {
                                         let mut entry = runtime.block_on(
                                             server.filesystem.to_api_entry_buffer(
                                                 path.to_path_buf(),
-                                                &metadata,
+                                                &cap_std::fs::Metadata::from_just_metadata(
+                                                    metadata,
+                                                ),
                                                 Some(&buffer[..bytes_read]),
                                                 None,
                                                 None,

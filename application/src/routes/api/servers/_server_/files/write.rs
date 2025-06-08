@@ -10,6 +10,7 @@ mod post {
     };
     use futures_util::StreamExt;
     use serde::{Deserialize, Serialize};
+    use std::path::PathBuf;
     use tokio::io::AsyncWriteExt;
     use utoipa::ToSchema;
 
@@ -32,14 +33,9 @@ mod post {
         Query(data): Query<Params>,
         body: Body,
     ) -> (StatusCode, axum::Json<serde_json::Value>) {
-        let path = match server.filesystem.safe_path(&data.file).await {
-            Some(path) => path,
-            None => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    axum::Json(ApiError::new("file not found").to_json()),
-                );
-            }
+        let path = match server.filesystem.canonicalize(&data.file).await {
+            Ok(path) => path,
+            Err(_) => PathBuf::from(data.file),
         };
 
         let content_size: i64 = headers
@@ -47,7 +43,7 @@ mod post {
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.parse().ok())
             .unwrap_or(0);
-        let metadata = path.symlink_metadata().ok();
+        let metadata = server.filesystem.metadata(&path).await;
 
         if server
             .filesystem
@@ -63,7 +59,7 @@ mod post {
             );
         }
 
-        let old_content_size = if let Some(metadata) = metadata {
+        let old_content_size = if let Ok(metadata) = metadata {
             if !metadata.is_file() {
                 return (
                     StatusCode::NOT_FOUND,
@@ -77,14 +73,7 @@ mod post {
         };
 
         let parent = path.parent().unwrap();
-        if !server.filesystem.is_safe_path(parent).await {
-            return (
-                StatusCode::NOT_FOUND,
-                axum::Json(ApiError::new("parent directory not found").to_json()),
-            );
-        }
-
-        tokio::fs::create_dir_all(parent).await.unwrap();
+        server.filesystem.create_dir_all(parent).await.unwrap();
 
         if !server
             .filesystem
@@ -97,7 +86,7 @@ mod post {
             );
         }
 
-        let mut file = tokio::fs::File::create(&path).await.unwrap();
+        let mut file = server.filesystem.create(&path).await.unwrap();
         let mut stream = body.into_data_stream();
 
         while let Some(Ok(chunk)) = stream.next().await {

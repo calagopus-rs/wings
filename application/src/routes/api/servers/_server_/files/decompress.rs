@@ -5,6 +5,7 @@ mod post {
     use crate::routes::{ApiError, api::servers::_server_::GetServer};
     use axum::http::StatusCode;
     use serde::{Deserialize, Serialize};
+    use std::sync::Arc;
     use utoipa::ToSchema;
 
     #[derive(ToSchema, Deserialize)]
@@ -27,9 +28,9 @@ mod post {
         server: GetServer,
         axum::Json(data): axum::Json<Payload>,
     ) -> (StatusCode, axum::Json<serde_json::Value>) {
-        let root = match server.filesystem.safe_path(&data.root).await {
-            Some(path) => path,
-            None => {
+        let root = match server.filesystem.canonicalize(data.root).await {
+            Ok(path) => path,
+            Err(_) => {
                 return (
                     StatusCode::NOT_FOUND,
                     axum::Json(ApiError::new("root not found").to_json()),
@@ -37,7 +38,7 @@ mod post {
             }
         };
 
-        let metadata = tokio::fs::symlink_metadata(&root).await;
+        let metadata = server.filesystem.metadata(&root).await;
         if !metadata.map(|m| m.is_dir()).unwrap_or(true) {
             return (
                 StatusCode::EXPECTATION_FAILED,
@@ -46,18 +47,14 @@ mod post {
         }
 
         let source = root.join(data.file);
-        if !server.filesystem.is_safe_path(&source).await {
-            return (
-                StatusCode::NOT_FOUND,
-                axum::Json(ApiError::new("file not found").to_json()),
-            );
-        }
 
         if server
             .filesystem
             .is_ignored(
                 &source,
-                tokio::fs::symlink_metadata(&source)
+                server
+                    .filesystem
+                    .metadata(&source)
                     .await
                     .is_ok_and(|m| m.is_dir()),
             )
@@ -82,7 +79,14 @@ mod post {
             };
 
         let reader = archive.reader().await;
-        archive.extract(root.clone(), reader).await.unwrap();
+        archive
+            .extract(
+                Arc::clone(&server.filesystem.base_dir().await.unwrap()),
+                root.clone(),
+                reader,
+            )
+            .await
+            .unwrap();
         server.filesystem.chown_path(&root).await;
 
         (

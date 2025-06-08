@@ -3,6 +3,7 @@ use std::{
     io::{SeekFrom, Write},
     os::unix::fs::PermissionsExt,
     path::PathBuf,
+    sync::Arc,
 };
 use tokio::{
     fs::File,
@@ -40,7 +41,7 @@ pub struct Archive {
 
 impl Archive {
     pub async fn open(server: crate::server::Server, path: PathBuf) -> Option<Self> {
-        let mut file = File::open(&path).await.ok()?;
+        let mut file = server.filesystem.open(&path).await.ok()?;
 
         let mut header = [0; 16];
         #[allow(clippy::unused_io_amount)]
@@ -67,10 +68,6 @@ impl Archive {
                 }
             }),
         };
-
-        if !tokio::fs::symlink_metadata(&path).await.ok()?.is_file() {
-            return None;
-        }
 
         Some(Self {
             compression: compression_format,
@@ -194,9 +191,10 @@ impl Archive {
 
     pub async fn extract(
         self,
+        filesystem: Arc<cap_std::fs::Dir>,
         destination: PathBuf,
         reader: Option<Box<dyn AsyncRead + Send + Unpin>>,
-    ) -> std::io::Result<()> {
+    ) -> Result<(), anyhow::Error> {
         if matches!(self.archive, ArchiveType::None) {
             let file_name = match self.path.file_stem() {
                 Some(stem) => destination.join(stem),
@@ -213,7 +211,7 @@ impl Archive {
             return Ok(());
         }
 
-        tokio::task::spawn_blocking(move || -> std::io::Result<()> {
+        tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
             match self.archive {
                 ArchiveType::Tar => {
                     let sync_reader = SyncIoBridge::new(reader.unwrap());
@@ -227,10 +225,6 @@ impl Archive {
                         }
 
                         let destination_path = destination.join(path);
-                        if !self.server.filesystem.is_safe_path_sync(&destination_path) {
-                            continue;
-                        }
-
                         let header = entry.header();
 
                         if self.server.filesystem.is_ignored_sync(
@@ -242,10 +236,11 @@ impl Archive {
 
                         match header.entry_type() {
                             tar::EntryType::Directory => {
-                                std::fs::create_dir_all(&destination_path).unwrap();
+                                filesystem.create_dir_all(&destination_path).unwrap();
                             }
                             tar::EntryType::Regular => {
-                                std::fs::create_dir_all(destination_path.parent().unwrap())
+                                filesystem
+                                    .create_dir_all(destination_path.parent().unwrap())
                                     .unwrap();
 
                                 let mut writer = super::writer::FileSystemWriter::new(
@@ -287,9 +282,6 @@ impl Archive {
                         }
 
                         let destination_path = destination.join(path);
-                        if !self.server.filesystem.is_safe_path_sync(&destination_path) {
-                            continue;
-                        }
 
                         if self
                             .server
@@ -300,7 +292,7 @@ impl Archive {
                         }
 
                         if entry.is_dir() {
-                            std::fs::create_dir_all(&destination_path)?;
+                            filesystem.create_dir_all(&destination_path)?;
                         } else {
                             let mut writer = super::writer::FileSystemWriter::new(
                                 self.server.clone(),

@@ -1,8 +1,7 @@
 use crate::server::backup::InternalBackup;
+use cap_std::fs::{Metadata, PermissionsExt};
 use std::{
     collections::HashMap,
-    fs::Metadata,
-    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -21,12 +20,58 @@ pub mod pull;
 mod usage;
 pub mod writer;
 
+pub struct AsyncCapReadDir(Option<cap_std::fs::ReadDir>);
+
+impl AsyncCapReadDir {
+    async fn next_entry(&mut self) -> Option<std::io::Result<String>> {
+        let mut read_dir = self.0.take()?;
+
+        match tokio::task::spawn_blocking(move || (read_dir.next(), read_dir)).await {
+            Ok((result, read_dir)) => {
+                self.0 = Some(read_dir);
+                result.map(|entry| entry.map(|e| e.file_name().to_string_lossy().to_string()))
+            }
+            Err(_) => {
+                self.0 = None;
+                None
+            }
+        }
+    }
+}
+
+pub struct AsyncTokioReadDir(tokio::fs::ReadDir);
+
+impl AsyncTokioReadDir {
+    async fn next_entry(&mut self) -> Option<std::io::Result<String>> {
+        match self.0.next_entry().await {
+            Ok(Some(entry)) => Some(Ok(entry.file_name().to_string_lossy().to_string())),
+            Ok(None) => None,
+            Err(err) => Some(Err(err)),
+        }
+    }
+}
+
+pub enum AsyncReadDir {
+    Cap(AsyncCapReadDir),
+    Tokio(AsyncTokioReadDir),
+}
+
+impl AsyncReadDir {
+    pub async fn next_entry(&mut self) -> Option<std::io::Result<String>> {
+        match self {
+            AsyncReadDir::Cap(read_dir) => read_dir.next_entry().await,
+            AsyncReadDir::Tokio(read_dir) => read_dir.next_entry().await,
+        }
+    }
+}
+
 pub struct Filesystem {
     uuid: uuid::Uuid,
     checker_abort: Arc<AtomicBool>,
     config: Arc<crate::config::Config>,
 
     pub base_path: PathBuf,
+    base_dir: RwLock<Option<Arc<cap_std::fs::Dir>>>,
 
     disk_limit: AtomicI64,
     disk_usage_cached: Arc<AtomicU64>,
@@ -137,6 +182,7 @@ impl Filesystem {
             config: Arc::clone(&config),
 
             base_path,
+            base_dir: RwLock::new(None),
 
             disk_limit: AtomicI64::new(disk_limit as i64),
             disk_usage_cached,
@@ -255,28 +301,33 @@ impl Filesystem {
     }
 
     #[inline]
-    pub fn relative_path(&self, path: &Path) -> Option<PathBuf> {
-        let parent = Self::resolve_path(path.parent()?);
-        if !parent.starts_with(&self.base_path) {
-            return None;
-        }
-
-        let file_name = path.file_name()?;
-        parent
-            .strip_prefix(&self.base_path)
-            .ok()
-            .map(|p| p.join(file_name))
+    pub fn relative_path(&self, path: &Path) -> PathBuf {
+        Self::resolve_path(&if path.starts_with(&self.base_path) {
+            path.strip_prefix(&self.base_path).unwrap().to_path_buf()
+        } else if path.components().next() == Some(std::path::Component::RootDir) {
+            path.strip_prefix("/").unwrap().to_path_buf()
+        } else {
+            path.to_path_buf()
+        })
     }
 
     #[inline]
     pub fn path_to_components(&self, path: &Path) -> Vec<String> {
-        if let Some(rel_path) = self.relative_path(path) {
-            rel_path
-                .components()
-                .map(|c| c.as_os_str().to_string_lossy().to_string())
-                .collect()
+        self.relative_path(path)
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().to_string())
+            .collect()
+    }
+
+    #[inline]
+    pub async fn base_dir(&self) -> std::io::Result<Arc<cap_std::fs::Dir>> {
+        if let Some(dir) = self.base_dir.read().await.as_ref() {
+            Ok(Arc::clone(dir))
         } else {
-            Vec::new()
+            Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "Base directory not initialized",
+            ))
         }
     }
 
@@ -335,18 +386,13 @@ impl Filesystem {
             return None;
         }
 
-        if !path.starts_with(
-            self.base_path
-                .join(&self.config.system.backups.mounting.path),
-        ) {
+        let path = self.relative_path(path);
+        if !path.starts_with(&self.config.system.backups.mounting.path) {
             return None;
         }
 
         let backup_path = path
-            .strip_prefix(
-                self.base_path
-                    .join(&self.config.system.backups.mounting.path),
-            )
+            .strip_prefix(&self.config.system.backups.mounting.path)
             .ok()?;
         let uuid: uuid::Uuid = backup_path
             .components()
@@ -372,10 +418,13 @@ impl Filesystem {
         }
     }
 
-    pub async fn truncate_path(&self, path: &PathBuf) -> tokio::io::Result<()> {
-        let metadata = tokio::fs::symlink_metadata(path).await?;
+    pub async fn truncate_path(&self, path: &Path) -> Result<(), anyhow::Error> {
+        let filesystem = self.base_dir().await?;
+        let path = self.relative_path(path);
 
-        let components = self.path_to_components(path);
+        let metadata = self.metadata(&path).await?;
+
+        let components = self.path_to_components(&path);
         let size = if metadata.is_dir() {
             let disk_usage = self.disk_usage.read().await;
             disk_usage.get_size(&components).unwrap_or(0)
@@ -383,7 +432,7 @@ impl Filesystem {
             metadata.len()
         };
 
-        self.allocate_in_path(path, -(size as i64)).await;
+        self.allocate_in_path(&path, -(size as i64)).await;
 
         if metadata.is_dir() && size > 0 {
             let mut disk_usage = self.disk_usage.write().await;
@@ -391,49 +440,47 @@ impl Filesystem {
         }
 
         if metadata.is_dir() {
-            tokio::fs::remove_dir_all(path).await
+            tokio::task::spawn_blocking(move || filesystem.remove_dir_all(path)).await??;
+            Ok(())
         } else {
-            tokio::fs::remove_file(path).await
+            tokio::task::spawn_blocking(move || filesystem.remove_file(path)).await??;
+            Ok(())
         }
     }
 
     pub async fn rename_path(
         &self,
-        old_path: &PathBuf,
-        new_path: &PathBuf,
-    ) -> tokio::io::Result<()> {
+        old_path: impl Into<PathBuf>,
+        new_path: impl Into<PathBuf>,
+    ) -> Result<(), anyhow::Error> {
+        let filesystem = self.base_dir().await?;
+        let old_path: PathBuf = self.relative_path(&old_path.into());
+        let new_path: PathBuf = self.relative_path(&new_path.into());
+
         if let Some(parent) = new_path.parent() {
             if !parent.exists() {
-                tokio::fs::create_dir_all(parent).await?;
+                self.create_dir_all(parent).await?;
             }
         }
 
-        let metadata = tokio::fs::symlink_metadata(old_path).await?;
+        let metadata = self.metadata(&old_path).await?;
         let is_dir = metadata.is_dir();
 
-        let old_parent = tokio::fs::canonicalize(old_path.parent().unwrap()).await?;
-        let new_parent = tokio::fs::canonicalize(new_path.parent().unwrap()).await?;
-
-        if !self.is_safe_path(&old_parent).await || !self.is_safe_path(&new_parent).await {
-            return Err(tokio::io::Error::new(
-                tokio::io::ErrorKind::PermissionDenied,
-                "Unsafe path",
-            ));
-        }
+        let old_parent = self
+            .canonicalize(old_path.parent().unwrap())
+            .await
+            .unwrap_or_default();
+        let new_parent = self
+            .canonicalize(new_path.parent().unwrap())
+            .await
+            .unwrap_or_default();
 
         let abs_new_path = new_parent.join(new_path.file_name().unwrap());
-
-        if !self.is_safe_path(&abs_new_path).await {
-            return Err(tokio::io::Error::new(
-                tokio::io::ErrorKind::PermissionDenied,
-                "Unsafe path",
-            ));
-        }
 
         if is_dir {
             let mut disk_usage = self.disk_usage.write().await;
 
-            let path = disk_usage.remove_path(&self.path_to_components(old_path));
+            let path = disk_usage.remove_path(&self.path_to_components(&old_path));
             if let Some(path) = path {
                 disk_usage.add_directory(
                     &abs_new_path
@@ -452,9 +499,148 @@ impl Filesystem {
             self.allocate_in_path(&new_parent, size).await;
         }
 
-        tokio::fs::rename(old_path, new_path).await?;
+        tokio::task::spawn_blocking(move || filesystem.rename(old_path, &filesystem, new_path))
+            .await??;
 
         Ok(())
+    }
+
+    pub async fn create_dir_all(&self, path: impl Into<PathBuf>) -> Result<(), anyhow::Error> {
+        let filesystem = self.base_dir().await?;
+
+        let path = self.relative_path(&path.into());
+
+        tokio::task::spawn_blocking(move || filesystem.create_dir_all(path)).await??;
+
+        Ok(())
+    }
+
+    pub async fn create_dir(&self, path: impl Into<PathBuf>) -> Result<(), anyhow::Error> {
+        let filesystem = self.base_dir().await?;
+
+        let path = self.relative_path(&path.into());
+
+        tokio::task::spawn_blocking(move || filesystem.create_dir(path)).await??;
+
+        Ok(())
+    }
+
+    pub async fn metadata(&self, path: impl Into<PathBuf>) -> Result<Metadata, anyhow::Error> {
+        let filesystem = self.base_dir().await?;
+
+        let path = self.relative_path(&path.into());
+        let metadata = if path.components().next().is_none() {
+            cap_std::fs::Metadata::from_just_metadata(tokio::fs::metadata(&self.base_path).await?)
+        } else {
+            tokio::task::spawn_blocking(move || filesystem.metadata(path)).await??
+        };
+
+        Ok(metadata)
+    }
+
+    pub async fn symlink_metadata(
+        &self,
+        path: impl Into<PathBuf>,
+    ) -> Result<Metadata, anyhow::Error> {
+        let filesystem = self.base_dir().await?;
+
+        let path = self.relative_path(&path.into());
+        let metadata = if path.components().next().is_none() {
+            cap_std::fs::Metadata::from_just_metadata(
+                tokio::fs::symlink_metadata(&self.base_path).await?,
+            )
+        } else {
+            tokio::task::spawn_blocking(move || filesystem.symlink_metadata(path)).await??
+        };
+
+        Ok(metadata)
+    }
+
+    pub async fn canonicalize(&self, path: impl Into<PathBuf>) -> Result<PathBuf, anyhow::Error> {
+        let filesystem = self.base_dir().await?;
+
+        let path = self.relative_path(&path.into());
+        if path.components().next().is_none() {
+            return Ok(path);
+        }
+
+        let canonicalized =
+            tokio::task::spawn_blocking(move || filesystem.canonicalize(path)).await??;
+
+        Ok(canonicalized)
+    }
+
+    pub async fn read_link(&self, path: impl Into<PathBuf>) -> Result<PathBuf, anyhow::Error> {
+        let filesystem = self.base_dir().await?;
+
+        let path = self.relative_path(&path.into());
+        let link = tokio::task::spawn_blocking(move || filesystem.read_link(path)).await??;
+
+        Ok(link)
+    }
+
+    pub async fn open(&self, path: impl Into<PathBuf>) -> Result<tokio::fs::File, anyhow::Error> {
+        let filesystem = self.base_dir().await?;
+
+        let path = self.relative_path(&path.into());
+        let file = tokio::task::spawn_blocking(move || filesystem.open(path)).await??;
+
+        Ok(tokio::fs::File::from_std(file.into_std()))
+    }
+
+    pub async fn create(&self, path: impl Into<PathBuf>) -> Result<tokio::fs::File, anyhow::Error> {
+        let filesystem = self.base_dir().await?;
+
+        let path = self.relative_path(&path.into());
+        let file = tokio::task::spawn_blocking(move || filesystem.create(path)).await??;
+
+        Ok(tokio::fs::File::from_std(file.into_std()))
+    }
+
+    pub async fn copy(
+        &self,
+        from: impl Into<PathBuf>,
+        to: impl Into<PathBuf>,
+    ) -> Result<u64, anyhow::Error> {
+        let filesystem = self.base_dir().await?;
+
+        let from = self.relative_path(&from.into());
+        let to = self.relative_path(&to.into());
+
+        let bytes_copied =
+            tokio::task::spawn_blocking(move || filesystem.copy(from, &filesystem, to)).await??;
+
+        Ok(bytes_copied)
+    }
+
+    pub async fn set_permissions(
+        &self,
+        path: impl Into<PathBuf>,
+        permissions: cap_std::fs::Permissions,
+    ) -> Result<(), anyhow::Error> {
+        let filesystem = self.base_dir().await?;
+
+        let path = self.relative_path(&path.into());
+        tokio::task::spawn_blocking(move || filesystem.set_permissions(path, permissions))
+            .await??;
+
+        Ok(())
+    }
+
+    pub async fn read_dir(&self, path: impl Into<PathBuf>) -> Result<AsyncReadDir, anyhow::Error> {
+        let filesystem = self.base_dir().await?;
+
+        let path = self.relative_path(&path.into());
+
+        Ok(if path.components().next().is_none() {
+            AsyncReadDir::Tokio(AsyncTokioReadDir(
+                tokio::fs::read_dir(&self.base_path).await?,
+            ))
+        } else {
+            AsyncReadDir::Cap(AsyncCapReadDir(Some(
+                tokio::task::spawn_blocking(move || filesystem.read_dir(path)).await??,
+            )))
+        })
     }
 
     /// Allocates (or deallocates) space for a path in the filesystem.
@@ -551,14 +737,14 @@ impl Filesystem {
                     }
                 }
 
-                std::os::unix::fs::chown(path, Some(owner_uid), Some(owner_gid)).ok();
+                std::os::unix::fs::lchown(path, Some(owner_uid), Some(owner_gid)).ok();
             } else {
-                std::os::unix::fs::chown(path, Some(owner_uid), Some(owner_gid)).ok();
+                std::os::unix::fs::lchown(path, Some(owner_uid), Some(owner_gid)).ok();
             }
         }
 
         tokio::task::spawn_blocking({
-            let path = path.to_path_buf();
+            let path = self.base_path.join(self.relative_path(path));
             let owner_uid = self.config.system.user.uid;
             let owner_gid = self.config.system.user.gid;
 
@@ -600,6 +786,22 @@ impl Filesystem {
         })
         .await
         .unwrap();
+
+        if self.base_dir.read().await.is_none() {
+            match cap_std::fs::Dir::open_ambient_dir(&self.base_path, cap_std::ambient_authority())
+            {
+                Ok(dir) => {
+                    *self.base_dir.write().await = Some(Arc::new(dir));
+                }
+                Err(err) => {
+                    tracing::error!(
+                        path = %self.base_path.display(),
+                        "failed to open server base directory: {}",
+                        err
+                    );
+                }
+            }
+        }
     }
 
     pub async fn attach(&self) {
@@ -609,6 +811,22 @@ impl Filesystem {
                 "failed to attach server base directory: {}",
                 err
             );
+        }
+
+        if self.base_dir.read().await.is_none() {
+            match cap_std::fs::Dir::open_ambient_dir(&self.base_path, cap_std::ambient_authority())
+            {
+                Ok(dir) => {
+                    *self.base_dir.write().await = Some(Arc::new(dir));
+                }
+                Err(err) => {
+                    tracing::error!(
+                        path = %self.base_path.display(),
+                        "failed to open server base directory: {}",
+                        err
+                    );
+                }
+            }
         }
     }
 
@@ -686,7 +904,11 @@ impl Filesystem {
             created: chrono::DateTime::from_timestamp(
                 metadata
                     .created()
-                    .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default())
+                    .map(|t| {
+                        t.into_std()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                    })
                     .unwrap_or_default()
                     .as_secs() as i64,
                 0,
@@ -695,7 +917,11 @@ impl Filesystem {
             modified: chrono::DateTime::from_timestamp(
                 metadata
                     .modified()
-                    .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default())
+                    .map(|t| {
+                        t.into_std()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                    })
                     .unwrap_or_default()
                     .as_secs() as i64,
                 0,
@@ -717,11 +943,9 @@ impl Filesystem {
         metadata: Metadata,
     ) -> crate::models::DirectoryEntry {
         let symlink_destination = if metadata.is_symlink() {
-            match tokio::fs::read_link(&path).await {
+            match self.read_link(&path).await {
                 Ok(link) => {
-                    let joined = self.base_path.join(link);
-
-                    if let Ok(joined) = tokio::fs::canonicalize(&joined).await {
+                    if let Ok(joined) = self.canonicalize(link).await {
                         if joined.starts_with(&self.base_path) {
                             Some(joined)
                         } else {
@@ -737,11 +961,12 @@ impl Filesystem {
             None
         };
 
-        let symlink_destination_metadata = if let Some(symlink_destination) = &symlink_destination {
-            tokio::fs::symlink_metadata(symlink_destination).await.ok()
-        } else {
-            None
-        };
+        let symlink_destination_metadata =
+            if let Some(symlink_destination) = symlink_destination.clone() {
+                self.symlink_metadata(&symlink_destination).await.ok()
+            } else {
+                None
+            };
 
         let mut buffer = [0; 128];
         let buffer = if metadata.is_file()
@@ -750,7 +975,8 @@ impl Filesystem {
                     .as_ref()
                     .is_some_and(|m| m.is_file()))
         {
-            let mut file = tokio::fs::File::open(symlink_destination.as_ref().unwrap_or(&path))
+            let mut file = self
+                .open(symlink_destination.as_ref().unwrap_or(&path))
                 .await
                 .unwrap();
             let bytes_read = file.read(&mut buffer).await.unwrap_or(0);

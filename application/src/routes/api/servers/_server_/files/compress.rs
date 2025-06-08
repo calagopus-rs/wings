@@ -6,7 +6,6 @@ mod post {
     use axum::http::StatusCode;
     use ignore::WalkBuilder;
     use serde::Deserialize;
-    use std::sync::Arc;
     use utoipa::ToSchema;
 
     #[derive(ToSchema, Deserialize)]
@@ -27,9 +26,9 @@ mod post {
         server: GetServer,
         axum::Json(data): axum::Json<Payload>,
     ) -> (StatusCode, axum::Json<serde_json::Value>) {
-        let root = match server.filesystem.safe_path(&data.root).await {
-            Some(path) => path,
-            None => {
+        let root = match server.filesystem.canonicalize(data.root).await {
+            Ok(path) => path,
+            Err(_) => {
                 return (
                     StatusCode::NOT_FOUND,
                     axum::Json(ApiError::new("root not found").to_json()),
@@ -37,7 +36,7 @@ mod post {
             }
         };
 
-        let metadata = tokio::fs::symlink_metadata(&root).await;
+        let metadata = server.filesystem.symlink_metadata(&root).await;
         if !metadata.map(|m| m.is_dir()).unwrap_or(true) {
             return (
                 StatusCode::EXPECTATION_FAILED,
@@ -50,44 +49,56 @@ mod post {
             chrono::Local::now().format("%Y-%m-%dT%H%M%S%z")
         );
         let file_name = root.join(file_name);
-        let writer = crate::server::filesystem::writer::FileSystemWriter::new(
-            server.0.clone(),
-            file_name.clone(),
-            None,
-            None,
-        )
-        .unwrap();
+
+        if server.filesystem.is_ignored(&file_name, false).await {
+            return (
+                StatusCode::EXPECTATION_FAILED,
+                axum::Json(ApiError::new("file not found").to_json()),
+            );
+        }
 
         tokio::task::spawn_blocking({
-            let server = Arc::clone(&server);
+            let filesystem = server.filesystem.base_dir().await.unwrap();
+            let file_name = file_name.clone();
+            let server = server.0.clone();
 
             move || {
+                let writer = crate::server::filesystem::writer::FileSystemWriter::new(
+                    server.clone(),
+                    file_name,
+                    None,
+                    None,
+                )
+                .unwrap();
+
                 let mut archive = tar::Builder::new(flate2::write::GzEncoder::new(
                     writer,
                     flate2::Compression::new(state.config.system.backups.compression_level.into()),
                 ));
 
                 for file in data.files {
-                    let source = root.join(file);
-
-                    if !server.filesystem.is_safe_path_sync(&source) {
-                        continue;
-                    }
+                    let source = match filesystem.canonicalize(root.join(file)) {
+                        Ok(path) => path,
+                        Err(_) => continue,
+                    };
 
                     let relative = match source.strip_prefix(&root) {
                         Ok(path) => path,
-                        Err(_) => {
-                            continue;
-                        }
+                        Err(_) => continue,
                     };
 
-                    let source_metadata = source.symlink_metadata().unwrap();
+                    let source_metadata = match filesystem.symlink_metadata(&source) {
+                        Ok(metadata) => metadata,
+                        Err(_) => continue,
+                    };
                     if server
                         .filesystem
                         .is_ignored_sync(&source, source_metadata.is_dir())
                     {
                         continue;
                     }
+
+                    let source = server.filesystem.base_path.join(&source);
 
                     if source_metadata.is_dir() {
                         for entry in WalkBuilder::new(&source)
@@ -137,12 +148,16 @@ mod post {
         .await
         .unwrap();
 
-        let dir_entry = file_name.symlink_metadata().unwrap();
+        let metadata = server
+            .filesystem
+            .symlink_metadata(&file_name)
+            .await
+            .unwrap();
 
         (
             StatusCode::OK,
             axum::Json(
-                serde_json::to_value(server.filesystem.to_api_entry(file_name, dir_entry).await)
+                serde_json::to_value(server.filesystem.to_api_entry(file_name, metadata).await)
                     .unwrap(),
             ),
         )

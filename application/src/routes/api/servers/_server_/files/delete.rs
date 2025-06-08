@@ -29,9 +29,9 @@ mod post {
         server: GetServer,
         axum::Json(data): axum::Json<Payload>,
     ) -> (StatusCode, axum::Json<serde_json::Value>) {
-        let root = match server.filesystem.safe_path(&data.root).await {
-            Some(path) => path,
-            None => {
+        let root = match server.filesystem.canonicalize(data.root).await {
+            Ok(path) => path,
+            Err(_) => {
                 return (
                     StatusCode::NOT_FOUND,
                     axum::Json(ApiError::new("root not found").to_json()),
@@ -39,7 +39,7 @@ mod post {
             }
         };
 
-        let metadata = tokio::fs::symlink_metadata(&root).await;
+        let metadata = server.filesystem.metadata(&root).await;
         if !metadata.map(|m| m.is_dir()).unwrap_or(false) {
             return (
                 StatusCode::EXPECTATION_FAILED,
@@ -50,7 +50,7 @@ mod post {
         let mut deleted_count = 0;
         for file in data.files {
             let destination = root.join(file);
-            if !server.filesystem.is_safe_path(&destination).await || destination == root {
+            if destination == root {
                 continue;
             }
 
@@ -58,7 +58,9 @@ mod post {
                 .filesystem
                 .is_ignored(
                     &destination,
-                    tokio::fs::symlink_metadata(&destination)
+                    server
+                        .filesystem
+                        .metadata(&destination)
                         .await
                         .is_ok_and(|m| m.is_dir()),
                 )

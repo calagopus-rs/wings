@@ -16,7 +16,7 @@ mod post {
     };
     use serde::{Deserialize, Serialize};
     use serde_json::json;
-    use std::net::SocketAddr;
+    use std::{net::SocketAddr, path::PathBuf};
     use tokio::io::AsyncWriteExt;
     use utoipa::ToSchema;
 
@@ -104,17 +104,9 @@ mod post {
             }
         };
 
-        let directory = match server.filesystem.safe_path(&data.directory).await {
-            Some(path) => path,
-            None => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    axum::Json(ApiError::new("directory not found").to_json()),
-                );
-            }
-        };
+        let directory = PathBuf::from(data.directory);
 
-        let metadata = directory.symlink_metadata();
+        let metadata = server.filesystem.metadata(&directory).await;
         if !metadata.map(|m| m.is_dir()).unwrap_or(true) {
             return (
                 StatusCode::EXPECTATION_FAILED,
@@ -135,13 +127,6 @@ mod post {
                 }
             };
             let file_path = directory.join(filename);
-
-            if !server.filesystem.is_safe_path(&file_path).await {
-                return (
-                    StatusCode::EXPECTATION_FAILED,
-                    axum::Json(ApiError::new("file path is not safe").to_json()),
-                );
-            }
 
             if server.filesystem.is_ignored(&file_path, false).await {
                 return (

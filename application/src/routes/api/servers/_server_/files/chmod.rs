@@ -4,8 +4,8 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 mod post {
     use crate::routes::{ApiError, api::servers::_server_::GetServer};
     use axum::http::StatusCode;
+    use cap_std::fs::{Permissions, PermissionsExt};
     use serde::{Deserialize, Serialize};
-    use std::{fs::Permissions, os::unix::fs::PermissionsExt};
     use utoipa::ToSchema;
 
     #[derive(ToSchema, Deserialize)]
@@ -37,9 +37,9 @@ mod post {
         server: GetServer,
         axum::Json(data): axum::Json<Payload>,
     ) -> (StatusCode, axum::Json<serde_json::Value>) {
-        let root = match server.filesystem.safe_path(&data.root).await {
-            Some(path) => path,
-            None => {
+        let root = match server.filesystem.canonicalize(data.root).await {
+            Ok(path) => path,
+            Err(_) => {
                 return (
                     StatusCode::NOT_FOUND,
                     axum::Json(ApiError::new("root not found").to_json()),
@@ -47,7 +47,7 @@ mod post {
             }
         };
 
-        let metadata = tokio::fs::symlink_metadata(&root).await;
+        let metadata = server.filesystem.metadata(&root).await;
         if !metadata.map(|m| m.is_dir()).unwrap_or(true) {
             return (
                 StatusCode::EXPECTATION_FAILED,
@@ -57,11 +57,12 @@ mod post {
 
         let mut updated_count = 0;
         for file in data.files {
-            let source = root.join(file.file);
-            if !server.filesystem.is_safe_path(&source).await {
-                continue;
-            }
-            let metadata = match tokio::fs::symlink_metadata(&source).await {
+            let source = match server.filesystem.canonicalize(root.join(file.file)).await {
+                Ok(path) => path,
+                Err(_) => continue,
+            };
+
+            let metadata = match server.filesystem.symlink_metadata(&source).await {
                 Ok(metadata) => metadata,
                 Err(_) => {
                     continue;
@@ -83,7 +84,9 @@ mod post {
                 }
             };
 
-            if tokio::fs::set_permissions(&source, Permissions::from_mode(mode))
+            if server
+                .filesystem
+                .set_permissions(&source, Permissions::from_mode(mode))
                 .await
                 .is_ok()
             {

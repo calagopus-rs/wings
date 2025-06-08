@@ -5,6 +5,7 @@ use crate::{
         permissions::{Permission, Permissions},
     },
 };
+use cap_std::fs::{Metadata, OpenOptions, PermissionsExt};
 use russh_sftp::protocol::{
     Data, File, FileAttributes, Handle, Name, OpenFlags, Status, StatusCode,
 };
@@ -13,10 +14,9 @@ use serde_json::json;
 use sha1::Digest;
 use std::{
     collections::HashMap,
-    fs::{Metadata, OpenOptions},
     io::SeekFrom,
     net::{IpAddr, SocketAddr},
-    os::unix::fs::{FileExt, PermissionsExt},
+    os::unix::fs::FileExt,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -58,7 +58,7 @@ struct FileHandle {
 struct DirHandle {
     path: PathBuf,
 
-    dir: tokio::fs::ReadDir,
+    dir: crate::server::filesystem::AsyncReadDir,
     consumed: u64,
 }
 
@@ -100,9 +100,12 @@ impl SftpSession {
             mtime: Some(
                 metadata
                     .modified()
-                    .unwrap()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .map(|t| {
+                        t.into_std()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                    })
+                    .unwrap_or_default()
                     .as_secs() as u32,
             ),
             permissions: Some(metadata.permissions().mode()),
@@ -114,7 +117,9 @@ impl SftpSession {
         attrs.set_symlink(metadata.is_symlink());
 
         File::new(
-            path.file_name().unwrap().to_string_lossy().to_string(),
+            path.file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_else(|| "/".to_string()),
             attrs,
         )
     }
@@ -175,17 +180,14 @@ impl russh_sftp::server::Handler for SftpSession {
     }
 
     async fn realpath(&mut self, id: u32, path: String) -> Result<Name, Self::Error> {
-        if path == "/.." || path == "." {
+        if path == "/.." || path == "." || path == "/" {
             return Ok(Name {
                 id,
                 files: vec![File::dummy("/".to_string())],
             });
         }
 
-        if let Some(Ok(path)) = self.server.filesystem.safe_path(&path).await.map(|p| {
-            p.strip_prefix(&self.server.filesystem.base_path)
-                .map(|p| p.to_path_buf())
-        }) {
+        if let Ok(path) = self.server.filesystem.canonicalize(path).await {
             Ok(Name {
                 id,
                 files: vec![File::dummy(format!("/{}", path.display()))],
@@ -208,35 +210,32 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
+        let path = match self.server.filesystem.canonicalize(&path).await {
+            Ok(path) => path,
+            Err(_) => return Err(StatusCode::NoSuchFile),
+        };
+
+        if self.server.filesystem.is_ignored(&path, true).await {
+            return Err(StatusCode::NoSuchFile);
+        }
+
+        let dir = match self.server.filesystem.read_dir(&path).await {
+            Ok(dir) => dir,
+            Err(_) => return Err(StatusCode::NoSuchFile),
+        };
+
         let handle = self.next_handle_id();
 
-        if let Some(path) = self.server.filesystem.safe_path(&path).await {
-            if !path.is_dir() {
-                return Err(StatusCode::NoSuchFile);
-            }
+        self.handles.insert(
+            handle.clone(),
+            ServerHandle::Dir(DirHandle {
+                path,
+                dir,
+                consumed: 0,
+            }),
+        );
 
-            if self.server.filesystem.is_ignored(&path, false).await {
-                return Err(StatusCode::NoSuchFile);
-            }
-
-            let dir = match tokio::fs::read_dir(&path).await {
-                Ok(dir) => dir,
-                Err(_) => return Err(StatusCode::NoSuchFile),
-            };
-
-            self.handles.insert(
-                handle.clone(),
-                ServerHandle::Dir(DirHandle {
-                    path,
-                    dir,
-                    consumed: 0,
-                }),
-            );
-
-            Ok(Handle { id, handle })
-        } else {
-            Err(StatusCode::NoSuchFile)
-        }
+        Ok(Handle { id, handle })
     }
 
     async fn readdir(&mut self, id: u32, handle: String) -> Result<Name, Self::Error> {
@@ -257,13 +256,8 @@ impl russh_sftp::server::Handler for SftpSession {
 
         loop {
             let file = match handle.dir.next_entry().await {
-                Ok(file) => file,
-                Err(_) => return Err(StatusCode::NoSuchFile),
-            };
-
-            let file = match file {
-                Some(file) => file,
-                None => {
+                Some(Ok(file)) => file,
+                _ => {
                     if files.is_empty() {
                         return Err(StatusCode::Eof);
                     }
@@ -272,8 +266,8 @@ impl russh_sftp::server::Handler for SftpSession {
                 }
             };
 
-            let path = file.path();
-            let metadata = match tokio::fs::symlink_metadata(&path).await {
+            let path = handle.path.join(file);
+            let metadata = match self.server.filesystem.symlink_metadata(&path).await {
                 Ok(metadata) => metadata,
                 Err(_) => continue,
             };
@@ -319,57 +313,58 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
-        if let Some(path) = self.server.filesystem.safe_path(&filename).await {
-            let parent = match path.parent() {
-                Some(parent) => parent,
-                None => return Err(StatusCode::NoSuchFile),
-            };
+        let path = match self.server.filesystem.canonicalize(&filename).await {
+            Ok(path) => path,
+            Err(_) => return Err(StatusCode::NoSuchFile),
+        };
 
-            if let Ok(metadata) = tokio::fs::symlink_metadata(&path).await {
-                if !metadata.is_file() {
-                    return Err(StatusCode::NoSuchFile);
-                }
+        let parent = match path.parent() {
+            Some(parent) => parent,
+            None => return Err(StatusCode::NoSuchFile),
+        };
 
-                if self
-                    .server
-                    .filesystem
-                    .is_ignored(&path, metadata.is_dir())
-                    .await
-                {
-                    return Err(StatusCode::NoSuchFile);
-                }
-
-                if tokio::fs::remove_file(&path).await.is_err() {
-                    return Err(StatusCode::NoSuchFile);
-                }
-
-                self.server
-                    .filesystem
-                    .allocate_in_path(parent, -(metadata.len() as i64))
-                    .await;
-                self.server
-                    .activity
-                    .log_activity(Activity {
-                        event: ActivityEvent::SftpDelete,
-                        user: self.user_uuid,
-                        ip: self.user_ip,
-                        metadata: Some(json!({
-                            "files": [self.server.filesystem.relative_path(&path)],
-                        })),
-                        timestamp: chrono::Utc::now(),
-                    })
-                    .await;
+        if let Ok(metadata) = self.server.filesystem.symlink_metadata(&path).await {
+            if !metadata.is_file() {
+                return Err(StatusCode::NoSuchFile);
             }
 
-            Ok(Status {
-                id,
-                status_code: StatusCode::Ok,
-                error_message: "Ok".to_string(),
-                language_tag: "en-US".to_string(),
-            })
-        } else {
-            Err(StatusCode::NoSuchFile)
+            if self
+                .server
+                .filesystem
+                .is_ignored(&path, metadata.is_dir())
+                .await
+            {
+                return Err(StatusCode::NoSuchFile);
+            }
+
+            if self.server.filesystem.truncate_path(&path).await.is_err() {
+                return Err(StatusCode::NoSuchFile);
+            }
+
+            self.server
+                .filesystem
+                .allocate_in_path(parent, -(metadata.len() as i64))
+                .await;
+            self.server
+                .activity
+                .log_activity(Activity {
+                    event: ActivityEvent::SftpDelete,
+                    user: self.user_uuid,
+                    ip: self.user_ip,
+                    metadata: Some(json!({
+                        "files": [self.server.filesystem.relative_path(&path)],
+                    })),
+                    timestamp: chrono::Utc::now(),
+                })
+                .await;
         }
+
+        Ok(Status {
+            id,
+            status_code: StatusCode::Ok,
+            error_message: "Ok".to_string(),
+            language_tag: "en-US".to_string(),
+        })
     }
 
     async fn rmdir(&mut self, id: u32, path: String) -> Result<Status, Self::Error> {
@@ -385,43 +380,48 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
-        if let Some(path) = self.server.filesystem.safe_path(&path).await {
-            if !path.is_dir() {
-                return Err(StatusCode::NoSuchFile);
-            }
+        let path = match self.server.filesystem.canonicalize(&path).await {
+            Ok(path) => path,
+            Err(_) => return Err(StatusCode::NoSuchFile),
+        };
 
-            if self.server.filesystem.is_ignored(&path, true).await {
-                return Err(StatusCode::NoSuchFile);
-            }
-
-            if path != self.server.filesystem.base_path
-                && tokio::fs::remove_dir(&path).await.is_err()
-            {
-                return Err(StatusCode::NoSuchFile);
-            }
-
-            self.server
-                .activity
-                .log_activity(Activity {
-                    event: ActivityEvent::SftpDelete,
-                    user: self.user_uuid,
-                    ip: self.user_ip,
-                    metadata: Some(json!({
-                        "files": [self.server.filesystem.relative_path(&path)],
-                    })),
-                    timestamp: chrono::Utc::now(),
-                })
-                .await;
-
-            Ok(Status {
-                id,
-                status_code: StatusCode::Ok,
-                error_message: "Ok".to_string(),
-                language_tag: "en-US".to_string(),
-            })
-        } else {
-            Err(StatusCode::NoSuchFile)
+        let metadata = match self.server.filesystem.symlink_metadata(&path).await {
+            Ok(metadata) => metadata,
+            Err(_) => return Err(StatusCode::NoSuchFile),
+        };
+        if !metadata.is_dir() {
+            return Err(StatusCode::NoSuchFile);
         }
+
+        if self.server.filesystem.is_ignored(&path, true).await {
+            return Err(StatusCode::NoSuchFile);
+        }
+
+        if path != self.server.filesystem.base_path
+            && self.server.filesystem.truncate_path(&path).await.is_err()
+        {
+            return Err(StatusCode::NoSuchFile);
+        }
+
+        self.server
+            .activity
+            .log_activity(Activity {
+                event: ActivityEvent::SftpDelete,
+                user: self.user_uuid,
+                ip: self.user_ip,
+                metadata: Some(json!({
+                    "files": [self.server.filesystem.relative_path(&path)],
+                })),
+                timestamp: chrono::Utc::now(),
+            })
+            .await;
+
+        Ok(Status {
+            id,
+            status_code: StatusCode::Ok,
+            error_message: "Ok".to_string(),
+            language_tag: "en-US".to_string(),
+        })
     }
 
     async fn mkdir(
@@ -442,47 +442,49 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
-        if let Some(path) = self.server.filesystem.safe_path(&path).await {
-            if path.exists() {
-                return Err(StatusCode::Failure);
-            }
+        let path = Path::new(&path);
 
-            if tokio::fs::create_dir(&path).await.is_err() {
-                return Err(StatusCode::NoSuchFile);
-            }
+        if self.server.filesystem.symlink_metadata(&path).await.is_ok()
+            || self.server.filesystem.is_ignored(path, true).await
+        {
+            return Err(StatusCode::NoSuchFile);
+        }
 
-            self.server.filesystem.chown_path(&path).await;
-            if let Some(permissions) = attrs.permissions {
-                let mut permissions = std::fs::Permissions::from_mode(permissions);
-                permissions.set_mode(permissions.mode() & 0o777);
+        if self.server.filesystem.create_dir(&path).await.is_err() {
+            return Err(StatusCode::NoSuchFile);
+        }
 
-                tokio::fs::set_permissions(&path, permissions)
-                    .await
-                    .unwrap()
-            }
+        self.server.filesystem.chown_path(path).await;
+        if let Some(permissions) = attrs.permissions {
+            let mut permissions = cap_std::fs::Permissions::from_mode(permissions);
+            permissions.set_mode(permissions.mode() & 0o777);
 
             self.server
-                .activity
-                .log_activity(Activity {
-                    event: ActivityEvent::SftpCreateDirectory,
-                    user: self.user_uuid,
-                    ip: self.user_ip,
-                    metadata: Some(json!({
-                        "files": [self.server.filesystem.relative_path(&path)],
-                    })),
-                    timestamp: chrono::Utc::now(),
-                })
-                .await;
-
-            Ok(Status {
-                id,
-                status_code: StatusCode::Ok,
-                error_message: "Ok".to_string(),
-                language_tag: "en-US".to_string(),
-            })
-        } else {
-            Err(StatusCode::NoSuchFile)
+                .filesystem
+                .set_permissions(&path, permissions)
+                .await
+                .unwrap()
         }
+
+        self.server
+            .activity
+            .log_activity(Activity {
+                event: ActivityEvent::SftpCreateDirectory,
+                user: self.user_uuid,
+                ip: self.user_ip,
+                metadata: Some(json!({
+                    "files": [self.server.filesystem.relative_path(path)],
+                })),
+                timestamp: chrono::Utc::now(),
+            })
+            .await;
+
+        Ok(Status {
+            id,
+            status_code: StatusCode::Ok,
+            error_message: "Ok".to_string(),
+            language_tag: "en-US".to_string(),
+        })
     }
 
     async fn rename(
@@ -503,68 +505,70 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
-        if let Some(old_path) = self.server.filesystem.safe_path(&old_path).await {
-            let old_metadata = match tokio::fs::symlink_metadata(&old_path).await {
-                Ok(metadata) => metadata,
-                Err(_) => return Err(StatusCode::NoSuchFile),
-            };
+        let old_path = match self.server.filesystem.canonicalize(&old_path).await {
+            Ok(path) => path,
+            Err(_) => return Err(StatusCode::NoSuchFile),
+        };
+        let new_path = PathBuf::from(new_path);
 
-            if let Some(new_path) = self.server.filesystem.safe_path(&new_path).await {
-                if new_path.exists()
-                    || self
-                        .server
-                        .filesystem
-                        .is_ignored(&old_path, old_metadata.is_dir())
-                        .await
-                    || self
-                        .server
-                        .filesystem
-                        .is_ignored(&new_path, old_metadata.is_dir())
-                        .await
-                {
-                    return Err(StatusCode::NoSuchFile);
-                }
+        let old_metadata = match self.server.filesystem.symlink_metadata(&old_path).await {
+            Ok(metadata) => metadata,
+            Err(_) => return Err(StatusCode::NoSuchFile),
+        };
 
-                if self
-                    .server
-                    .filesystem
-                    .rename_path(&old_path, &new_path)
-                    .await
-                    .is_err()
-                {
-                    return Err(StatusCode::NoSuchFile);
-                }
-
-                self.server
-                    .activity
-                    .log_activity(Activity {
-                        event: ActivityEvent::SftpRename,
-                        user: self.user_uuid,
-                        ip: self.user_ip,
-                        metadata: Some(json!({
-                            "files": [
-                                {
-                                    "from": self.server.filesystem.relative_path(&old_path),
-                                    "to": self.server.filesystem.relative_path(&new_path),
-                                }
-                            ],
-                        })),
-                        timestamp: chrono::Utc::now(),
-                    })
-                    .await;
-
-                Ok(Status {
-                    id,
-                    status_code: StatusCode::Ok,
-                    error_message: "Ok".to_string(),
-                    language_tag: "en-US".to_string(),
-                })
-            } else {
-                Err(StatusCode::NoSuchFile)
-            }
-        } else {
-            Err(StatusCode::NoSuchFile)
+        if self
+            .server
+            .filesystem
+            .symlink_metadata(&new_path)
+            .await
+            .is_ok()
+            || self
+                .server
+                .filesystem
+                .is_ignored(&old_path, old_metadata.is_dir())
+                .await
+            || self
+                .server
+                .filesystem
+                .is_ignored(&new_path, old_metadata.is_dir())
+                .await
+        {
+            return Err(StatusCode::Failure);
         }
+
+        let activity = Activity {
+            event: ActivityEvent::SftpRename,
+            user: self.user_uuid,
+            ip: self.user_ip,
+            metadata: Some(json!({
+                "files": [
+                    {
+                        "from": self.server.filesystem.relative_path(&old_path),
+                        "to": self.server.filesystem.relative_path(&new_path),
+                    }
+                ],
+            })),
+            timestamp: chrono::Utc::now(),
+        };
+
+        if self
+            .server
+            .filesystem
+            .rename_path(old_path, new_path)
+            .await
+            .is_err()
+        {
+            return Err(StatusCode::NoSuchFile);
+        }
+
+        self.server.activity.log_activity(activity).await;
+
+        Ok(Status {
+            id,
+            status_code: StatusCode::Ok,
+            error_message: "Ok".to_string(),
+            language_tag: "en-US".to_string(),
+        })
     }
 
     async fn setstat(
@@ -585,39 +589,42 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
-        if let Some(path) = self.server.filesystem.safe_path(&path).await {
-            let metadata = match tokio::fs::symlink_metadata(&path).await {
-                Ok(metadata) => metadata,
-                Err(_) => return Err(StatusCode::NoSuchFile),
-            };
+        let path = match self.server.filesystem.canonicalize(&path).await {
+            Ok(path) => path,
+            Err(_) => return Err(StatusCode::NoSuchFile),
+        };
 
-            if self
-                .server
-                .filesystem
-                .is_ignored(&path, metadata.is_dir())
-                .await
-            {
-                return Err(StatusCode::NoSuchFile);
-            }
+        let metadata = match self.server.filesystem.symlink_metadata(&path).await {
+            Ok(metadata) => metadata,
+            Err(_) => return Err(StatusCode::NoSuchFile),
+        };
 
-            if let Some(permissions) = attrs.permissions {
-                let mut permissions = std::fs::Permissions::from_mode(permissions);
-                permissions.set_mode(permissions.mode() & 0o777);
-
-                tokio::fs::set_permissions(&path, permissions)
-                    .await
-                    .map_err(|_| StatusCode::Failure)?;
-            }
-
-            Ok(Status {
-                id,
-                status_code: StatusCode::Ok,
-                error_message: "Ok".to_string(),
-                language_tag: "en-US".to_string(),
-            })
-        } else {
-            Err(StatusCode::NoSuchFile)
+        if self
+            .server
+            .filesystem
+            .is_ignored(&path, metadata.is_dir())
+            .await
+        {
+            return Err(StatusCode::NoSuchFile);
         }
+
+        if let Some(permissions) = attrs.permissions {
+            let mut permissions = cap_std::fs::Permissions::from_mode(permissions);
+            permissions.set_mode(permissions.mode() & 0o777);
+
+            self.server
+                .filesystem
+                .set_permissions(&path, permissions)
+                .await
+                .map_err(|_| StatusCode::Failure)?;
+        }
+
+        Ok(Status {
+            id,
+            status_code: StatusCode::Ok,
+            error_message: "Ok".to_string(),
+            language_tag: "en-US".to_string(),
+        })
     }
 
     async fn fsetstat(
@@ -644,34 +651,39 @@ impl russh_sftp::server::Handler for SftpSession {
         id: u32,
         path: String,
     ) -> Result<russh_sftp::protocol::Attrs, Self::Error> {
+        if !self.allow_action() {
+            return Err(StatusCode::PermissionDenied);
+        }
+
         if !self.has_permission(Permission::FileRead) {
             return Err(StatusCode::PermissionDenied);
         }
 
-        if let Some(path) = self.server.filesystem.safe_path(&path).await {
-            let metadata = match tokio::fs::symlink_metadata(&path).await {
-                Ok(metadata) => metadata,
-                Err(_) => return Err(StatusCode::NoSuchFile),
-            };
+        let path = match self.server.filesystem.canonicalize(&path).await {
+            Ok(path) => path,
+            Err(_) => return Err(StatusCode::NoSuchFile),
+        };
 
-            if self
-                .server
-                .filesystem
-                .is_ignored(&path, metadata.is_dir())
-                .await
-            {
-                return Err(StatusCode::NoSuchFile);
-            }
+        let metadata = match self.server.filesystem.symlink_metadata(&path).await {
+            Ok(metadata) => metadata,
+            Err(_) => return Err(StatusCode::NoSuchFile),
+        };
 
-            let file = Self::convert_entry(&path, metadata);
-
-            Ok(russh_sftp::protocol::Attrs {
-                id,
-                attrs: file.attrs,
-            })
-        } else {
-            Err(StatusCode::NoSuchFile)
+        if self
+            .server
+            .filesystem
+            .is_ignored(&path, metadata.is_dir())
+            .await
+        {
+            return Err(StatusCode::NoSuchFile);
         }
+
+        let file = Self::convert_entry(&path, metadata);
+
+        Ok(russh_sftp::protocol::Attrs {
+            id,
+            attrs: file.attrs,
+        })
     }
 
     async fn fstat(
@@ -705,30 +717,28 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
-        if let Some(path) = self.server.filesystem.safe_symlink_path(&path).await {
-            let metadata = match tokio::fs::symlink_metadata(&path).await {
-                Ok(metadata) => metadata,
-                Err(_) => return Err(StatusCode::NoSuchFile),
-            };
+        let path = Path::new(&path);
 
-            if self
-                .server
-                .filesystem
-                .is_ignored(&path, metadata.is_dir())
-                .await
-            {
-                return Err(StatusCode::NoSuchFile);
-            }
+        let metadata = match self.server.filesystem.symlink_metadata(&path).await {
+            Ok(metadata) => metadata,
+            Err(_) => return Err(StatusCode::NoSuchFile),
+        };
 
-            let file = Self::convert_entry(&path, metadata);
-
-            Ok(russh_sftp::protocol::Attrs {
-                id,
-                attrs: file.attrs,
-            })
-        } else {
-            Err(StatusCode::NoSuchFile)
+        if self
+            .server
+            .filesystem
+            .is_ignored(path, metadata.is_dir())
+            .await
+        {
+            return Err(StatusCode::NoSuchFile);
         }
+
+        let file = Self::convert_entry(path, metadata);
+
+        Ok(russh_sftp::protocol::Attrs {
+            id,
+            attrs: file.attrs,
+        })
     }
 
     async fn readlink(&mut self, id: u32, path: String) -> Result<Name, Self::Error> {
@@ -740,30 +750,31 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
-        if let Some(path) = self.server.filesystem.safe_symlink_path(&path).await {
-            let metadata = match tokio::fs::symlink_metadata(&path).await {
-                Ok(metadata) => metadata,
-                Err(_) => return Err(StatusCode::NoSuchFile),
-            };
+        let path = match self.server.filesystem.read_link(&path).await {
+            Ok(path) => path,
+            Err(_) => return Err(StatusCode::NoSuchFile),
+        };
 
-            if self
-                .server
-                .filesystem
-                .is_ignored(&path, metadata.is_dir())
-                .await
-            {
-                return Err(StatusCode::NoSuchFile);
-            }
+        let metadata = match self.server.filesystem.symlink_metadata(&path).await {
+            Ok(metadata) => metadata,
+            Err(_) => return Err(StatusCode::NoSuchFile),
+        };
 
-            let file = Self::convert_entry(&path, metadata);
-
-            Ok(Name {
-                id,
-                files: vec![file],
-            })
-        } else {
-            Err(StatusCode::NoSuchFile)
+        if self
+            .server
+            .filesystem
+            .is_ignored(&path, metadata.is_dir())
+            .await
+        {
+            return Err(StatusCode::NoSuchFile);
         }
+
+        let file = Self::convert_entry(&path, metadata);
+
+        Ok(Name {
+            id,
+            files: vec![file],
+        })
     }
 
     async fn symlink(
@@ -854,6 +865,11 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::Failure);
         }
 
+        let filesystem = match self.server.filesystem.base_dir().await {
+            Ok(filesystem) => Arc::clone(&filesystem),
+            Err(_) => return Err(StatusCode::NoSuchFile),
+        };
+
         if (pflags.contains(OpenFlags::WRITE) || pflags.contains(OpenFlags::APPEND))
             && !self.has_permission(Permission::FileUpdate)
         {
@@ -869,69 +885,86 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
+        let path = match self.server.filesystem.canonicalize(&filename).await {
+            Ok(path) => path,
+            Err(_) => PathBuf::from(filename),
+        };
+
+        match self.server.filesystem.metadata(&path).await {
+            Ok(metadata) => {
+                if !metadata.is_file() {
+                    return Err(StatusCode::NoSuchFile);
+                }
+            }
+            Err(_) => {
+                if !pflags.contains(OpenFlags::CREATE) {
+                    return Err(StatusCode::NoSuchFile);
+                }
+            }
+        }
+
+        if self.server.filesystem.is_ignored(&path, false).await {
+            return Err(StatusCode::NoSuchFile);
+        }
+
+        let mut activity_event = None;
+        if pflags.contains(OpenFlags::TRUNCATE) || pflags.contains(OpenFlags::CREATE) {
+            activity_event = Some(ActivityEvent::SftpCreate);
+        } else if pflags.contains(OpenFlags::WRITE) || pflags.contains(OpenFlags::APPEND) {
+            activity_event = Some(ActivityEvent::SftpWrite);
+        }
+
+        let (file, metadata) = tokio::task::spawn_blocking({
+            let path = path.clone();
+
+            move || {
+                let mut options = OpenOptions::new();
+                options.read(pflags.contains(OpenFlags::READ));
+                options
+                    .write(pflags.contains(OpenFlags::WRITE) || pflags.contains(OpenFlags::APPEND));
+                options.create(pflags.contains(OpenFlags::CREATE));
+                options.truncate(pflags.contains(OpenFlags::TRUNCATE));
+
+                let file = filesystem.open_with(path, &options).unwrap();
+                let metadata = file.metadata().unwrap();
+
+                (file, metadata)
+            }
+        })
+        .await
+        .map_err(|_| StatusCode::Failure)?;
+
+        let path_components = self.server.filesystem.path_to_components(&path);
+
+        if let Some(event) = activity_event {
+            self.server
+                .activity
+                .log_activity(Activity {
+                    event,
+                    user: self.user_uuid,
+                    ip: self.user_ip,
+                    metadata: Some(json!({
+                        "files": [self.server.filesystem.relative_path(&path)],
+                    })),
+                    timestamp: chrono::Utc::now(),
+                })
+                .await;
+        }
+
         let handle = self.next_handle_id();
 
-        if let Some(path) = self.server.filesystem.safe_path(&filename).await {
-            if path.exists() && !path.is_file() {
-                return Err(StatusCode::NoSuchFile);
-            }
+        self.handles.insert(
+            handle.clone(),
+            ServerHandle::File(FileHandle {
+                path,
+                path_components,
+                file: Arc::new(file.into_std()),
+                consumed: 0,
+                size: metadata.len(),
+            }),
+        );
 
-            if self.server.filesystem.is_ignored(&path, false).await {
-                return Err(StatusCode::NoSuchFile);
-            }
-
-            let mut activity_event = None;
-            if pflags.contains(OpenFlags::TRUNCATE) || pflags.contains(OpenFlags::CREATE) {
-                activity_event = Some(ActivityEvent::SftpCreate);
-            } else if pflags.contains(OpenFlags::WRITE) || pflags.contains(OpenFlags::APPEND) {
-                activity_event = Some(ActivityEvent::SftpWrite);
-            }
-
-            let (file, metadata) = tokio::task::spawn_blocking({
-                let path = path.clone();
-
-                move || {
-                    let file = OpenOptions::from(pflags).open(path).unwrap();
-                    let metadata = file.metadata().unwrap();
-
-                    (file, metadata)
-                }
-            })
-            .await
-            .map_err(|_| StatusCode::Failure)?;
-
-            let path_components = self.server.filesystem.path_to_components(&path);
-
-            if let Some(event) = activity_event {
-                self.server
-                    .activity
-                    .log_activity(Activity {
-                        event,
-                        user: self.user_uuid,
-                        ip: self.user_ip,
-                        metadata: Some(json!({
-                            "files": [self.server.filesystem.relative_path(&path)],
-                        })),
-                        timestamp: chrono::Utc::now(),
-                    })
-                    .await;
-            }
-
-            self.handles.insert(
-                handle.clone(),
-                ServerHandle::File(FileHandle {
-                    path,
-                    path_components,
-                    file: Arc::new(file),
-                    consumed: 0,
-                    size: metadata.len(),
-                }),
-            );
-
-            Ok(Handle { id, handle })
-        } else {
-            Err(StatusCode::NoSuchFile)
-        }
+        Ok(Handle { id, handle })
     }
 
     async fn read(
@@ -1067,233 +1100,231 @@ impl russh_sftp::server::Handler for SftpSession {
                     }
                 };
 
-                if let Some(path) = self.server.filesystem.safe_path(&file_name).await {
-                    if path.exists() {
-                        if let Ok(metadata) = tokio::fs::symlink_metadata(&path).await {
-                            if metadata.is_file() {
-                                if self
-                                    .server
-                                    .filesystem
-                                    .is_ignored(&path, metadata.is_dir())
-                                    .await
-                                {
-                                    return Err(StatusCode::NoSuchFile);
-                                }
+                let path = match self.server.filesystem.canonicalize(&file_name).await {
+                    Ok(path) => path,
+                    Err(_) => return Err(StatusCode::NoSuchFile),
+                };
 
-                                let mut file = match tokio::fs::File::open(&path).await {
-                                    Ok(file) => file,
-                                    Err(_) => return Err(StatusCode::NoSuchFile),
-                                };
+                if let Ok(metadata) = self.server.filesystem.symlink_metadata(&path).await {
+                    if !metadata.is_file() {
+                        return Err(StatusCode::NoSuchFile);
+                    }
 
-                                if request.start_offset != 0 {
-                                    file.seek(SeekFrom::Start(request.start_offset))
-                                        .await
-                                        .map_err(|_| StatusCode::Failure)?;
-                                }
-                                let mut total_bytes_read = 0;
-                                let hash_algorithm = request.hash.split(',').next().unwrap();
+                    if self
+                        .server
+                        .filesystem
+                        .is_ignored(&path, metadata.is_dir())
+                        .await
+                    {
+                        return Err(StatusCode::NoSuchFile);
+                    }
 
-                                #[inline]
-                                fn bytes(
-                                    length: u64,
-                                    bytes_read: usize,
-                                    total_bytes_read: u64,
-                                ) -> usize {
-                                    if length > 0 {
-                                        if total_bytes_read > length {
-                                            (length - (total_bytes_read - bytes_read as u64))
-                                                as usize
-                                        } else {
-                                            bytes_read
-                                        }
-                                    } else {
-                                        bytes_read
-                                    }
-                                }
+                    let mut file = match self.server.filesystem.open(&path).await {
+                        Ok(file) => file,
+                        Err(_) => return Err(StatusCode::NoSuchFile),
+                    };
 
-                                let hash: Vec<u8> = match hash_algorithm {
-                                    "md5" => {
-                                        let mut hasher = md5::Context::new();
+                    if request.start_offset != 0 {
+                        file.seek(SeekFrom::Start(request.start_offset))
+                            .await
+                            .map_err(|_| StatusCode::Failure)?;
+                    }
+                    let mut total_bytes_read = 0;
+                    let hash_algorithm = request.hash.split(',').next().unwrap();
 
-                                        let mut buffer = [0; 8192];
-                                        loop {
-                                            let bytes_read = file
-                                                .read(&mut buffer)
-                                                .await
-                                                .map_err(|_| StatusCode::Failure)?;
-                                            total_bytes_read += bytes_read as u64;
-
-                                            if bytes_read == 0 {
-                                                break;
-                                            }
-
-                                            let bytes_read =
-                                                bytes(request.length, bytes_read, total_bytes_read);
-                                            hasher.consume(&buffer[..bytes_read]);
-                                        }
-
-                                        (*hasher.compute()).into()
-                                    }
-                                    "crc32" => {
-                                        let mut hasher = crc32fast::Hasher::new();
-
-                                        let mut buffer = [0; 8192];
-                                        loop {
-                                            let bytes_read = file
-                                                .read(&mut buffer)
-                                                .await
-                                                .map_err(|_| StatusCode::Failure)?;
-                                            total_bytes_read += bytes_read as u64;
-
-                                            if bytes_read == 0 {
-                                                break;
-                                            }
-
-                                            let bytes_read =
-                                                bytes(request.length, bytes_read, total_bytes_read);
-                                            hasher.update(&buffer[..bytes_read]);
-                                        }
-
-                                        hasher.finalize().to_be_bytes().to_vec()
-                                    }
-                                    "sha1" => {
-                                        let mut hasher = sha1::Sha1::new();
-
-                                        let mut buffer = [0; 8192];
-                                        loop {
-                                            let bytes_read = file
-                                                .read(&mut buffer)
-                                                .await
-                                                .map_err(|_| StatusCode::Failure)?;
-                                            total_bytes_read += bytes_read as u64;
-
-                                            if bytes_read == 0 {
-                                                break;
-                                            }
-
-                                            let bytes_read =
-                                                bytes(request.length, bytes_read, total_bytes_read);
-                                            hasher.update(&buffer[..bytes_read]);
-                                        }
-
-                                        (*hasher.finalize()).into()
-                                    }
-                                    "sha224" => {
-                                        let mut hasher = sha2::Sha224::new();
-
-                                        let mut buffer = [0; 8192];
-                                        loop {
-                                            let bytes_read = file
-                                                .read(&mut buffer)
-                                                .await
-                                                .map_err(|_| StatusCode::Failure)?;
-                                            total_bytes_read += bytes_read as u64;
-
-                                            if bytes_read == 0 {
-                                                break;
-                                            }
-
-                                            let bytes_read =
-                                                bytes(request.length, bytes_read, total_bytes_read);
-                                            hasher.update(&buffer[..bytes_read]);
-                                        }
-
-                                        (*hasher.finalize()).into()
-                                    }
-                                    "sha256" => {
-                                        let mut hasher = sha2::Sha256::new();
-
-                                        let mut buffer = [0; 8192];
-                                        loop {
-                                            let bytes_read = file
-                                                .read(&mut buffer)
-                                                .await
-                                                .map_err(|_| StatusCode::Failure)?;
-                                            total_bytes_read += bytes_read as u64;
-
-                                            if bytes_read == 0 {
-                                                break;
-                                            }
-
-                                            let bytes_read =
-                                                bytes(request.length, bytes_read, total_bytes_read);
-                                            hasher.update(&buffer[..bytes_read]);
-                                        }
-
-                                        (*hasher.finalize()).into()
-                                    }
-                                    "sha384" => {
-                                        let mut hasher = sha2::Sha384::new();
-
-                                        let mut buffer = [0; 8192];
-                                        loop {
-                                            let bytes_read = file
-                                                .read(&mut buffer)
-                                                .await
-                                                .map_err(|_| StatusCode::Failure)?;
-                                            total_bytes_read += bytes_read as u64;
-
-                                            if bytes_read == 0 {
-                                                break;
-                                            }
-
-                                            let bytes_read =
-                                                bytes(request.length, bytes_read, total_bytes_read);
-                                            hasher.update(&buffer[..bytes_read]);
-                                        }
-
-                                        (*hasher.finalize()).into()
-                                    }
-                                    "sha512" => {
-                                        let mut hasher = sha2::Sha512::new();
-
-                                        let mut buffer = [0; 8192];
-                                        loop {
-                                            let bytes_read = file
-                                                .read(&mut buffer)
-                                                .await
-                                                .map_err(|_| StatusCode::Failure)?;
-                                            total_bytes_read += bytes_read as u64;
-
-                                            if bytes_read == 0 {
-                                                break;
-                                            }
-
-                                            let bytes_read =
-                                                bytes(request.length, bytes_read, total_bytes_read);
-                                            hasher.update(&buffer[..bytes_read]);
-                                        }
-
-                                        (*hasher.finalize()).into()
-                                    }
-                                    _ => return Err(StatusCode::BadMessage),
-                                };
-
-                                #[derive(Serialize)]
-                                struct CheckFileNameReply<'a> {
-                                    hash_algorithm: &'a str,
-
-                                    #[serde(serialize_with = "russh_sftp::ser::data_serialize")]
-                                    hash: Vec<u8>,
-                                }
-
-                                return Ok(russh_sftp::protocol::Packet::ExtendedReply(
-                                    russh_sftp::protocol::ExtendedReply {
-                                        id,
-                                        data: russh_sftp::ser::to_bytes(&CheckFileNameReply {
-                                            hash_algorithm,
-                                            hash,
-                                        })
-                                        .unwrap()
-                                        .into(),
-                                    },
-                                ));
+                    #[inline]
+                    fn bytes(length: u64, bytes_read: usize, total_bytes_read: u64) -> usize {
+                        if length > 0 {
+                            if total_bytes_read > length {
+                                (length - (total_bytes_read - bytes_read as u64)) as usize
+                            } else {
+                                bytes_read
                             }
+                        } else {
+                            bytes_read
                         }
                     }
-                }
 
-                Err(StatusCode::OpUnsupported)
+                    let hash: Vec<u8> = match hash_algorithm {
+                        "md5" => {
+                            let mut hasher = md5::Context::new();
+
+                            let mut buffer = [0; 8192];
+                            loop {
+                                let bytes_read = file
+                                    .read(&mut buffer)
+                                    .await
+                                    .map_err(|_| StatusCode::Failure)?;
+                                total_bytes_read += bytes_read as u64;
+
+                                if bytes_read == 0 {
+                                    break;
+                                }
+
+                                let bytes_read =
+                                    bytes(request.length, bytes_read, total_bytes_read);
+                                hasher.consume(&buffer[..bytes_read]);
+                            }
+
+                            (*hasher.compute()).into()
+                        }
+                        "crc32" => {
+                            let mut hasher = crc32fast::Hasher::new();
+
+                            let mut buffer = [0; 8192];
+                            loop {
+                                let bytes_read = file
+                                    .read(&mut buffer)
+                                    .await
+                                    .map_err(|_| StatusCode::Failure)?;
+                                total_bytes_read += bytes_read as u64;
+
+                                if bytes_read == 0 {
+                                    break;
+                                }
+
+                                let bytes_read =
+                                    bytes(request.length, bytes_read, total_bytes_read);
+                                hasher.update(&buffer[..bytes_read]);
+                            }
+
+                            hasher.finalize().to_be_bytes().to_vec()
+                        }
+                        "sha1" => {
+                            let mut hasher = sha1::Sha1::new();
+
+                            let mut buffer = [0; 8192];
+                            loop {
+                                let bytes_read = file
+                                    .read(&mut buffer)
+                                    .await
+                                    .map_err(|_| StatusCode::Failure)?;
+                                total_bytes_read += bytes_read as u64;
+
+                                if bytes_read == 0 {
+                                    break;
+                                }
+
+                                let bytes_read =
+                                    bytes(request.length, bytes_read, total_bytes_read);
+                                hasher.update(&buffer[..bytes_read]);
+                            }
+
+                            (*hasher.finalize()).into()
+                        }
+                        "sha224" => {
+                            let mut hasher = sha2::Sha224::new();
+
+                            let mut buffer = [0; 8192];
+                            loop {
+                                let bytes_read = file
+                                    .read(&mut buffer)
+                                    .await
+                                    .map_err(|_| StatusCode::Failure)?;
+                                total_bytes_read += bytes_read as u64;
+
+                                if bytes_read == 0 {
+                                    break;
+                                }
+
+                                let bytes_read =
+                                    bytes(request.length, bytes_read, total_bytes_read);
+                                hasher.update(&buffer[..bytes_read]);
+                            }
+
+                            (*hasher.finalize()).into()
+                        }
+                        "sha256" => {
+                            let mut hasher = sha2::Sha256::new();
+
+                            let mut buffer = [0; 8192];
+                            loop {
+                                let bytes_read = file
+                                    .read(&mut buffer)
+                                    .await
+                                    .map_err(|_| StatusCode::Failure)?;
+                                total_bytes_read += bytes_read as u64;
+
+                                if bytes_read == 0 {
+                                    break;
+                                }
+
+                                let bytes_read =
+                                    bytes(request.length, bytes_read, total_bytes_read);
+                                hasher.update(&buffer[..bytes_read]);
+                            }
+
+                            (*hasher.finalize()).into()
+                        }
+                        "sha384" => {
+                            let mut hasher = sha2::Sha384::new();
+
+                            let mut buffer = [0; 8192];
+                            loop {
+                                let bytes_read = file
+                                    .read(&mut buffer)
+                                    .await
+                                    .map_err(|_| StatusCode::Failure)?;
+                                total_bytes_read += bytes_read as u64;
+
+                                if bytes_read == 0 {
+                                    break;
+                                }
+
+                                let bytes_read =
+                                    bytes(request.length, bytes_read, total_bytes_read);
+                                hasher.update(&buffer[..bytes_read]);
+                            }
+
+                            (*hasher.finalize()).into()
+                        }
+                        "sha512" => {
+                            let mut hasher = sha2::Sha512::new();
+
+                            let mut buffer = [0; 8192];
+                            loop {
+                                let bytes_read = file
+                                    .read(&mut buffer)
+                                    .await
+                                    .map_err(|_| StatusCode::Failure)?;
+                                total_bytes_read += bytes_read as u64;
+
+                                if bytes_read == 0 {
+                                    break;
+                                }
+
+                                let bytes_read =
+                                    bytes(request.length, bytes_read, total_bytes_read);
+                                hasher.update(&buffer[..bytes_read]);
+                            }
+
+                            (*hasher.finalize()).into()
+                        }
+                        _ => return Err(StatusCode::BadMessage),
+                    };
+
+                    #[derive(Serialize)]
+                    struct CheckFileNameReply<'a> {
+                        hash_algorithm: &'a str,
+
+                        #[serde(serialize_with = "russh_sftp::ser::data_serialize")]
+                        hash: Vec<u8>,
+                    }
+
+                    Ok(russh_sftp::protocol::Packet::ExtendedReply(
+                        russh_sftp::protocol::ExtendedReply {
+                            id,
+                            data: russh_sftp::ser::to_bytes(&CheckFileNameReply {
+                                hash_algorithm,
+                                hash,
+                            })
+                            .unwrap()
+                            .into(),
+                        },
+                    ))
+                } else {
+                    Err(StatusCode::OpUnsupported)
+                }
             }
             "copy-file" => {
                 if !self.has_permission(Permission::FileReadContent)
@@ -1314,64 +1345,64 @@ impl russh_sftp::server::Handler for SftpSession {
                     Err(_) => return Err(StatusCode::BadMessage),
                 };
 
-                if let Some(source_path) = self.server.filesystem.safe_path(&request.source).await {
-                    let metadata = match tokio::fs::symlink_metadata(&source_path).await {
-                        Ok(metadata) => metadata,
-                        Err(_) => return Err(StatusCode::NoSuchFile),
-                    };
+                let source_path = match self.server.filesystem.canonicalize(&request.source).await {
+                    Ok(path) => path,
+                    Err(_) => return Err(StatusCode::NoSuchFile),
+                };
 
-                    if metadata.is_file() {
-                        if self.server.filesystem.is_ignored(&source_path, false).await {
+                let metadata = match self.server.filesystem.symlink_metadata(&source_path).await {
+                    Ok(metadata) => metadata,
+                    Err(_) => return Err(StatusCode::NoSuchFile),
+                };
+
+                if metadata.is_file() {
+                    if self.server.filesystem.is_ignored(&source_path, false).await {
+                        return Err(StatusCode::NoSuchFile);
+                    }
+
+                    let destination_path = Path::new(&request.destination);
+
+                    if let Ok(metadata) = self.server.filesystem.metadata(destination_path).await {
+                        if !metadata.is_file() && request.overwrite == 0 {
                             return Err(StatusCode::NoSuchFile);
                         }
+                    };
 
-                        if let Some(destination_path) =
-                            self.server.filesystem.safe_path(&request.destination).await
-                        {
-                            if destination_path.exists() && request.overwrite == 0 {
-                                return Err(StatusCode::NoSuchFile);
-                            }
-
-                            if !self
-                                .server
-                                .filesystem
-                                .allocate_in_path(
-                                    destination_path.parent().unwrap(),
-                                    metadata.len() as i64,
-                                )
-                                .await
-                            {
-                                return Err(StatusCode::Failure);
-                            }
-
-                            tokio::fs::copy(&source_path, &destination_path)
-                                .await
-                                .map_err(|_| StatusCode::NoSuchFile)?;
-
-                            self.server
-                                .activity
-                                .log_activity(Activity {
-                                    event: ActivityEvent::SftpCreate,
-                                    user: self.user_uuid,
-                                    ip: self.user_ip,
-                                    metadata: Some(json!({
-                                        "files": [self.server.filesystem.relative_path(&destination_path)],
-                                    })),
-                                    timestamp: chrono::Utc::now(),
-                                })
-                                .await;
-
-                            return Ok(russh_sftp::protocol::Packet::Status(Status {
-                                id,
-                                status_code: StatusCode::Ok,
-                                error_message: "Ok".to_string(),
-                                language_tag: "en-US".to_string(),
-                            }));
-                        }
+                    if !self
+                        .server
+                        .filesystem
+                        .allocate_in_path(destination_path.parent().unwrap(), metadata.len() as i64)
+                        .await
+                    {
+                        return Err(StatusCode::Failure);
                     }
-                }
 
-                Err(StatusCode::NoSuchFile)
+                    tokio::fs::copy(&source_path, &destination_path)
+                        .await
+                        .map_err(|_| StatusCode::NoSuchFile)?;
+
+                    self.server
+                        .activity
+                        .log_activity(Activity {
+                            event: ActivityEvent::SftpCreate,
+                            user: self.user_uuid,
+                            ip: self.user_ip,
+                            metadata: Some(json!({
+                                "files": [self.server.filesystem.relative_path(destination_path)],
+                            })),
+                            timestamp: chrono::Utc::now(),
+                        })
+                        .await;
+
+                    Ok(russh_sftp::protocol::Packet::Status(Status {
+                        id,
+                        status_code: StatusCode::Ok,
+                        error_message: "Ok".to_string(),
+                        language_tag: "en-US".to_string(),
+                    }))
+                } else {
+                    Err(StatusCode::NoSuchFile)
+                }
             }
             "space-available" => {
                 #[derive(Serialize)]

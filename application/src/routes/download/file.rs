@@ -9,7 +9,8 @@ mod get {
         http::{HeaderMap, StatusCode},
     };
     use serde::Deserialize;
-    use tokio::{fs::File, io::BufReader};
+    use std::path::Path;
+    use tokio::io::BufReader;
     use utoipa::ToSchema;
 
     #[derive(ToSchema, Deserialize)]
@@ -88,18 +89,9 @@ mod get {
             }
         };
 
-        let path = match server.filesystem.safe_path(&payload.file_path).await {
-            Some(path) => path,
-            None => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    HeaderMap::new(),
-                    Body::from("File not found"),
-                );
-            }
-        };
+        let path = Path::new(&payload.file_path);
 
-        if let Some((backup, path)) = server.filesystem.backup_fs(&server, &path).await {
+        if let Some((backup, path)) = server.filesystem.backup_fs(&server, path).await {
             match crate::server::filesystem::backup::reader(backup, &server, &path).await {
                 Ok((mut reader, size)) => {
                     let mut headers = HeaderMap::new();
@@ -150,10 +142,10 @@ mod get {
             }
         }
 
-        let metadata = match tokio::fs::symlink_metadata(&path).await {
+        let metadata = match server.filesystem.metadata(&path).await {
             Ok(metadata) => {
                 if !metadata.is_file()
-                    || server.filesystem.is_ignored(&path, metadata.is_dir()).await
+                    || server.filesystem.is_ignored(path, metadata.is_dir()).await
                 {
                     return (
                         StatusCode::NOT_FOUND,
@@ -173,7 +165,7 @@ mod get {
             }
         };
 
-        let file = match File::open(&path).await {
+        let file = match server.filesystem.open(&path).await {
             Ok(file) => file,
             Err(_) => {
                 return (
