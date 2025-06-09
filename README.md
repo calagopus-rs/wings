@@ -7,6 +7,8 @@ a rewrite of [pterodactyl wings](https://github.com/pterodactyl/wings) in the ru
 ```bash
 sudo curl -L "https://github.com/pterodactyl-rs/wings/releases/latest/download/wings-rs-$(uname -m | sed 's/x86_64/x86_64/;s/aarch64/aarch64/')-linux$(ldd --version 2>&1 | grep -q 'GLIBC 2.3[5-9]\|GLIBC 2.[4-9]' || echo '-musl')" -o /usr/local/bin/wings
 sudo chmod +x /usr/local/bin/wings
+
+wings version
 ```
 
 ## added config options
