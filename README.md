@@ -2,6 +2,13 @@
 
 a rewrite of [pterodactyl wings](https://github.com/pterodactyl/wings) in the rust programming language. this rewrite aims to be 100% API compatible while implementing new features and better performance.
 
+## quick installation
+
+```bash
+sudo curl -L "https://github.com/pterodactyl-rs/wings/releases/latest/download/wings-rs-$(uname -m | sed 's/x86_64/x86_64/;s/aarch64/aarch64/')-linux$(ldd --version 2>&1 | grep -q 'GLIBC 2.3[5-9]\|GLIBC 2.[4-9]' || echo '-musl')" -o /usr/local/bin/wings
+sudo chmod +x /usr/local/bin/wings
+```
+
 ## added config options
 
 ```yml
