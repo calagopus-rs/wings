@@ -4,7 +4,7 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 mod post {
     use crate::routes::{ApiError, GetState, api::servers::_server_::GetServer};
     use axum::http::StatusCode;
-    use ignore::WalkBuilder;
+    use cap_std::fs::PermissionsExt;
     use serde::Deserialize;
     use utoipa::ToSchema;
 
@@ -77,10 +77,7 @@ mod post {
                 ));
 
                 for file in data.files {
-                    let source = match filesystem.canonicalize(root.join(file)) {
-                        Ok(path) => path,
-                        Err(_) => continue,
-                    };
+                    let source = root.join(file);
 
                     let relative = match source.strip_prefix(&root) {
                         Ok(path) => path,
@@ -98,10 +95,10 @@ mod post {
                         continue;
                     }
 
-                    let source = server.filesystem.base_path.join(&source);
-
                     if source_metadata.is_dir() {
-                        for entry in WalkBuilder::new(&source)
+                        let (mut walker, strip_path) = server.filesystem.walk_dir(&source).unwrap();
+
+                        for entry in walker
                             .git_ignore(false)
                             .ignore(false)
                             .git_exclude(false)
@@ -110,35 +107,111 @@ mod post {
                             .build()
                             .flatten()
                         {
-                            let path = entry.path().strip_prefix(&source).unwrap_or(entry.path());
+                            let path = entry
+                                .path()
+                                .strip_prefix(&strip_path)
+                                .unwrap_or(entry.path());
                             if path.display().to_string().is_empty() {
                                 continue;
                             }
 
-                            let path = relative.join(path);
+                            let display_path = relative.join(path);
+                            let path = server.filesystem.relative_path(&relative.join(path));
 
-                            let metadata = match entry.metadata() {
+                            let metadata = match filesystem.symlink_metadata(&path) {
                                 Ok(metadata) => metadata,
-                                Err(_) => {
-                                    continue;
-                                }
+                                Err(_) => continue,
                             };
 
-                            if server
-                                .filesystem
-                                .is_ignored_sync(entry.path(), metadata.is_dir())
-                            {
+                            if server.filesystem.is_ignored_sync(&path, metadata.is_dir()) {
                                 continue;
                             }
 
                             if metadata.is_dir() {
-                                archive.append_dir(path, entry.path()).ok();
-                            } else {
-                                archive.append_path_with_name(entry.path(), path).ok();
+                                archive.append_dir(display_path, entry.path()).ok();
+                            } else if metadata.is_file() {
+                                let file = match filesystem.open(&path) {
+                                    Ok(file) => file,
+                                    Err(_) => continue,
+                                };
+
+                                let mut header = tar::Header::new_gnu();
+                                header.set_size(metadata.len());
+                                header.set_mode(metadata.permissions().mode());
+                                header.set_mtime(
+                                    metadata
+                                        .modified()
+                                        .map(|t| {
+                                            t.into_std()
+                                                .duration_since(std::time::UNIX_EPOCH)
+                                                .unwrap_or_default()
+                                        })
+                                        .unwrap_or_default()
+                                        .as_secs() as u64,
+                                );
+
+                                archive.append_data(&mut header, display_path, file).ok();
+                            } else if let Ok(link_target) = filesystem.read_link(&source) {
+                                let mut header = tar::Header::new_gnu();
+                                header.set_size(0);
+                                header.set_mode(source_metadata.permissions().mode());
+                                header.set_mtime(
+                                    source_metadata
+                                        .modified()
+                                        .map(|t| {
+                                            t.into_std()
+                                                .duration_since(std::time::UNIX_EPOCH)
+                                                .unwrap_or_default()
+                                        })
+                                        .unwrap_or_default()
+                                        .as_secs() as u64,
+                                );
+                                header.set_entry_type(tar::EntryType::Symlink);
+
+                                archive
+                                    .append_link(&mut header, relative, link_target)
+                                    .unwrap();
                             }
                         }
-                    } else {
-                        archive.append_path_with_name(&source, relative).unwrap();
+                    } else if source_metadata.is_file() {
+                        let mut header = tar::Header::new_gnu();
+                        header.set_size(source_metadata.len());
+                        header.set_mode(source_metadata.permissions().mode());
+                        header.set_mtime(
+                            source_metadata
+                                .modified()
+                                .map(|t| {
+                                    t.into_std()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap_or_default()
+                                })
+                                .unwrap_or_default()
+                                .as_secs() as u64,
+                        );
+
+                        archive
+                            .append_data(&mut header, relative, filesystem.open(&source).unwrap())
+                            .unwrap();
+                    } else if let Ok(link_target) = filesystem.read_link(&source) {
+                        let mut header = tar::Header::new_gnu();
+                        header.set_size(0);
+                        header.set_mode(source_metadata.permissions().mode());
+                        header.set_mtime(
+                            source_metadata
+                                .modified()
+                                .map(|t| {
+                                    t.into_std()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap_or_default()
+                                })
+                                .unwrap_or_default()
+                                .as_secs() as u64,
+                        );
+                        header.set_entry_type(tar::EntryType::Symlink);
+
+                        archive
+                            .append_link(&mut header, relative, link_target)
+                            .unwrap();
                     }
                 }
 

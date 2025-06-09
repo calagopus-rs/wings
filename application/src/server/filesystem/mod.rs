@@ -1,5 +1,6 @@
 use crate::server::backup::InternalBackup;
 use cap_std::fs::{Metadata, PermissionsExt};
+use ignore::WalkBuilder;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -331,6 +332,18 @@ impl Filesystem {
         }
     }
 
+    #[inline]
+    pub fn sync_base_dir(&self) -> std::io::Result<Arc<cap_std::fs::Dir>> {
+        if let Some(dir) = self.base_dir.blocking_read().as_ref() {
+            Ok(Arc::clone(dir))
+        } else {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "Base directory not initialized",
+            ))
+        }
+    }
+
     pub async fn backup_fs(
         &self,
         server: &crate::server::Server,
@@ -618,6 +631,22 @@ impl Filesystem {
                 tokio::task::spawn_blocking(move || filesystem.read_dir(path)).await??,
             )))
         })
+    }
+
+    pub fn walk_dir(
+        &self,
+        path: impl Into<PathBuf>,
+    ) -> Result<(WalkBuilder, PathBuf), anyhow::Error> {
+        let filesystem = self.sync_base_dir()?;
+
+        let path = self.relative_path(&path.into());
+        let full_path = if path.components().next().is_none() {
+            self.base_path.clone()
+        } else {
+            self.base_path.join(filesystem.canonicalize(path)?)
+        };
+
+        Ok((WalkBuilder::new(&full_path), full_path))
     }
 
     pub async fn symlink(

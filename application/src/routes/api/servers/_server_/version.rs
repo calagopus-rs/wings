@@ -7,7 +7,7 @@ mod get {
     use axum_extra::extract::Query;
     use serde::{Deserialize, Serialize};
     use sha2::Digest;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use tokio::io::AsyncReadExt;
     use utoipa::ToSchema;
 
@@ -57,31 +57,25 @@ mod get {
                 }
 
                 'forge: {
+                    let path = Path::new("libraries/net/minecraftforge/forge");
+
                     if server
                         .filesystem
-                        .base_path
-                        .join("libraries/net/minecraftforge/forge")
-                        .is_dir()
-                    {
-                        let mut entries = tokio::fs::read_dir(
-                            server
-                                .filesystem
-                                .base_path
-                                .join("libraries/net/minecraftforge/forge"),
-                        )
+                        .metadata(path)
                         .await
-                        .unwrap();
+                        .is_ok_and(|m| m.is_dir())
+                    {
+                        let mut entries = server.filesystem.read_dir(path).await.unwrap();
 
-                        while let Some(entry) = entries.next_entry().await.unwrap() {
-                            if let Ok(mut entries) = tokio::fs::read_dir(entry.path()).await {
-                                while let Some(entry) = entries.next_entry().await.unwrap() {
-                                    let name_str = entry.file_name();
-                                    let name_str = name_str.to_string_lossy();
-
-                                    if name_str.ends_with("-server.jar")
-                                        || name_str.ends_with("-universal.jar")
+                        while let Some(Ok(entry)) = entries.next_entry().await {
+                            if let Ok(mut entries) =
+                                server.filesystem.read_dir(path.join(&entry)).await
+                            {
+                                while let Some(Ok(sub_entry)) = entries.next_entry().await {
+                                    if sub_entry.ends_with("-server.jar")
+                                        || sub_entry.ends_with("-universal.jar")
                                     {
-                                        jar = entry.path();
+                                        jar = path.join(entry).join(sub_entry);
                                         break 'forge;
                                     }
                                 }
@@ -91,31 +85,25 @@ mod get {
                 }
 
                 'neoforge: {
+                    let path = Path::new("libraries/net/neoforged/neoforge");
+
                     if server
                         .filesystem
-                        .base_path
-                        .join("libraries/net/neoforged/neoforge")
-                        .is_dir()
-                    {
-                        let mut entries = tokio::fs::read_dir(
-                            server
-                                .filesystem
-                                .base_path
-                                .join("libraries/net/neoforged/neoforge"),
-                        )
+                        .metadata(path)
                         .await
-                        .unwrap();
+                        .is_ok_and(|m| m.is_dir())
+                    {
+                        let mut entries = server.filesystem.read_dir(path).await.unwrap();
 
-                        while let Some(entry) = entries.next_entry().await.unwrap() {
-                            if let Ok(mut entries) = tokio::fs::read_dir(entry.path()).await {
-                                while let Some(entry) = entries.next_entry().await.unwrap() {
-                                    let name_str = entry.file_name();
-                                    let name_str = name_str.to_string_lossy();
-
-                                    if name_str.ends_with("-server.jar")
-                                        || name_str.ends_with("-universal.jar")
+                        while let Some(Ok(entry)) = entries.next_entry().await {
+                            if let Ok(mut entries) =
+                                server.filesystem.read_dir(path.join(&entry)).await
+                            {
+                                while let Some(Ok(sub_entry)) = entries.next_entry().await {
+                                    if sub_entry.ends_with("-server.jar")
+                                        || sub_entry.ends_with("-universal.jar")
                                     {
-                                        jar = entry.path();
+                                        jar = path.join(entry).join(sub_entry);
                                         break 'neoforge;
                                     }
                                 }

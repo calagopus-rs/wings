@@ -805,7 +805,7 @@ impl russh_sftp::server::Handler for SftpSession {
             Err(_) => return Err(StatusCode::NoSuchFile),
         };
 
-        let metadata = match tokio::fs::symlink_metadata(&targetpath).await {
+        let metadata = match self.server.filesystem.symlink_metadata(&targetpath).await {
             Ok(metadata) => metadata,
             Err(_) => return Err(StatusCode::NoSuchFile),
         };
@@ -1355,54 +1355,56 @@ impl russh_sftp::server::Handler for SftpSession {
                     Err(_) => return Err(StatusCode::NoSuchFile),
                 };
 
-                if metadata.is_file() {
-                    if self.server.filesystem.is_ignored(&source_path, false).await {
+                if !metadata.is_file() {
+                    return Err(StatusCode::NoSuchFile);
+                }
+
+                if self.server.filesystem.is_ignored(&source_path, false).await {
+                    return Err(StatusCode::NoSuchFile);
+                }
+
+                let destination_path = Path::new(&request.destination);
+
+                if let Ok(metadata) = self.server.filesystem.metadata(destination_path).await {
+                    if !metadata.is_file() && request.overwrite == 0 {
                         return Err(StatusCode::NoSuchFile);
                     }
+                };
 
-                    let destination_path = Path::new(&request.destination);
-
-                    if let Ok(metadata) = self.server.filesystem.metadata(destination_path).await {
-                        if !metadata.is_file() && request.overwrite == 0 {
-                            return Err(StatusCode::NoSuchFile);
-                        }
-                    };
-
-                    if !self
-                        .server
-                        .filesystem
-                        .allocate_in_path(destination_path.parent().unwrap(), metadata.len() as i64)
-                        .await
-                    {
-                        return Err(StatusCode::Failure);
-                    }
-
-                    tokio::fs::copy(&source_path, &destination_path)
-                        .await
-                        .map_err(|_| StatusCode::NoSuchFile)?;
-
-                    self.server
-                        .activity
-                        .log_activity(Activity {
-                            event: ActivityEvent::SftpCreate,
-                            user: self.user_uuid,
-                            ip: self.user_ip,
-                            metadata: Some(json!({
-                                "files": [self.server.filesystem.relative_path(destination_path)],
-                            })),
-                            timestamp: chrono::Utc::now(),
-                        })
-                        .await;
-
-                    Ok(russh_sftp::protocol::Packet::Status(Status {
-                        id,
-                        status_code: StatusCode::Ok,
-                        error_message: "Ok".to_string(),
-                        language_tag: "en-US".to_string(),
-                    }))
-                } else {
-                    Err(StatusCode::NoSuchFile)
+                if !self
+                    .server
+                    .filesystem
+                    .allocate_in_path(destination_path.parent().unwrap(), metadata.len() as i64)
+                    .await
+                {
+                    return Err(StatusCode::Failure);
                 }
+
+                self.server
+                    .filesystem
+                    .copy(&source_path, &destination_path)
+                    .await
+                    .map_err(|_| StatusCode::NoSuchFile)?;
+
+                self.server
+                    .activity
+                    .log_activity(Activity {
+                        event: ActivityEvent::SftpCreate,
+                        user: self.user_uuid,
+                        ip: self.user_ip,
+                        metadata: Some(json!({
+                            "files": [self.server.filesystem.relative_path(destination_path)],
+                        })),
+                        timestamp: chrono::Utc::now(),
+                    })
+                    .await;
+
+                Ok(russh_sftp::protocol::Packet::Status(Status {
+                    id,
+                    status_code: StatusCode::Ok,
+                    error_message: "Ok".to_string(),
+                    language_tag: "en-US".to_string(),
+                }))
             }
             "space-available" => {
                 #[derive(Serialize)]

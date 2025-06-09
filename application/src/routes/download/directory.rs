@@ -8,8 +8,9 @@ mod get {
         extract::Query,
         http::{HeaderMap, StatusCode},
     };
-    use ignore::WalkBuilder;
+    use cap_std::fs::PermissionsExt;
     use serde::Deserialize;
+    use std::path::PathBuf;
     use utoipa::ToSchema;
 
     #[derive(ToSchema, Deserialize)]
@@ -88,17 +89,7 @@ mod get {
             }
         };
 
-        let path = match server.filesystem.canonicalize(payload.file_path).await {
-            Ok(path) => path,
-            Err(_) => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    HeaderMap::new(),
-                    Body::from("File not found"),
-                );
-            }
-        };
-
+        let path = PathBuf::from(payload.file_path);
         let file_name = path.file_name().unwrap().to_string_lossy().to_string();
 
         let mut folder_ascii = "".to_string();
@@ -151,7 +142,7 @@ mod get {
             }
         }
 
-        let metadata = tokio::fs::symlink_metadata(&path).await;
+        let metadata = server.filesystem.symlink_metadata(&path).await;
         if let Ok(metadata) = metadata {
             if !metadata.is_dir() || server.filesystem.is_ignored(&path, metadata.is_dir()).await {
                 return (
@@ -178,7 +169,10 @@ mod get {
             tar.mode(tar::HeaderMode::Complete);
             tar.follow_symlinks(false);
 
-            for entry in WalkBuilder::new(&path)
+            let (mut walker, strip_path) = server.filesystem.walk_dir(path).unwrap();
+            let filesystem = server.filesystem.sync_base_dir().unwrap();
+
+            for entry in walker
                 .git_ignore(false)
                 .ignore(false)
                 .git_exclude(false)
@@ -187,16 +181,19 @@ mod get {
                 .build()
                 .flatten()
             {
-                let path = entry.path().strip_prefix(&path).unwrap_or(entry.path());
-                if path.display().to_string().is_empty() {
+                let display_path = entry
+                    .path()
+                    .strip_prefix(&strip_path)
+                    .unwrap_or(entry.path());
+                if display_path.display().to_string().is_empty() {
                     continue;
                 }
 
-                let metadata = match entry.metadata() {
+                let path = server.filesystem.relative_path(entry.path());
+
+                let metadata = match filesystem.symlink_metadata(&path) {
                     Ok(metadata) => metadata,
-                    Err(_) => {
-                        continue;
-                    }
+                    Err(_) => continue,
                 };
 
                 if server
@@ -207,9 +204,48 @@ mod get {
                 }
 
                 if metadata.is_dir() {
-                    tar.append_dir(path, entry.path()).ok();
-                } else {
-                    tar.append_path_with_name(entry.path(), path).ok();
+                    tar.append_dir(display_path, entry.path()).ok();
+                } else if metadata.is_file() {
+                    let file = match filesystem.open(&path) {
+                        Ok(file) => file,
+                        Err(_) => continue,
+                    };
+
+                    let mut header = tar::Header::new_gnu();
+                    header.set_size(metadata.len());
+                    header.set_mode(metadata.permissions().mode());
+                    header.set_mtime(
+                        metadata
+                            .modified()
+                            .map(|t| {
+                                t.into_std()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default()
+                            })
+                            .unwrap_or_default()
+                            .as_secs() as u64,
+                    );
+
+                    tar.append_data(&mut header, display_path, file).ok();
+                } else if let Ok(link_target) = filesystem.read_link(&path) {
+                    let mut header = tar::Header::new_gnu();
+                    header.set_size(0);
+                    header.set_mode(metadata.permissions().mode());
+                    header.set_mtime(
+                        metadata
+                            .modified()
+                            .map(|t| {
+                                t.into_std()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default()
+                            })
+                            .unwrap_or_default()
+                            .as_secs() as u64,
+                    );
+                    header.set_entry_type(tar::EntryType::Symlink);
+
+                    tar.append_link(&mut header, display_path, link_target)
+                        .unwrap();
                 }
             }
 

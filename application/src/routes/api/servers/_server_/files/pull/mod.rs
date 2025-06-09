@@ -73,7 +73,7 @@ mod post {
             }
         };
 
-        let metadata = tokio::fs::symlink_metadata(&path).await;
+        let metadata = server.filesystem.symlink_metadata(&path).await;
         if !metadata.map(|m| m.is_dir()).unwrap_or(true) {
             return (
                 StatusCode::EXPECTATION_FAILED,
@@ -82,7 +82,7 @@ mod post {
         }
 
         if let Some(file_name) = &data.file_name {
-            let metadata = path.join(file_name).symlink_metadata();
+            let metadata = server.filesystem.metadata(path.join(file_name)).await;
             if !metadata.map(|m| m.is_file()).unwrap_or(true) {
                 return (
                     StatusCode::EXPECTATION_FAILED,

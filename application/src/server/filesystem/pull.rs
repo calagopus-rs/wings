@@ -82,10 +82,6 @@ impl Download {
             }
         }
 
-        if !server.filesystem.is_safe_path(&real_destination).await {
-            return Err(anyhow::anyhow!("unsafe path for pull"));
-        }
-
         if server.filesystem.is_ignored(&real_destination, false).await {
             return Err(anyhow::anyhow!("file is ignored"));
         }
