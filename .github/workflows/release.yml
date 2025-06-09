@@ -140,6 +140,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Install toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          target: x86_64-unknown-linux-gnu
+          override: true
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
