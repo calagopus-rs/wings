@@ -965,17 +965,7 @@ impl Filesystem {
     ) -> crate::models::DirectoryEntry {
         let symlink_destination = if metadata.is_symlink() {
             match self.read_link(&path).await {
-                Ok(link) => {
-                    if let Ok(joined) = self.canonicalize(link).await {
-                        if joined.starts_with(&self.base_path) {
-                            Some(joined)
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                }
+                Ok(link) => self.canonicalize(link).await.ok(),
                 Err(_) => None,
             }
         } else {
