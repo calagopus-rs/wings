@@ -476,7 +476,6 @@ impl Filesystem {
         let filesystem = self.base_dir().await?;
 
         let path = self.relative_path(&path.into());
-
         tokio::task::spawn_blocking(move || filesystem.create_dir_all(path)).await??;
 
         Ok(())
@@ -486,7 +485,6 @@ impl Filesystem {
         let filesystem = self.base_dir().await?;
 
         let path = self.relative_path(&path.into());
-
         tokio::task::spawn_blocking(move || filesystem.create_dir(path)).await??;
 
         Ok(())

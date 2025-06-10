@@ -245,7 +245,10 @@ impl ServerConfiguration {
             },
             blkio_weight: Some(self.build.io_weight),
             oom_kill_disable: Some(self.build.oom_disabled),
-            pids_limit: Some(config.docker.container_pid_limit),
+            pids_limit: match config.docker.container_pid_limit {
+                0 => None,
+                limit => Some(limit as i64),
+            },
             cpuset_cpus: self.build.threads.clone(),
             ..Default::default()
         };

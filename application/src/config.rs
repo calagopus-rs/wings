@@ -165,7 +165,7 @@ fn docker_network_interfaces_v6_gateway() -> String {
 fn docker_tmpfs_size() -> u64 {
     100
 }
-fn docker_container_pid_limit() -> i64 {
+fn docker_container_pid_limit() -> u64 {
     512
 }
 
@@ -475,7 +475,7 @@ nestify::nest! {
             #[serde(default = "docker_tmpfs_size")]
             pub tmpfs_size: u64,
             #[serde(default = "docker_container_pid_limit")]
-            pub container_pid_limit: i64,
+            pub container_pid_limit: u64,
 
             #[serde(default)]
             pub installer_limits: #[derive(Deserialize, Serialize, DefaultFromSerde)] #[serde(default)] pub struct DockerInstallerLimits {

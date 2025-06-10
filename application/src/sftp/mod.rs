@@ -887,7 +887,7 @@ impl russh_sftp::server::Handler for SftpSession {
 
         let path = match self.server.filesystem.canonicalize(&filename).await {
             Ok(path) => path,
-            Err(_) => PathBuf::from(filename),
+            Err(_) => PathBuf::from(filename.strip_prefix("/").unwrap_or(&filename)),
         };
 
         match self.server.filesystem.metadata(&path).await {

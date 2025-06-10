@@ -77,7 +77,12 @@ mod post {
                 ));
 
                 for file in data.files {
-                    let source = root.join(file);
+                    let source = match filesystem
+                        .canonicalize(server.filesystem.relative_path(&root.join(file)))
+                    {
+                        Ok(path) => path,
+                        Err(_) => continue,
+                    };
 
                     let relative = match source.strip_prefix(&root) {
                         Ok(path) => path,
@@ -116,7 +121,7 @@ mod post {
                             }
 
                             let display_path = relative.join(path);
-                            let path = server.filesystem.relative_path(&relative.join(path));
+                            let path = server.filesystem.relative_path(&source.join(path));
 
                             let metadata = match filesystem.symlink_metadata(&path) {
                                 Ok(metadata) => metadata,
