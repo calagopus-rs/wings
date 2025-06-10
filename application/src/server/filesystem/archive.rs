@@ -266,7 +266,6 @@ impl Archive {
                 }
                 ArchiveType::Zip => {
                     let file = self.file.try_into_std().unwrap();
-                    let file = std::io::BufReader::new(file);
 
                     let mut archive = zip::ZipArchive::new(file)?;
 
@@ -294,6 +293,10 @@ impl Archive {
                         if entry.is_dir() {
                             filesystem.create_dir_all(&destination_path)?;
                         } else {
+                            filesystem
+                                .create_dir_all(destination_path.parent().unwrap())
+                                .unwrap();
+
                             let mut writer = super::writer::FileSystemWriter::new(
                                 self.server.clone(),
                                 destination_path,
