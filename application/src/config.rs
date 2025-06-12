@@ -3,13 +3,7 @@ use axum::{extract::ConnectInfo, http::HeaderMap};
 use serde::{Deserialize, Serialize};
 use serde_default::DefaultFromSerde;
 use std::{
-    cell::UnsafeCell,
-    collections::{BTreeMap, HashMap},
-    fs::File,
-    io::BufRead,
-    ops::{Deref, DerefMut},
-    os::unix::fs::PermissionsExt,
-    sync::Arc,
+    cell::UnsafeCell, collections::{BTreeMap, HashMap}, fs::File, io::BufRead, ops::{Deref, DerefMut}, os::unix::fs::PermissionsExt, sync::Arc
 };
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::fmt::writer::MakeWriterExt;
@@ -53,6 +47,19 @@ fn system_tmp_directory() -> String {
 }
 fn system_username() -> String {
     "pterodactyl".to_string()
+}
+fn system_timezone() -> String {
+    if let Ok(tz) = std::env::var("TZ") {
+        return tz;
+    } else if let Ok(tz) = File::open("/etc/timezone") {
+        let mut buf = String::new();
+
+        if std::io::BufReader::new(tz).read_line(&mut buf).is_ok() {
+            return buf.trim().to_string();
+        }
+    }
+
+    chrono::Local::now().offset().to_string()
 }
 fn system_passwd_directory() -> String {
     "/run/wings/etc".to_string()
@@ -273,7 +280,7 @@ nestify::nest! {
 
             #[serde(default = "system_username")]
             pub username: String,
-            #[serde(default)]
+            #[serde(default = "system_timezone")]
             pub timezone: String,
 
             #[serde(default)]
@@ -629,7 +636,6 @@ impl Config {
             jwt,
         };
 
-        config.ensure_timezone();
         config.ensure_directories()?;
 
         let latest_log_path = std::path::Path::new(&config.system.log_directory).join("wings.log");
@@ -731,23 +737,6 @@ impl Config {
     #[allow(clippy::mut_from_ref)]
     pub fn unsafe_mut(&self) -> &mut InnerConfig {
         unsafe { &mut *self.inner.get() }
-    }
-
-    fn ensure_timezone(&self) {
-        if self.system.timezone.is_empty() {
-            if let Ok(tz) = std::env::var("TZ") {
-                self.unsafe_mut().system.timezone = tz;
-            } else if let Ok(tz) = File::open("/etc/timezone") {
-                let mut buf = String::new();
-                if std::io::BufReader::new(tz).read_line(&mut buf).is_ok() {
-                    self.unsafe_mut().system.timezone = buf.trim().to_string();
-                } else {
-                    self.unsafe_mut().system.timezone = chrono::Local::now().offset().to_string();
-                }
-            } else {
-                self.unsafe_mut().system.timezone = chrono::Local::now().offset().to_string();
-            }
-        }
     }
 
     fn ensure_directories(&self) -> std::io::Result<()> {
