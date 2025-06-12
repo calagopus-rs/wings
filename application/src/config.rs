@@ -629,7 +629,7 @@ impl Config {
             jwt,
         };
 
-        config.ensure_timezone()?;
+        config.ensure_timezone();
         config.ensure_directories()?;
 
         let latest_log_path = std::path::Path::new(&config.system.log_directory).join("wings.log");
@@ -733,21 +733,21 @@ impl Config {
         unsafe { &mut *self.inner.get() }
     }
 
-    fn ensure_timezone(&self) -> std::io::Result<()> {
+    fn ensure_timezone(&self) {
         if self.system.timezone.is_empty() {
             if let Ok(tz) = std::env::var("TZ") {
                 self.unsafe_mut().system.timezone = tz;
             } else if let Ok(tz) = File::open("/etc/timezone") {
                 let mut buf = String::new();
-                std::io::BufReader::new(tz).read_line(&mut buf)?;
-
-                self.unsafe_mut().system.timezone = buf.trim().to_string();
+                if std::io::BufReader::new(tz).read_line(&mut buf).is_ok() {
+                    self.unsafe_mut().system.timezone = buf.trim().to_string();
+                } else {
+                    self.unsafe_mut().system.timezone = chrono::Local::now().offset().to_string();
+                }
             } else {
                 self.unsafe_mut().system.timezone = chrono::Local::now().offset().to_string();
             }
         }
-
-        Ok(())
     }
 
     fn ensure_directories(&self) -> std::io::Result<()> {
