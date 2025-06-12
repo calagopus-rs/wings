@@ -6,6 +6,7 @@ use std::{
     cell::UnsafeCell,
     collections::{BTreeMap, HashMap},
     fs::File,
+    io::BufRead,
     ops::{Deref, DerefMut},
     os::unix::fs::PermissionsExt,
     sync::Arc,
@@ -269,8 +270,11 @@ nestify::nest! {
             pub backup_directory: String,
             #[serde(default = "system_tmp_directory")]
             pub tmp_directory: String,
+
             #[serde(default = "system_username")]
             pub username: String,
+            #[serde(default)]
+            pub timezone: String,
 
             #[serde(default)]
             pub user: #[derive(Deserialize, Serialize, DefaultFromSerde)] #[serde(default)] pub struct SystemUser {
@@ -625,6 +629,7 @@ impl Config {
             jwt,
         };
 
+        config.ensure_timezone()?;
         config.ensure_directories()?;
 
         let latest_log_path = std::path::Path::new(&config.system.log_directory).join("wings.log");
@@ -642,8 +647,10 @@ impl Config {
             .build(&config.system.log_directory)
             .context("failed to create rolling log file appender")?;
 
-        let (file_appender, guard) =
-            tracing_appender::non_blocking(latest_file.and(rolling_appender));
+        let (file_appender, guard) = tracing_appender::non_blocking::NonBlockingBuilder::default()
+            .buffered_lines_limit(50)
+            .lossy(false)
+            .finish(latest_file.and(rolling_appender));
 
         config.ensure_user()?;
         config.ensure_passwd()?;
@@ -655,6 +662,7 @@ impl Config {
 
         tracing::subscriber::set_global_default(
             tracing_subscriber::fmt()
+                .with_timer(tracing_subscriber::fmt::time::ChronoLocal::rfc_3339())
                 .with_writer(std::io::stdout.and(file_appender))
                 .with_target(false)
                 .with_level(true)
@@ -723,6 +731,23 @@ impl Config {
     #[allow(clippy::mut_from_ref)]
     pub fn unsafe_mut(&self) -> &mut InnerConfig {
         unsafe { &mut *self.inner.get() }
+    }
+
+    fn ensure_timezone(&self) -> std::io::Result<()> {
+        if self.system.timezone.is_empty() {
+            if let Ok(tz) = std::env::var("TZ") {
+                self.unsafe_mut().system.timezone = tz;
+            } else if let Ok(tz) = File::open("/etc/timezone") {
+                let mut buf = String::new();
+                std::io::BufReader::new(tz).read_line(&mut buf)?;
+
+                self.unsafe_mut().system.timezone = buf.trim().to_string();
+            } else {
+                self.unsafe_mut().system.timezone = chrono::Local::now().offset().to_string();
+            }
+        }
+
+        Ok(())
     }
 
     fn ensure_directories(&self) -> std::io::Result<()> {

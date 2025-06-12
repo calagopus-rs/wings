@@ -262,10 +262,14 @@ impl ServerConfiguration {
         resources
     }
 
-    pub fn environment(&self) -> Vec<String> {
+    pub fn environment(&self, config: &crate::config::Config) -> Vec<String> {
         let mut environment = self.environment.clone();
-        environment.reserve(4);
+        environment.reserve(5);
 
+        environment.insert(
+            "TZ".to_string(),
+            serde_json::Value::String(config.system.timezone.clone()),
+        );
         environment.insert(
             "STARTUP".to_string(),
             serde_json::Value::from(self.invocation.clone()),
@@ -402,7 +406,7 @@ impl ServerConfiguration {
             hostname: Some(self.uuid.to_string()),
             domainname: string_to_option(&config.docker.domainname),
             image: Some(self.container.image.trim_end_matches('~').to_string()),
-            env: Some(self.environment()),
+            env: Some(self.environment(config)),
             user: Some(if config.system.user.rootless.enabled {
                 format!(
                     "{}:{}",

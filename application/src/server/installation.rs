@@ -105,7 +105,13 @@ async fn container_config(
         ]),
         hostname: Some("installer".to_string()),
         image: Some(script.container_image.clone()),
-        env: Some(server.configuration.read().await.environment()),
+        env: Some(
+            server
+                .configuration
+                .read()
+                .await
+                .environment(&server.config),
+        ),
         labels: Some(labels),
         attach_stdin: Some(true),
         attach_stdout: Some(true),
@@ -220,7 +226,11 @@ pub async fn install_server(
         server.installing.store(false, Ordering::SeqCst);
         server.installation_script.write().await.take();
 
-        let environment = server.configuration.read().await.environment();
+        let environment = server
+            .configuration
+            .read()
+            .await
+            .environment(&server.config);
         if let Some(container_id) = container_id.lock().await.take() {
             if let Some(script) = container_script.lock().await.take() {
                 if let Err(err) =
@@ -522,7 +532,11 @@ pub async fn attach_install_container(
         server.installing.store(false, Ordering::SeqCst);
         server.installation_script.write().await.take();
 
-        let environment = server.configuration.read().await.environment();
+        let environment = server
+            .configuration
+            .read()
+            .await
+            .environment(&server.config);
         if let Some(container_id) = container_id.lock().await.take() {
             if let Err(err) = cleanup_container(
                 server,

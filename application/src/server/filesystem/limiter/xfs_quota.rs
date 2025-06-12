@@ -124,12 +124,6 @@ async fn get_mount_point(path: &Path) -> Result<PathBuf, std::io::Error> {
 
     let mount_point = lines[1].trim();
 
-    tracing::debug!(
-        path = %path.display(),
-        mount_point = %mount_point,
-        "determined mount point for xfs disk limiter"
-    );
-
     Ok(PathBuf::from(mount_point))
 }
 

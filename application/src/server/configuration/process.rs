@@ -26,6 +26,7 @@ pub struct ServerConfigurationFileReplacement {
 pub struct ServerConfigurationFile {
     pub file: String,
     pub parser: ServerConfigurationFileParser,
+    #[serde(default)]
     pub replace: Vec<ServerConfigurationFileReplacement>,
 }
 
@@ -139,6 +140,7 @@ nestify::nest! {
             pub value: Option<String>,
         },
 
+        #[serde(default)]
         pub configs: Vec<ServerConfigurationFile>,
     }
 }
