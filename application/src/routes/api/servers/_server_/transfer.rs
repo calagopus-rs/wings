@@ -35,7 +35,8 @@ mod post {
         server
             .transferring
             .store(true, std::sync::atomic::Ordering::SeqCst);
-        let mut transfer = crate::server::transfer::OutgoingServerTransfer::new(&server);
+        let mut transfer =
+            crate::server::transfer::OutgoingServerTransfer::new(&server, &state.server_manager);
 
         if transfer.start(&state.docker, data.url, data.token).is_ok() {
             server.outgoing_transfer.write().await.replace(transfer);

@@ -11,14 +11,16 @@ pub struct OutgoingServerTransfer {
     pub bytes_archived: Arc<AtomicU64>,
 
     server: super::Server,
+    manager: Arc<super::manager::Manager>,
     task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl OutgoingServerTransfer {
-    pub fn new(server: &super::Server) -> Self {
+    pub fn new(server: &super::Server, manager: &Arc<super::manager::Manager>) -> Self {
         Self {
             bytes_archived: Arc::new(AtomicU64::new(0)),
             server: server.clone(),
+            manager: Arc::clone(manager),
             task: None,
         }
     }
@@ -64,7 +66,9 @@ impl OutgoingServerTransfer {
         token: String,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let client = Arc::clone(client);
+        let runtime = tokio::runtime::Handle::current();
         let bytes_archived = Arc::clone(&self.bytes_archived);
+        let manager = Arc::clone(&self.manager);
         let server = self.server.clone();
 
         tracing::info!(
@@ -263,6 +267,8 @@ impl OutgoingServerTransfer {
                     &["completed".to_string()],
                 ))
                 .ok();
+
+            runtime.block_on(manager.delete_server(&server));
 
             tracing::info!(
                 server = %server.uuid,
