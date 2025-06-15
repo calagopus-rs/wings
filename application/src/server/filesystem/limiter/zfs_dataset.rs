@@ -210,15 +210,16 @@ pub async fn update_disk_limit(
         }
     };
 
-    let limit_arg = if limit == 0 {
-        "none".to_string()
-    } else {
-        format!("{}M", limit / 1024 / 1024)
-    };
-
     let output = Command::new("zfs")
         .arg("set")
-        .arg(format!("refquota={}", limit_arg))
+        .arg(format!(
+            "refquota={}",
+            if limit == 0 {
+                "none".to_string()
+            } else {
+                format!("{}M", limit / 1024 / 1024)
+            }
+        ))
         .arg(&dataset_name)
         .output()
         .await?;

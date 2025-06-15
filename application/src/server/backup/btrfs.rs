@@ -68,20 +68,31 @@ pub async fn create_backup(
         .await?;
 
     let mut generation = None;
+    let mut uuid = None;
     if output.status.success() {
         let output_str = String::from_utf8_lossy(&output.stdout);
         for line in output_str.lines() {
             let mut whitespace = line.split_whitespace();
 
             if let Some(label) = line.split_whitespace().next() {
-                if label == "Generation:" {
-                    if let Some(parsed_generation) = whitespace.next() {
-                        if let Ok(parsed_generation) = parsed_generation.parse::<u64>() {
-                            generation = Some(parsed_generation);
-                        }
+                match label {
+                    "Generation:" => {
+                        if let Some(parsed_generation) = whitespace.next() {
+                            if let Ok(parsed_generation) = parsed_generation.parse::<u64>() {
+                                generation = Some(parsed_generation);
+                            }
 
-                        break;
+                            break;
+                        }
                     }
+                    "UUID:" => {
+                        if let Some(parsed_uuid) = whitespace.next() {
+                            if let Ok(parsed_uuid) = uuid::Uuid::parse_str(parsed_uuid) {
+                                uuid = Some(parsed_uuid);
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
@@ -115,7 +126,11 @@ pub async fn create_backup(
     .await?;
 
     Ok(RawServerBackup {
-        checksum: format!("generation-{}", generation.unwrap_or(0)),
+        checksum: format!(
+            "{}-{}",
+            generation.unwrap_or_default(),
+            uuid.unwrap_or_default()
+        ),
         checksum_type: "btrfs-subvolume".to_string(),
         size: total_size,
         successful: true,

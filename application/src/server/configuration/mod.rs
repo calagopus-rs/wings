@@ -266,10 +266,13 @@ impl ServerConfiguration {
         let mut environment = self.environment.clone();
         environment.reserve(5);
 
-        environment.insert(
-            "TZ".to_string(),
-            serde_json::Value::String(config.system.timezone.clone()),
-        );
+        if !environment.contains_key("TZ") {
+            environment.insert(
+                "TZ".to_string(),
+                serde_json::Value::String(config.system.timezone.clone()),
+            );
+        }
+
         environment.insert(
             "STARTUP".to_string(),
             serde_json::Value::from(self.invocation.clone()),

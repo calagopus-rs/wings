@@ -3,7 +3,13 @@ use axum::{extract::ConnectInfo, http::HeaderMap};
 use serde::{Deserialize, Serialize};
 use serde_default::DefaultFromSerde;
 use std::{
-    cell::UnsafeCell, collections::{BTreeMap, HashMap}, fs::File, io::BufRead, ops::{Deref, DerefMut}, os::unix::fs::PermissionsExt, sync::Arc
+    cell::UnsafeCell,
+    collections::{BTreeMap, HashMap},
+    fs::File,
+    io::BufRead,
+    ops::{Deref, DerefMut},
+    os::unix::fs::PermissionsExt,
+    sync::Arc,
 };
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::fmt::writer::MakeWriterExt;

@@ -320,9 +320,10 @@ pub fn tar_recursive_convert_entries(
             entry_header.set_entry_type(tar::EntryType::Regular);
             entry_header.set_size(file.size_real);
 
+            let size_real = file.size_real as usize;
             let reader = FixedReader::new(
-                Box::new(repository.entry_reader(Entry::File(file.clone())).unwrap()),
-                file.size_real as usize,
+                Box::new(repository.entry_reader(Entry::File(file)).unwrap()),
+                size_real,
             );
 
             if archive
@@ -384,7 +385,7 @@ pub async fn list_backups(
     let repository = get_repository(server).await;
     let mut backups = Vec::new();
 
-    for archive in repository.list_archives()? {
+    for archive in tokio::task::spawn_blocking(move || repository.list_archives()).await?? {
         if let Ok(uuid) = uuid::Uuid::parse_str(&archive) {
             backups.push(uuid);
         }
