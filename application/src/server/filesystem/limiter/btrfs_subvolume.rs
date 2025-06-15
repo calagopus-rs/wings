@@ -229,11 +229,7 @@ pub async fn destroy(
         .await?;
 
     if !output.status.success() {
-        return Err(std::io::Error::other(format!(
-            "Failed to destroy Btrfs subvolume for {}: {}",
-            filesystem.base_path.display(),
-            String::from_utf8_lossy(&output.stderr)
-        )));
+        tokio::fs::remove_dir_all(&filesystem.base_path).await?;
     }
 
     DISK_USAGE
