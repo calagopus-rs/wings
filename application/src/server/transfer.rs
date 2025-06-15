@@ -267,14 +267,12 @@ impl OutgoingServerTransfer {
                 ))
                 .ok();
 
+            manager.delete_server(&server).await;
+
             tracing::info!(
                 server = %server.uuid,
                 "finished outgoing server transfer"
             );
-
-            tokio::spawn(async move {
-                manager.delete_server(&server).await;
-            });
         }));
 
         if let Some(old_task) = old_task {
