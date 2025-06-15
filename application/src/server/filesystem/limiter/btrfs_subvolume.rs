@@ -212,11 +212,12 @@ pub async fn destroy(
             .await?;
 
         if !output.status.success() {
-            return Err(std::io::Error::other(format!(
-                "Failed to destroy Btrfs qgroup for {}: {}",
-                filesystem.base_path.display(),
+            tracing::error!(
+                path = %filesystem.base_path.display(),
+                qgroup = %usage.1,
+                "failed to destroy btrfs qgroup: {}",
                 String::from_utf8_lossy(&output.stderr)
-            )));
+            );
         }
     }
 
