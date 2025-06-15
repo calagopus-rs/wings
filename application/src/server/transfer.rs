@@ -66,7 +66,6 @@ impl OutgoingServerTransfer {
         token: String,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let client = Arc::clone(client);
-        let runtime = tokio::runtime::Handle::current();
         let bytes_archived = Arc::clone(&self.bytes_archived);
         let manager = Arc::clone(&self.manager);
         let server = self.server.clone();
@@ -268,12 +267,14 @@ impl OutgoingServerTransfer {
                 ))
                 .ok();
 
-            runtime.block_on(manager.delete_server(&server));
-
             tracing::info!(
                 server = %server.uuid,
                 "finished outgoing server transfer"
             );
+
+            tokio::spawn(async move {
+                manager.delete_server(&server).await;
+            });
         }));
 
         if let Some(old_task) = old_task {
