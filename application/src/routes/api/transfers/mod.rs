@@ -107,6 +107,8 @@ mod post {
             .transferring
             .store(true, std::sync::atomic::Ordering::SeqCst);
 
+        let filesystem = server.filesystem.base_dir().await.unwrap();
+
         let runtime = tokio::runtime::Handle::current();
         server
             .clone()
@@ -135,24 +137,18 @@ mod post {
                                 continue;
                             }
 
-                            let destination_path = server.filesystem.base_path.join(path);
-                            if !server.filesystem.is_safe_path_sync(&destination_path) {
-                                continue;
-                            }
-
                             let header = entry.header();
                             match header.entry_type() {
                                 tar::EntryType::Directory => {
-                                    std::fs::create_dir_all(&destination_path).unwrap();
+                                    filesystem.create_dir_all(&path).unwrap();
                                 }
                                 tar::EntryType::Regular => {
-                                    std::fs::create_dir_all(destination_path.parent().unwrap())
-                                        .unwrap();
+                                    filesystem.create_dir_all(path.parent().unwrap()).unwrap();
 
                                     let mut writer =
                                         crate::server::filesystem::writer::FileSystemWriter::new(
                                             server.clone(),
-                                            destination_path,
+                                            path.to_path_buf(),
                                             header.mode().map(Permissions::from_mode).ok(),
                                             header
                                                 .mtime()
