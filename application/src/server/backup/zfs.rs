@@ -191,10 +191,10 @@ pub async fn restore_backup(
                         std::io::copy(&mut file, &mut writer).unwrap();
                         writer.flush().unwrap();
                     } else if metadata.is_dir() {
-                        filesystem.create_dir_all(&destination_path).ok();
+                        filesystem.create_dir_all(destination_path).ok();
                         filesystem
                             .set_permissions(
-                                &destination_path,
+                                destination_path,
                                 cap_std::fs::Permissions::from_std(metadata.permissions()),
                             )
                             .ok();

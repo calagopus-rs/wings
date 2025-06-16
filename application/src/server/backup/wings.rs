@@ -15,8 +15,18 @@ use std::{
 use tokio::io::AsyncReadExt;
 
 #[inline]
+fn get_tar_file_name(server: &crate::server::Server, uuid: uuid::Uuid) -> PathBuf {
+    Path::new(&server.config.system.backup_directory).join(format!("{}.tar", uuid))
+}
+
+#[inline]
 fn get_tar_gz_file_name(server: &crate::server::Server, uuid: uuid::Uuid) -> PathBuf {
     Path::new(&server.config.system.backup_directory).join(format!("{}.tar.gz", uuid))
+}
+
+#[inline]
+fn get_tar_zstd_file_name(server: &crate::server::Server, uuid: uuid::Uuid) -> PathBuf {
+    Path::new(&server.config.system.backup_directory).join(format!("{}.tar.zst", uuid))
 }
 
 #[inline]
@@ -27,7 +37,11 @@ fn get_zip_file_name(server: &crate::server::Server, uuid: uuid::Uuid) -> PathBu
 #[inline]
 fn get_file_name(server: &crate::server::Server, uuid: uuid::Uuid) -> PathBuf {
     match server.config.system.backups.wings.archive_format {
+        crate::config::SystemBackupsWingsArchiveFormat::Tar => get_tar_file_name(server, uuid),
         crate::config::SystemBackupsWingsArchiveFormat::TarGz => get_tar_gz_file_name(server, uuid),
+        crate::config::SystemBackupsWingsArchiveFormat::TarZstd => {
+            get_tar_zstd_file_name(server, uuid)
+        }
         crate::config::SystemBackupsWingsArchiveFormat::Zip => get_zip_file_name(server, uuid),
     }
 }
@@ -37,10 +51,26 @@ async fn get_first_file_name(
     server: &crate::server::Server,
     uuid: uuid::Uuid,
 ) -> Result<(crate::config::SystemBackupsWingsArchiveFormat, PathBuf), anyhow::Error> {
+    let file_name = get_tar_file_name(server, uuid);
+    if tokio::fs::metadata(&file_name).await.is_ok() {
+        return Ok((
+            crate::config::SystemBackupsWingsArchiveFormat::Tar,
+            file_name,
+        ));
+    }
+
     let file_name = get_tar_gz_file_name(server, uuid);
     if tokio::fs::metadata(&file_name).await.is_ok() {
         return Ok((
             crate::config::SystemBackupsWingsArchiveFormat::TarGz,
+            file_name,
+        ));
+    }
+
+    let file_name = get_tar_zstd_file_name(server, uuid);
+    if tokio::fs::metadata(&file_name).await.is_ok() {
+        return Ok((
+            crate::config::SystemBackupsWingsArchiveFormat::TarZstd,
             file_name,
         ));
     }
@@ -68,11 +98,24 @@ pub async fn create_backup(
     let compression_level = server.config.system.backups.compression_level;
     tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
         match archive_format {
-            crate::config::SystemBackupsWingsArchiveFormat::TarGz => {
-                let mut tar = tar::Builder::new(flate2::write::GzEncoder::new(
-                    writer,
-                    compression_level.flate2_compression_level(),
-                ));
+            crate::config::SystemBackupsWingsArchiveFormat::Tar
+            | crate::config::SystemBackupsWingsArchiveFormat::TarGz
+            | crate::config::SystemBackupsWingsArchiveFormat::TarZstd => {
+                let writer: Box<dyn std::io::Write> = match archive_format {
+                    crate::config::SystemBackupsWingsArchiveFormat::Tar => Box::new(writer),
+                    crate::config::SystemBackupsWingsArchiveFormat::TarGz => {
+                        Box::new(flate2::write::GzEncoder::new(
+                            writer,
+                            compression_level.flate2_compression_level(),
+                        ))
+                    }
+                    crate::config::SystemBackupsWingsArchiveFormat::TarZstd => Box::new(
+                        zstd::Encoder::new(writer, compression_level.zstd_compression_level())
+                            .unwrap(),
+                    ),
+                    _ => unreachable!(),
+                };
+                let mut tar = tar::Builder::new(writer);
 
                 tar.mode(tar::HeaderMode::Complete);
                 tar.follow_symlinks(false);
@@ -213,8 +256,20 @@ pub async fn restore_backup(
         let filesystem = server.filesystem.sync_base_dir()?;
 
         match file_format {
-            crate::config::SystemBackupsWingsArchiveFormat::TarGz => {
-                let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(file));
+            crate::config::SystemBackupsWingsArchiveFormat::Tar
+            | crate::config::SystemBackupsWingsArchiveFormat::TarGz
+            | crate::config::SystemBackupsWingsArchiveFormat::TarZstd => {
+                let reader: Box<dyn std::io::Read> = match file_format {
+                    crate::config::SystemBackupsWingsArchiveFormat::Tar => Box::new(file),
+                    crate::config::SystemBackupsWingsArchiveFormat::TarGz => {
+                        Box::new(flate2::read::GzDecoder::new(file))
+                    }
+                    crate::config::SystemBackupsWingsArchiveFormat::TarZstd => {
+                        Box::new(zstd::Decoder::new(file).unwrap())
+                    }
+                    _ => unreachable!(),
+                };
+                let mut archive = tar::Archive::new(reader);
 
                 for entry in archive.entries()? {
                     let mut entry = entry?;
@@ -338,6 +393,15 @@ pub async fn download_backup(
     let mut headers = HeaderMap::new();
 
     match file_format {
+        crate::config::SystemBackupsWingsArchiveFormat::Tar => {
+            headers.insert(
+                "Content-Disposition",
+                format!("attachment; filename={}.tar", uuid)
+                    .parse()
+                    .unwrap(),
+            );
+            headers.insert("Content-Type", "application/x-tar".parse().unwrap());
+        }
         crate::config::SystemBackupsWingsArchiveFormat::TarGz => {
             headers.insert(
                 "Content-Disposition",
@@ -346,6 +410,15 @@ pub async fn download_backup(
                     .unwrap(),
             );
             headers.insert("Content-Type", "application/gzip".parse().unwrap());
+        }
+        crate::config::SystemBackupsWingsArchiveFormat::TarZstd => {
+            headers.insert(
+                "Content-Disposition",
+                format!("attachment; filename={}.tar.zst", uuid)
+                    .parse()
+                    .unwrap(),
+            );
+            headers.insert("Content-Type", "application/zstd".parse().unwrap());
         }
         crate::config::SystemBackupsWingsArchiveFormat::Zip => {
             headers.insert(
@@ -395,6 +468,8 @@ pub async fn list_backups(
                 .to_str()
                 .unwrap_or_default()
                 .trim_end_matches(".tar.gz")
+                .trim_end_matches(".tar.zst")
+                .trim_end_matches(".tar")
                 .trim_end_matches(".zip"),
         ) {
             backups.push(uuid);

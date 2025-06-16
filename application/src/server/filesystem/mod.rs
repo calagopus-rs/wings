@@ -709,24 +709,6 @@ impl Filesystem {
         self.allocate_in_path_raw(&components, delta).await
     }
 
-    #[inline]
-    pub async fn is_safe_path(&self, path: &Path) -> bool {
-        if let Ok(path) = tokio::fs::canonicalize(path).await {
-            path.starts_with(&self.base_path)
-        } else {
-            Self::resolve_path(path).starts_with(&self.base_path)
-        }
-    }
-
-    #[inline]
-    pub fn is_safe_path_sync(&self, path: &Path) -> bool {
-        if let Ok(path) = path.canonicalize() {
-            path.starts_with(&self.base_path)
-        } else {
-            Self::resolve_path(path).starts_with(&self.base_path)
-        }
-    }
-
     pub async fn truncate_root(&self) {
         self.disk_usage.write().await.clear();
         self.disk_usage_cached.store(0, Ordering::Relaxed);

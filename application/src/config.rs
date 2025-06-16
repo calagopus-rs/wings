@@ -385,8 +385,10 @@ nestify::nest! {
                 pub wings: #[derive(Deserialize, Serialize, DefaultFromSerde)] #[serde(default)] pub struct SystemBackupsWings {
                     #[serde(default)]
                     pub archive_format: #[derive(Clone, Copy, Deserialize, Serialize, Default)] #[serde(rename_all = "snake_case")] pub enum SystemBackupsWingsArchiveFormat {
+                        Tar,
                         #[default]
                         TarGz,
+                        TarZstd,
                         Zip,
                     },
                 },
