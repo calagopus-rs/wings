@@ -298,7 +298,7 @@ impl Archive {
                                     entry.link_name().unwrap_or_default().unwrap_or_default();
 
                                 filesystem
-                                    .symlink(link, &destination_path)
+                                    .symlink(link, destination_path)
                                     .unwrap_or_else(|err| {
                                         tracing::debug!(
                                             "failed to create symlink from archive: {:#?}",

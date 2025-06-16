@@ -130,26 +130,30 @@ pub async fn restore_backup(
     let runtime = tokio::runtime::Handle::current();
     tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
         let archive = repository.get_archive(&uuid.to_string())?;
+        let filesystem = server.filesystem.sync_base_dir()?;
 
         fn recursive_restore(
             runtime: &tokio::runtime::Handle,
             repository: &Arc<ddup_bak::repository::Repository>,
+            filesystem: &Arc<cap_std::fs::Dir>,
             entry: Entry,
             path: &Path,
             server: &crate::server::Server,
-        ) {
+        ) -> Result<(), anyhow::Error> {
             let path = path.join(entry.name());
 
-            let destination_path = server.filesystem.base_path.join(&path);
-            if !server.filesystem.is_safe_path_sync(&destination_path) {
-                return;
+            if server
+                .filesystem
+                .is_ignored_sync(&path, matches!(entry, Entry::Directory(_)))
+            {
+                return Ok(());
             }
 
             match entry {
                 Entry::File(file) => {
                     runtime.block_on(server.log_daemon(format!("(restoring): {}", path.display())));
 
-                    if let Some(parent) = destination_path.parent() {
+                    if let Some(parent) = path.parent() {
                         if !parent.exists() {
                             std::fs::create_dir_all(parent).unwrap();
                         }
@@ -157,37 +161,46 @@ pub async fn restore_backup(
 
                     let mut writer = crate::server::filesystem::writer::FileSystemWriter::new(
                         server.clone(),
-                        destination_path,
+                        path,
                         Some(file.mode.into()),
                         Some(file.mtime),
-                    )
-                    .unwrap();
+                    )?;
 
-                    repository
-                        .read_entry_content(Entry::File(file), &mut writer)
-                        .unwrap();
-                    writer.flush().unwrap();
+                    repository.read_entry_content(Entry::File(file), &mut writer)?;
+                    writer.flush()?;
                 }
                 Entry::Directory(directory) => {
-                    std::fs::create_dir_all(&destination_path).unwrap();
-                    std::fs::set_permissions(&destination_path, directory.mode.into()).unwrap();
-                    std::os::unix::fs::chown(
-                        &destination_path,
-                        Some(directory.owner.0),
-                        Some(directory.owner.1),
-                    )
-                    .unwrap();
+                    filesystem.create_dir_all(&path)?;
+                    filesystem.set_permissions(
+                        &path,
+                        cap_std::fs::Permissions::from_std(directory.mode.into()),
+                    )?;
 
                     for entry in directory.entries {
-                        recursive_restore(runtime, repository, entry, &path, server);
+                        recursive_restore(runtime, repository, filesystem, entry, &path, server)?;
                     }
                 }
-                Entry::Symlink(_) => {}
+                Entry::Symlink(symlink) => {
+                    filesystem
+                        .symlink(&symlink.target, &path)
+                        .unwrap_or_else(|err| {
+                            tracing::debug!("failed to create symlink from backup: {:#?}", err);
+                        });
+                }
             }
+
+            Ok(())
         }
 
         for entry in archive.into_entries() {
-            recursive_restore(&runtime, &repository, entry, Path::new("."), &server);
+            recursive_restore(
+                &runtime,
+                &repository,
+                &filesystem,
+                entry,
+                Path::new("."),
+                &server,
+            )?;
         }
 
         Ok(())

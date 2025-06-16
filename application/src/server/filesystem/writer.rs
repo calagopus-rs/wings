@@ -3,7 +3,6 @@ use std::{
     io::{BufWriter, Seek, SeekFrom, Write},
     path::PathBuf,
     pin::Pin,
-    sync::Arc,
     task::{Context, Poll},
     time::SystemTime,
 };
@@ -26,12 +25,7 @@ impl FileSystemWriter {
         permissions: Option<Permissions>,
         modified: Option<SystemTime>,
     ) -> Result<Self, anyhow::Error> {
-        let filesystem = match &*server.filesystem.base_dir.blocking_read() {
-            Some(fs) => Arc::clone(fs),
-            None => {
-                return Err(anyhow::anyhow!("Base directory not initialized"));
-            }
-        };
+        let filesystem = server.filesystem.sync_base_dir()?;
 
         let parent_path = destination.parent().ok_or_else(|| {
             std::io::Error::new(

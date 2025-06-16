@@ -6,7 +6,6 @@ use axum::{
 use ignore::{WalkBuilder, WalkState, overrides::OverrideBuilder};
 use std::{
     io::Write,
-    os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
 };
 use tokio::process::Command;
@@ -168,6 +167,7 @@ pub async fn restore_backup(
                 let server = server.clone();
                 let runtime = runtime.clone();
                 let subvolume_path = subvolume_path.clone();
+                let filesystem = server.filesystem.sync_base_dir().unwrap();
 
                 Box::new(move |entry| {
                     let entry = match entry {
@@ -185,24 +185,20 @@ pub async fn restore_backup(
                         return WalkState::Continue;
                     }
 
-                    let destination_path = server
-                        .filesystem
-                        .base_path
-                        .join(path.strip_prefix(&subvolume_path).unwrap_or(path));
-                    if !server.filesystem.is_safe_path_sync(&destination_path) {
-                        return WalkState::Continue;
-                    }
+                    let destination_path = path.strip_prefix(&subvolume_path).unwrap_or(path);
 
                     if metadata.is_file() {
                         runtime.block_on(
                             server.log_daemon(format!("(restoring): {}", path.display())),
                         );
 
-                        std::fs::create_dir_all(destination_path.parent().unwrap()).ok();
+                        filesystem
+                            .create_dir_all(destination_path.parent().unwrap())
+                            .ok();
 
                         let mut writer = crate::server::filesystem::writer::FileSystemWriter::new(
                             server.clone(),
-                            destination_path,
+                            destination_path.to_path_buf(),
                             Some(metadata.permissions()),
                             metadata.modified().ok(),
                         )
@@ -212,29 +208,18 @@ pub async fn restore_backup(
                         std::io::copy(&mut file, &mut writer).unwrap();
                         writer.flush().unwrap();
                     } else if metadata.is_dir() {
-                        std::fs::create_dir_all(&destination_path).ok();
-                        std::fs::set_permissions(&destination_path, metadata.permissions()).ok();
-                        std::os::unix::fs::chown(
-                            &destination_path,
-                            Some(metadata.uid()),
-                            Some(metadata.gid()),
-                        )
-                        .ok();
-                    } else if metadata.is_symlink() {
-                        if let Ok(target) = std::fs::read_link(path) {
-                            let destination_path = &destination_path;
-                            if !server.filesystem.is_safe_path_sync(destination_path) {
-                                return WalkState::Continue;
-                            }
-
-                            std::os::unix::fs::symlink(target, destination_path).ok();
-                            std::fs::set_permissions(destination_path, metadata.permissions()).ok();
-                            std::os::unix::fs::chown(
-                                destination_path,
-                                Some(metadata.uid()),
-                                Some(metadata.gid()),
+                        filesystem.create_dir_all(&destination_path).ok();
+                        filesystem
+                            .set_permissions(
+                                &destination_path,
+                                cap_std::fs::Permissions::from_std(metadata.permissions()),
                             )
                             .ok();
+                    } else if metadata.is_symlink() {
+                        if let Ok(target) = std::fs::read_link(path) {
+                            filesystem.symlink(target, path).unwrap_or_else(|err| {
+                                tracing::debug!("failed to create symlink from backup: {:#?}", err);
+                            });
                         }
                     }
 

@@ -210,51 +210,49 @@ pub async fn restore_backup(
     let server = server.clone();
     tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
         let runtime = tokio::runtime::Handle::current();
+        let filesystem = server.filesystem.sync_base_dir()?;
 
         match file_format {
             crate::config::SystemBackupsWingsArchiveFormat::TarGz => {
                 let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(file));
 
-                for entry in archive.entries().unwrap() {
-                    let mut entry = entry.unwrap();
-                    let path = entry.path().unwrap();
+                for entry in archive.entries()? {
+                    let mut entry = entry?;
+                    let path = entry.path()?;
 
                     if path.is_absolute() {
                         continue;
                     }
 
-                    let destination_path = server.filesystem.base_path.join(&path);
-                    if !server.filesystem.is_safe_path_sync(&destination_path) {
+                    if server.filesystem.is_ignored_sync(
+                        &path,
+                        entry.header().entry_type() == tar::EntryType::Directory,
+                    ) {
                         continue;
                     }
 
                     let header = entry.header();
                     match header.entry_type() {
                         tar::EntryType::Directory => {
-                            std::fs::create_dir_all(&destination_path).unwrap();
-                            std::fs::set_permissions(
-                                &destination_path,
-                                Permissions::from_mode(header.mode().unwrap_or(0o755)),
-                            )
-                            .unwrap();
-                            std::os::unix::fs::chown(
-                                &destination_path,
-                                header.uid().map(|u| u as u32).ok(),
-                                header.gid().map(|g| g as u32).ok(),
-                            )
-                            .unwrap();
+                            filesystem.create_dir_all(&path)?;
+                            filesystem.set_permissions(
+                                &path,
+                                cap_std::fs::Permissions::from_std(Permissions::from_mode(
+                                    header.mode().unwrap_or(0o755),
+                                )),
+                            )?;
                         }
                         tar::EntryType::Regular => {
                             runtime.block_on(
                                 server.log_daemon(format!("(restoring): {}", path.display())),
                             );
 
-                            std::fs::create_dir_all(destination_path.parent().unwrap()).unwrap();
+                            filesystem.create_dir_all(path.parent().unwrap())?;
 
                             let mut writer =
                                 crate::server::filesystem::writer::FileSystemWriter::new(
                                     server.clone(),
-                                    destination_path,
+                                    path.to_path_buf(),
                                     Some(Permissions::from_mode(header.mode().unwrap_or(0o644))),
                                     header
                                         .mtime()
@@ -263,11 +261,20 @@ pub async fn restore_backup(
                                                 + std::time::Duration::from_secs(t)
                                         })
                                         .ok(),
-                                )
-                                .unwrap();
+                                )?;
 
-                            std::io::copy(&mut entry, &mut writer).unwrap();
-                            writer.flush().unwrap();
+                            std::io::copy(&mut entry, &mut writer)?;
+                            writer.flush()?;
+                        }
+                        tar::EntryType::Symlink => {
+                            let link = entry.link_name().unwrap_or_default().unwrap_or_default();
+
+                            filesystem.symlink(link, path).unwrap_or_else(|err| {
+                                tracing::debug!(
+                                    "failed to create symlink from archive: {:#?}",
+                                    err
+                                );
+                            });
                         }
                         _ => {}
                     }
@@ -287,30 +294,22 @@ pub async fn restore_backup(
                         continue;
                     }
 
-                    let destination_path = server.filesystem.base_path.join(&path);
-                    if !server.filesystem.is_safe_path_sync(&destination_path) {
-                        continue;
-                    }
-
-                    if server
-                        .filesystem
-                        .is_ignored_sync(&destination_path, entry.is_dir())
-                    {
+                    if server.filesystem.is_ignored_sync(&path, entry.is_dir()) {
                         continue;
                     }
 
                     if entry.is_dir() {
-                        std::fs::create_dir_all(&destination_path)?;
+                        filesystem.create_dir_all(&path)?;
                     } else {
                         runtime.block_on(
                             server.log_daemon(format!("(restoring): {}", path.display())),
                         );
 
-                        std::fs::create_dir_all(destination_path.parent().unwrap())?;
+                        filesystem.create_dir_all(path.parent().unwrap())?;
 
                         let mut writer = crate::server::filesystem::writer::FileSystemWriter::new(
                             server.clone(),
-                            destination_path,
+                            path,
                             entry.unix_mode().map(Permissions::from_mode),
                             None,
                         )?;
