@@ -8,14 +8,17 @@ use utoipa_axum::{
 mod _server_;
 
 mod post {
-    use crate::routes::{ApiError, GetState};
+    use crate::{
+        routes::{ApiError, GetState},
+        server::transfer::ArchiveFormat,
+    };
     use axum::{
         extract::Multipart,
         http::{HeaderMap, StatusCode},
     };
     use futures::TryStreamExt;
     use serde::Serialize;
-    use std::{fs::Permissions, io::Write, os::unix::fs::PermissionsExt};
+    use std::{fs::Permissions, io::Write, os::unix::fs::PermissionsExt, str::FromStr};
     use tokio_util::io::SyncIoBridge;
     use utoipa::ToSchema;
 
@@ -118,6 +121,7 @@ mod post {
             .replace(tokio::task::spawn_blocking(move || {
                 while let Ok(Some(field)) = runtime.block_on(multipart.next_field()) {
                     if let Some("archive") = field.name() {
+                        let file_name = field.file_name().unwrap_or("archive.tar.gz").to_string();
                         let sync_reader = SyncIoBridge::new(tokio_util::io::StreamReader::new(
                             field.into_stream().map_err(|err| {
                                 std::io::Error::other(format!(
@@ -126,7 +130,16 @@ mod post {
                                 ))
                             }),
                         ));
-                        let reader = flate2::read::GzDecoder::new(sync_reader);
+                        let reader: Box<dyn std::io::Read> =
+                            match ArchiveFormat::from_str(&file_name).unwrap_or(ArchiveFormat::TarGz) {
+                                ArchiveFormat::Tar => Box::new(sync_reader),
+                                ArchiveFormat::TarGz => {
+                                    Box::new(flate2::read::GzDecoder::new(sync_reader))
+                                }
+                                ArchiveFormat::TarZstd => {
+                                    Box::new(zstd::Decoder::new(sync_reader).unwrap())
+                                }
+                            };
                         let mut archive = tar::Archive::new(reader);
 
                         for entry in archive.entries().unwrap() {
@@ -160,8 +173,40 @@ mod post {
                                         )
                                         .unwrap();
 
-                                    std::io::copy(&mut entry, &mut writer).unwrap();
-                                    writer.flush().unwrap();
+                                    if let Err(err) = std::io::copy(&mut entry, &mut writer) {
+                                        tracing::error!(
+                                            "failed to copy file from transfer archive: {:#?}",
+                                            err
+                                        );
+                                    }
+                                    if let Err(err) = writer.flush() {
+                                        tracing::error!(
+                                            "failed to flush file from transfer archive: {:#?}",
+                                            err
+                                        );
+                                    }
+                                }
+                                tar::EntryType::Symlink => {
+                                    let link = match entry.link_name() {
+                                        Ok(link) => link.unwrap_or_default(),
+                                        Err(err) => {
+                                            tracing::error!(
+                                                "failed to read symlink from transfer archive: {:#?}",
+                                                err
+                                            );
+                                            continue;
+                                        }
+                                    };
+
+                                    if let Err(err) = filesystem.symlink(
+                                        link,
+                                        &path,
+                                    ) {
+                                        tracing::error!(
+                                            "failed to create symlink from transfer archive: {:#?}",
+                                            err
+                                        );
+                                    }
                                 }
                                 _ => {}
                             }

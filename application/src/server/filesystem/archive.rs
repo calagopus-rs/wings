@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::{
     fs::Permissions,
     io::{SeekFrom, Write},
@@ -10,6 +11,7 @@ use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader},
 };
 use tokio_util::io::SyncIoBridge;
+use utoipa::ToSchema;
 
 #[derive(Clone, Copy)]
 pub enum CompressionType {
@@ -19,6 +21,39 @@ pub enum CompressionType {
     Bz2,
     Lz4,
     Zstd,
+}
+
+#[derive(Clone, Copy, ToSchema, Deserialize, Serialize, Default)]
+#[serde(rename_all = "snake_case")]
+#[schema(rename_all = "snake_case")]
+pub enum CompressionLevel {
+    #[default]
+    BestSpeed,
+    GoodSpeed,
+    GoodCompression,
+    BestCompression,
+}
+
+impl CompressionLevel {
+    #[inline]
+    pub fn flate2_compression_level(&self) -> flate2::Compression {
+        match self {
+            CompressionLevel::BestSpeed => flate2::Compression::new(1),
+            CompressionLevel::GoodSpeed => flate2::Compression::new(3),
+            CompressionLevel::GoodCompression => flate2::Compression::new(6),
+            CompressionLevel::BestCompression => flate2::Compression::new(9),
+        }
+    }
+
+    #[inline]
+    pub fn zstd_compression_level(&self) -> i32 {
+        match self {
+            CompressionLevel::BestSpeed => 1,
+            CompressionLevel::GoodSpeed => 7,
+            CompressionLevel::GoodCompression => 13,
+            CompressionLevel::BestCompression => 22,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -236,12 +271,10 @@ impl Archive {
 
                         match header.entry_type() {
                             tar::EntryType::Directory => {
-                                filesystem.create_dir_all(&destination_path).unwrap();
+                                filesystem.create_dir_all(&destination_path)?;
                             }
                             tar::EntryType::Regular => {
-                                filesystem
-                                    .create_dir_all(destination_path.parent().unwrap())
-                                    .unwrap();
+                                filesystem.create_dir_all(destination_path.parent().unwrap())?;
 
                                 let mut writer = super::writer::FileSystemWriter::new(
                                     self.server.clone(),
@@ -257,8 +290,21 @@ impl Archive {
                                 )
                                 .unwrap();
 
-                                std::io::copy(&mut entry, &mut writer).unwrap();
+                                std::io::copy(&mut entry, &mut writer)?;
                                 writer.flush().unwrap();
+                            }
+                            tar::EntryType::Symlink => {
+                                let link =
+                                    entry.link_name().unwrap_or_default().unwrap_or_default();
+
+                                filesystem
+                                    .symlink(link, &destination_path)
+                                    .unwrap_or_else(|err| {
+                                        tracing::debug!(
+                                            "failed to create symlink from archive: {:#?}",
+                                            err
+                                        );
+                                    });
                             }
                             _ => {}
                         }
@@ -293,9 +339,7 @@ impl Archive {
                         if entry.is_dir() {
                             filesystem.create_dir_all(&destination_path)?;
                         } else {
-                            filesystem
-                                .create_dir_all(destination_path.parent().unwrap())
-                                .unwrap();
+                            filesystem.create_dir_all(destination_path.parent().unwrap())?;
 
                             let mut writer = super::writer::FileSystemWriter::new(
                                 self.server.clone(),

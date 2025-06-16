@@ -108,7 +108,7 @@ pub async fn create_backup(
         move || -> Result<(), anyhow::Error> {
             let mut tar = tar::Builder::new(flate2::write::GzEncoder::new(
                 writer,
-                flate2::Compression::new(compression_level.into()),
+                compression_level.flate2_compression_level(),
             ));
 
             tar.mode(tar::HeaderMode::Complete);

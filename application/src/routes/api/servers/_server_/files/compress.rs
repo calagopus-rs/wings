@@ -73,7 +73,12 @@ mod post {
 
                 let mut archive = tar::Builder::new(flate2::write::GzEncoder::new(
                     writer,
-                    flate2::Compression::new(state.config.system.backups.compression_level.into()),
+                    state
+                        .config
+                        .system
+                        .backups
+                        .compression_level
+                        .flate2_compression_level(),
                 ));
 
                 for file in data.files {

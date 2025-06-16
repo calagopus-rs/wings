@@ -1260,6 +1260,7 @@ dependencies = [
  "uuid",
  "wings-rs",
  "zip",
+ "zstd",
 ]
 
 [[package]]
@@ -4702,7 +4703,7 @@ checksum = "271414315aff87387382ec3d271b52d7ae78726f5d44ac98b4f4030c91880486"
 
 [[package]]
 name = "wings-rs"
-version = "0.11.4"
+version = "0.11.5"
 dependencies = [
  "ansi_term",
  "anyhow",
@@ -4711,6 +4712,7 @@ dependencies = [
  "axum-extra",
  "axum-server",
  "bollard",
+ "brotli",
  "cap-std",
  "chrono",
  "clap",
@@ -4754,6 +4756,7 @@ dependencies = [
  "utoipa-axum",
  "uuid",
  "zip",
+ "zstd",
 ]
 
 [[package]]

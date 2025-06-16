@@ -28,4 +28,5 @@ uuid = { workspace = true }
 tar = { workspace = true }
 zip = { workspace = true }
 flate2 = { workspace = true }
+zstd = { workspace = true }
 async-compression = { workspace = true }

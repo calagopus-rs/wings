@@ -1,6 +1,6 @@
 [package]
 name = "wings-rs"
-version = "0.11.4"
+version = "0.11.5"
 edition = "2024"
 
 [dependencies]
@@ -32,6 +32,7 @@ uuid = { workspace = true }
 tar = { workspace = true }
 zip = { workspace = true }
 flate2 = { workspace = true }
+zstd = { workspace = true }
 async-compression = { workspace = true }
 jwt = "0.16.0"
 hmac = { version = "0.12.1", features = ["std"] }
@@ -54,3 +55,4 @@ libloading = "0.8.8"
 sysinfo = "0.35.2"
 crc32fast = "1.4.2"
 cap-std = "3.4.4"
+brotli = "8.0.1"

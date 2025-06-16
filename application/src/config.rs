@@ -371,12 +371,7 @@ nestify::nest! {
                 /// MiB/s
                 pub write_limit: u64,
                 #[serde(default)]
-                pub compression_level: #[derive(Clone, Copy, Deserialize, Serialize, Default)] #[serde(rename_all = "snake_case")] pub enum SystemBackupsCompressionLevel {
-                    None,
-                    #[default]
-                    BestSpeed,
-                    BestCompression,
-                },
+                pub compression_level: crate::server::filesystem::archive::CompressionLevel,
 
                 #[serde(default)]
                 pub mounting: #[derive(Deserialize, Serialize, DefaultFromSerde)] #[serde(default)] pub struct SystemBackupsMounting {
@@ -595,16 +590,6 @@ impl DockerOverhead {
         let multiplier = self.get_mutiplier(memory);
 
         (memory as f64 * multiplier) as i64
-    }
-}
-
-impl From<SystemBackupsCompressionLevel> for u32 {
-    fn from(value: SystemBackupsCompressionLevel) -> Self {
-        match value {
-            SystemBackupsCompressionLevel::None => 0,
-            SystemBackupsCompressionLevel::BestSpeed => 1,
-            SystemBackupsCompressionLevel::BestCompression => 9,
-        }
     }
 }
 

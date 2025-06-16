@@ -71,7 +71,7 @@ pub async fn create_backup(
             crate::config::SystemBackupsWingsArchiveFormat::TarGz => {
                 let mut tar = tar::Builder::new(flate2::write::GzEncoder::new(
                     writer,
-                    flate2::Compression::new(compression_level.into()),
+                    compression_level.flate2_compression_level(),
                 ));
 
                 tar.mode(tar::HeaderMode::Complete);
@@ -119,7 +119,9 @@ pub async fn create_backup(
                         if metadata.is_dir() {
                             let mut options: zip::write::FileOptions<'_, ()> =
                                 zip::write::FileOptions::default()
-                                    .compression_level(Some(u32::from(compression_level) as i64))
+                                    .compression_level(Some(
+                                        compression_level.flate2_compression_level().level() as i64,
+                                    ))
                                     .unix_permissions(metadata.permissions().mode());
 
                             if let Ok(mtime) = metadata.modified() {
@@ -141,7 +143,9 @@ pub async fn create_backup(
                         } else if metadata.is_file() {
                             let mut options: zip::write::FileOptions<'_, ()> =
                                 zip::write::FileOptions::default()
-                                    .compression_level(Some(u32::from(compression_level) as i64))
+                                    .compression_level(Some(
+                                        compression_level.flate2_compression_level().level() as i64,
+                                    ))
                                     .unix_permissions(metadata.permissions().mode());
 
                             if let Ok(mtime) = metadata.modified() {

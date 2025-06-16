@@ -11,6 +11,10 @@ mod post {
     pub struct Payload {
         url: String,
         token: String,
+
+        #[serde(default)]
+        archive_format: crate::server::transfer::ArchiveFormat,
+        compression_level: Option<crate::server::filesystem::archive::CompressionLevel>,
     }
 
     #[derive(ToSchema, Serialize)]
@@ -35,7 +39,12 @@ mod post {
         server
             .transferring
             .store(true, std::sync::atomic::Ordering::SeqCst);
-        let mut transfer = crate::server::transfer::OutgoingServerTransfer::new(&server);
+        let mut transfer = crate::server::transfer::OutgoingServerTransfer::new(
+            &server,
+            data.archive_format,
+            data.compression_level
+                .unwrap_or(state.config.system.backups.compression_level),
+        );
 
         if transfer.start(&state.docker, data.url, data.token).is_ok() {
             server.outgoing_transfer.write().await.replace(transfer);
