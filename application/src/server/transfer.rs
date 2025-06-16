@@ -34,11 +34,14 @@ impl std::str::FromStr for ArchiveFormat {
     type Err = &'static str;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "tar" => Ok(ArchiveFormat::Tar),
-            "tar.gz" => Ok(ArchiveFormat::TarGz),
-            "tar.zst" => Ok(ArchiveFormat::TarZstd),
-            _ => Err("unknown archive format"),
+        if s.ends_with(".tar") {
+            Ok(ArchiveFormat::Tar)
+        } else if s.ends_with(".tar.gz") {
+            Ok(ArchiveFormat::TarGz)
+        } else if s.ends_with(".tar.zst") {
+            Ok(ArchiveFormat::TarZstd)
+        } else {
+            Err("Invalid archive format")
         }
     }
 }

@@ -4712,7 +4712,6 @@ dependencies = [
  "axum-extra",
  "axum-server",
  "bollard",
- "brotli",
  "cap-std",
  "chrono",
  "clap",
