@@ -49,7 +49,7 @@ system:
     # settings for the wings backup driver
     wings:
       # what archive format to use for local (wings) backups
-      # tar_gz, zip
+      # tar, tar_gz, tar_zstd, zip
       archive_format: tar_gz
 
     # settings for the ddup-bak backup driver

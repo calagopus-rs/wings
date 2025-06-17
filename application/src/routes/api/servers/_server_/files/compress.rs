@@ -6,6 +6,7 @@ mod post {
     use axum::http::StatusCode;
     use cap_std::fs::PermissionsExt;
     use serde::Deserialize;
+    use std::io::Write;
     use utoipa::ToSchema;
 
     #[derive(ToSchema, Deserialize)]
@@ -226,6 +227,8 @@ mod post {
                 }
 
                 archive.finish().unwrap();
+                let mut inner = archive.into_inner().unwrap();
+                inner.flush().unwrap();
             }
         })
         .await

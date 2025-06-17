@@ -142,6 +142,8 @@ pub async fn create_backup(
                 }
 
                 tar.finish()?;
+                let mut inner = tar.into_inner()?;
+                inner.flush()?;
             }
             crate::config::SystemBackupsWingsArchiveFormat::Zip => {
                 let mut zip = zip::ZipWriter::new(writer);
@@ -213,7 +215,8 @@ pub async fn create_backup(
                     }
                 }
 
-                zip.finish()?;
+                let mut inner = zip.finish()?;
+                inner.flush()?;
             }
         }
 

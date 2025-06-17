@@ -136,6 +136,8 @@ pub async fn create_backup(
             }
 
             tar.finish()?;
+            let mut inner = tar.into_inner()?;
+            inner.flush()?;
 
             Ok(())
         }

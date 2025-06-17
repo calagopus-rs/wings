@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use serde_default::DefaultFromSerde;
 use std::collections::HashMap;
 use std::path::Path;
 use utoipa::ToSchema;
@@ -131,11 +132,15 @@ impl ServerConfigurationFile {
 nestify::nest! {
     #[derive(ToSchema, Deserialize)]
     pub struct ProcessConfiguration {
-        pub startup: #[derive(ToSchema, Deserialize, Clone)] pub struct ProcessConfigurationStartup {
+        #[serde(default)]
+        pub startup: #[derive(ToSchema, Deserialize, Clone, DefaultFromSerde)] pub struct ProcessConfigurationStartup {
             pub done: Option<Vec<String>>,
+            #[serde(default)]
             pub strip_ansi: bool,
         },
-        pub stop: #[derive(ToSchema, Deserialize)] pub struct ProcessConfigurationStop {
+        #[serde(default)]
+        pub stop: #[derive(ToSchema, Deserialize, DefaultFromSerde)] pub struct ProcessConfigurationStop {
+            #[serde(default)]
             pub r#type: String,
             pub value: Option<String>,
         },
