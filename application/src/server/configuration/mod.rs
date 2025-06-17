@@ -72,9 +72,8 @@ nestify::nest! {
         pub mounts: Vec<Mount>,
         #[schema(inline)]
         pub egg: #[derive(ToSchema, Deserialize, Serialize)] pub struct ServerConfigurationEgg {
-            pub id: String,
-            #[serde(default)]
-            pub file_denylist: Vec<String>,
+            pub id: uuid::Uuid,
+            pub file_denylist: Option<Vec<String>>,
         },
 
         #[schema(inline)]
