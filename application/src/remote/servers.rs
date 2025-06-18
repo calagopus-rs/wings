@@ -23,8 +23,7 @@ pub async fn get_servers_paged(
         .send()
         .await?
         .json()
-        .await
-        .unwrap_or_default();
+        .await?;
 
     #[derive(Deserialize, Default)]
     struct Response {
