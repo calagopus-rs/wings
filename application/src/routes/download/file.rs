@@ -93,7 +93,7 @@ mod get {
 
         if let Some((backup, path)) = server.filesystem.backup_fs(&server, path).await {
             match crate::server::filesystem::backup::reader(backup, &server, &path).await {
-                Ok((mut reader, size)) => {
+                Ok((reader, size)) => {
                     let mut headers = HeaderMap::new();
 
                     headers.insert("Content-Length", size.into());
@@ -110,19 +110,10 @@ mod get {
                     );
                     headers.insert("Content-Type", "application/octet-stream".parse().unwrap());
 
-                    let (writer, async_reader) = tokio::io::duplex(8192);
-                    tokio::task::spawn_blocking(move || {
-                        let mut sync_writer = tokio_util::io::SyncIoBridge::new(writer);
-
-                        std::io::copy(&mut reader, &mut sync_writer).ok();
-                    });
-
                     return (
                         StatusCode::OK,
                         headers,
-                        Body::from_stream(tokio_util::io::ReaderStream::new(Box::pin(
-                            async_reader,
-                        ))),
+                        Body::from_stream(tokio_util::io::ReaderStream::new(Box::into_pin(reader))),
                     );
                 }
                 Err(err) => {

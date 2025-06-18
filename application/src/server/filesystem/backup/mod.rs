@@ -28,7 +28,7 @@ pub async fn reader(
     backup: InternalBackup,
     server: &crate::server::Server,
     path: &Path,
-) -> std::io::Result<(Box<dyn std::io::Read + Send>, u64)> {
+) -> std::io::Result<(Box<dyn tokio::io::AsyncRead + Send>, u64)> {
     match backup.adapter {
         BackupAdapter::DdupBak => ddup_bak::reader(server, backup.uuid, path).await,
         BackupAdapter::Btrfs => btrfs::reader(server, backup.uuid, path).await,

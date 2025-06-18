@@ -1,16 +1,15 @@
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::{
     fs::Permissions,
     io::{SeekFrom, Write},
     os::unix::fs::PermissionsExt,
     path::PathBuf,
-    sync::Arc,
 };
 use tokio::{
     fs::File,
     io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader},
 };
-use tokio_util::io::SyncIoBridge;
 use utoipa::ToSchema;
 
 #[derive(Clone, Copy)]
@@ -226,7 +225,6 @@ impl Archive {
 
     pub async fn extract(
         self,
-        filesystem: Arc<cap_std::fs::Dir>,
         destination: PathBuf,
         reader: Option<Box<dyn AsyncRead + Send + Unpin>>,
     ) -> Result<(), anyhow::Error> {
@@ -236,9 +234,13 @@ impl Archive {
                 None => destination,
             };
 
-            let mut writer =
-                super::writer::AsyncFileSystemWriter::new(self.server.clone(), file_name, None)
-                    .await?;
+            let mut writer = super::writer::AsyncFileSystemWriter::new(
+                self.server.clone(),
+                file_name,
+                None,
+                self.file.metadata().await?.modified().ok(),
+            )
+            .await?;
 
             tokio::io::copy(&mut reader.unwrap(), &mut writer).await?;
             writer.flush().await?;
@@ -246,71 +248,85 @@ impl Archive {
             return Ok(());
         }
 
-        tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
-            match self.archive {
-                ArchiveType::Tar => {
-                    let sync_reader = SyncIoBridge::new(reader.unwrap());
-                    let mut archive = tar::Archive::new(sync_reader);
+        match self.archive {
+            ArchiveType::Tar => {
+                let mut archive = tokio_tar::Archive::new(reader.unwrap());
 
-                    for mut entry in archive.entries().unwrap().flatten() {
-                        let path = entry.path().unwrap();
+                let mut entries = archive.entries()?;
+                while let Some(Ok(mut entry)) = entries.next().await {
+                    let path = entry.path().unwrap();
 
-                        if path.is_absolute() {
-                            continue;
-                        }
+                    if path.is_absolute() {
+                        continue;
+                    }
 
-                        let destination_path = destination.join(path);
-                        let header = entry.header();
+                    let destination_path = destination.join(path.as_ref());
+                    let header = entry.header();
 
-                        if self.server.filesystem.is_ignored_sync(
+                    if self
+                        .server
+                        .filesystem
+                        .is_ignored(
                             &destination_path,
-                            header.entry_type() == tar::EntryType::Directory,
-                        ) {
-                            continue;
+                            header.entry_type() == tokio_tar::EntryType::Directory,
+                        )
+                        .await
+                    {
+                        continue;
+                    }
+
+                    match header.entry_type() {
+                        tokio_tar::EntryType::Directory => {
+                            self.server
+                                .filesystem
+                                .create_dir_all(&destination_path)
+                                .await?;
                         }
+                        tokio_tar::EntryType::Regular => {
+                            self.server
+                                .filesystem
+                                .create_dir_all(destination_path.parent().unwrap())
+                                .await?;
 
-                        match header.entry_type() {
-                            tar::EntryType::Directory => {
-                                filesystem.create_dir_all(&destination_path)?;
-                            }
-                            tar::EntryType::Regular => {
-                                filesystem.create_dir_all(destination_path.parent().unwrap())?;
+                            let mut writer = super::writer::AsyncFileSystemWriter::new(
+                                self.server.clone(),
+                                destination_path,
+                                header.mode().map(Permissions::from_mode).ok(),
+                                header
+                                    .mtime()
+                                    .map(|t| {
+                                        std::time::UNIX_EPOCH + std::time::Duration::from_secs(t)
+                                    })
+                                    .ok(),
+                            )
+                            .await
+                            .unwrap();
 
-                                let mut writer = super::writer::FileSystemWriter::new(
-                                    self.server.clone(),
-                                    destination_path,
-                                    header.mode().map(Permissions::from_mode).ok(),
-                                    header
-                                        .mtime()
-                                        .map(|t| {
-                                            std::time::UNIX_EPOCH
-                                                + std::time::Duration::from_secs(t)
-                                        })
-                                        .ok(),
-                                )
-                                .unwrap();
-
-                                std::io::copy(&mut entry, &mut writer)?;
-                                writer.flush().unwrap();
-                            }
-                            tar::EntryType::Symlink => {
-                                let link =
-                                    entry.link_name().unwrap_or_default().unwrap_or_default();
-
-                                filesystem
-                                    .symlink(link, destination_path)
-                                    .unwrap_or_else(|err| {
-                                        tracing::debug!(
-                                            "failed to create symlink from archive: {:#?}",
-                                            err
-                                        );
-                                    });
-                            }
-                            _ => {}
+                            tokio::io::copy(&mut entry, &mut writer).await.unwrap();
+                            writer.flush().await.unwrap();
                         }
+                        tokio_tar::EntryType::Symlink => {
+                            let link = entry.link_name().unwrap_or_default().unwrap_or_default();
+
+                            self.server
+                                .filesystem
+                                .symlink(link.as_ref(), destination_path)
+                                .await
+                                .unwrap_or_else(|err| {
+                                    tracing::debug!(
+                                        "failed to create symlink from archive: {:#?}",
+                                        err
+                                    );
+                                });
+                        }
+                        _ => {}
                     }
                 }
-                ArchiveType::Zip => {
+            }
+            ArchiveType::Zip => {
+                let filesystem = self.server.filesystem.base_dir().await?;
+
+                tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
                     let file = self.file.try_into_std().unwrap();
 
                     let mut archive = zip::ZipArchive::new(file)?;
@@ -352,12 +368,14 @@ impl Archive {
                             writer.flush()?;
                         }
                     }
-                }
-                ArchiveType::None => unreachable!(),
-            }
 
-            Ok(())
-        })
-        .await?
+                    Ok(())
+                })
+                .await??;
+            }
+            ArchiveType::None => unreachable!(),
+        }
+
+        Ok(())
     }
 }

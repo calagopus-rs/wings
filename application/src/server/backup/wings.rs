@@ -4,6 +4,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
 };
 use chrono::{Datelike, Timelike};
+use futures::StreamExt;
 use ignore::WalkBuilder;
 use sha1::Digest;
 use std::{
@@ -12,7 +13,7 @@ use std::{
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
 };
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 
 #[inline]
 fn get_tar_file_name(server: &crate::server::Server, uuid: uuid::Uuid) -> PathBuf {
@@ -251,95 +252,107 @@ pub async fn restore_backup(
     uuid: uuid::Uuid,
 ) -> Result<(), anyhow::Error> {
     let (file_format, file_name) = get_first_file_name(&server, uuid).await?;
-    let file = std::fs::File::open(&file_name)?;
+    let file = tokio::fs::File::open(&file_name).await?;
 
-    let server = server.clone();
-    tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
-        let runtime = tokio::runtime::Handle::current();
-        let filesystem = server.filesystem.sync_base_dir()?;
+    match file_format {
+        crate::config::SystemBackupsWingsArchiveFormat::Tar
+        | crate::config::SystemBackupsWingsArchiveFormat::TarGz
+        | crate::config::SystemBackupsWingsArchiveFormat::TarZstd => {
+            let reader: Box<dyn tokio::io::AsyncRead + Send> = match file_format {
+                crate::config::SystemBackupsWingsArchiveFormat::Tar => Box::new(file),
+                crate::config::SystemBackupsWingsArchiveFormat::TarGz => Box::new(
+                    async_compression::tokio::bufread::GzipDecoder::new(BufReader::new(file)),
+                ),
+                crate::config::SystemBackupsWingsArchiveFormat::TarZstd => Box::new(
+                    async_compression::tokio::bufread::ZstdDecoder::new(BufReader::new(file)),
+                ),
+                _ => unreachable!(),
+            };
+            let mut archive = tokio_tar::Archive::new(Box::into_pin(reader));
 
-        match file_format {
-            crate::config::SystemBackupsWingsArchiveFormat::Tar
-            | crate::config::SystemBackupsWingsArchiveFormat::TarGz
-            | crate::config::SystemBackupsWingsArchiveFormat::TarZstd => {
-                let reader: Box<dyn std::io::Read> = match file_format {
-                    crate::config::SystemBackupsWingsArchiveFormat::Tar => Box::new(file),
-                    crate::config::SystemBackupsWingsArchiveFormat::TarGz => {
-                        Box::new(flate2::read::GzDecoder::new(file))
-                    }
-                    crate::config::SystemBackupsWingsArchiveFormat::TarZstd => {
-                        Box::new(zstd::Decoder::new(file).unwrap())
-                    }
-                    _ => unreachable!(),
-                };
-                let mut archive = tar::Archive::new(reader);
+            let mut entries = archive.entries()?;
+            while let Some(entry) = entries.next().await {
+                let mut entry = entry?;
+                let path = entry.path()?;
 
-                for entry in archive.entries()? {
-                    let mut entry = entry?;
-                    let path = entry.path()?;
+                if path.is_absolute() {
+                    continue;
+                }
 
-                    if path.is_absolute() {
-                        continue;
-                    }
+                if server.filesystem.is_ignored_sync(
+                    &path,
+                    entry.header().entry_type() == tokio_tar::EntryType::Directory,
+                ) {
+                    continue;
+                }
 
-                    if server.filesystem.is_ignored_sync(
-                        &path,
-                        entry.header().entry_type() == tar::EntryType::Directory,
-                    ) {
-                        continue;
-                    }
-
-                    let header = entry.header();
-                    match header.entry_type() {
-                        tar::EntryType::Directory => {
-                            filesystem.create_dir_all(&path)?;
-                            filesystem.set_permissions(
-                                &path,
+                let header = entry.header();
+                match header.entry_type() {
+                    tokio_tar::EntryType::Directory => {
+                        server.filesystem.create_dir_all(path.as_ref()).await?;
+                        server
+                            .filesystem
+                            .set_permissions(
+                                path.as_ref(),
                                 cap_std::fs::Permissions::from_std(Permissions::from_mode(
                                     header.mode().unwrap_or(0o755),
                                 )),
-                            )?;
-                        }
-                        tar::EntryType::Regular => {
-                            runtime.block_on(
-                                server.log_daemon(format!("(restoring): {}", path.display())),
-                            );
+                            )
+                            .await?;
+                    }
+                    tokio_tar::EntryType::Regular => {
+                        server
+                            .log_daemon(format!("(restoring): {}", path.display()))
+                            .await;
 
-                            filesystem.create_dir_all(path.parent().unwrap())?;
+                        server
+                            .filesystem
+                            .create_dir_all(path.parent().unwrap())
+                            .await?;
 
-                            let mut writer =
-                                crate::server::filesystem::writer::FileSystemWriter::new(
-                                    server.clone(),
-                                    path.to_path_buf(),
-                                    Some(Permissions::from_mode(header.mode().unwrap_or(0o644))),
-                                    header
-                                        .mtime()
-                                        .map(|t| {
-                                            std::time::UNIX_EPOCH
-                                                + std::time::Duration::from_secs(t)
-                                        })
-                                        .ok(),
-                                )?;
+                        let mut writer =
+                            crate::server::filesystem::writer::AsyncFileSystemWriter::new(
+                                server.clone(),
+                                path.to_path_buf(),
+                                Some(Permissions::from_mode(header.mode().unwrap_or(0o644))),
+                                header
+                                    .mtime()
+                                    .map(|t| {
+                                        std::time::UNIX_EPOCH + std::time::Duration::from_secs(t)
+                                    })
+                                    .ok(),
+                            )
+                            .await?;
 
-                            std::io::copy(&mut entry, &mut writer)?;
-                            writer.flush()?;
-                        }
-                        tar::EntryType::Symlink => {
-                            let link = entry.link_name().unwrap_or_default().unwrap_or_default();
+                        tokio::io::copy(&mut entry, &mut writer).await?;
+                        writer.flush().await?;
+                    }
+                    tokio_tar::EntryType::Symlink => {
+                        let link = entry.link_name().unwrap_or_default().unwrap_or_default();
 
-                            filesystem.symlink(link, path).unwrap_or_else(|err| {
+                        server
+                            .filesystem
+                            .symlink(link, path)
+                            .await
+                            .unwrap_or_else(|err| {
                                 tracing::debug!(
                                     "failed to create symlink from archive: {:#?}",
                                     err
                                 );
                             });
-                        }
-                        _ => {}
                     }
+                    _ => {}
                 }
             }
-            crate::config::SystemBackupsWingsArchiveFormat::Zip => {
-                let mut archive = zip::ZipArchive::new(std::io::BufReader::new(file)).unwrap();
+        }
+        crate::config::SystemBackupsWingsArchiveFormat::Zip => {
+            let file = file.into_std().await;
+
+            tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
+                let runtime = tokio::runtime::Handle::current();
+                let filesystem = server.filesystem.sync_base_dir()?;
+
+                let mut archive = zip::ZipArchive::new(file).unwrap();
 
                 for i in 0..archive.len() {
                     let mut entry = archive.by_index(i)?;
@@ -376,12 +389,12 @@ pub async fn restore_backup(
                         writer.flush()?;
                     }
                 }
-            }
-        };
 
-        Ok(())
-    })
-    .await??;
+                Ok(())
+            })
+            .await??;
+        }
+    };
 
     Ok(())
 }

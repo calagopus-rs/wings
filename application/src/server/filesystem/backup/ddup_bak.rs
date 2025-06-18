@@ -3,6 +3,7 @@ use crate::{
     server::backup::ddup_bak::{get_repository, tar_recursive_convert_entries},
 };
 use std::{io::Read, path::Path};
+use tokio::io::AsyncWriteExt;
 
 fn ddup_bak_entry_to_directory_entry(
     path: &Path,
@@ -163,37 +164,63 @@ pub async fn reader(
     server: &crate::server::Server,
     uuid: uuid::Uuid,
     path: &Path,
-) -> std::io::Result<(Box<dyn std::io::Read + Send>, u64)> {
+) -> std::io::Result<(Box<dyn tokio::io::AsyncRead + Send>, u64)> {
     let repository = get_repository(server).await;
 
     let path = path.to_path_buf();
-    tokio::task::spawn_blocking(move || -> std::io::Result<(Box<dyn Read + Send>, u64)> {
-        let full_path = path.to_path_buf();
-        let archive = repository.get_archive(&uuid.to_string())?;
-        let entry = match archive.find_archive_entry(&full_path) {
-            Ok(Some(entry)) => entry,
-            _ => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    format!("Path not found in archive: {}", full_path.display()),
-                ));
-            }
-        };
+    tokio::task::spawn_blocking(
+        move || -> std::io::Result<(Box<dyn tokio::io::AsyncRead + Send>, u64)> {
+            let full_path = path.to_path_buf();
+            let archive = repository.get_archive(&uuid.to_string())?;
+            let entry = match archive.find_archive_entry(&full_path) {
+                Ok(Some(entry)) => entry,
+                _ => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        format!("Path not found in archive: {}", full_path.display()),
+                    ));
+                }
+            };
 
-        let size = match entry {
-            ddup_bak::archive::entries::Entry::File(file) => file.size_real,
-            _ => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "Expected a file entry",
-                ));
-            }
-        };
+            let size = match entry {
+                ddup_bak::archive::entries::Entry::File(file) => file.size_real,
+                _ => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "Expected a file entry",
+                    ));
+                }
+            };
 
-        let reader = repository.entry_reader(entry.clone())?;
+            let mut reader = repository.entry_reader(entry.clone())?;
+            let (async_reader, mut async_writer) = tokio::io::duplex(65536);
 
-        Ok((Box::new(reader), size))
-    })
+            tokio::task::spawn_blocking(move || {
+                let runtime = tokio::runtime::Handle::current();
+
+                let mut buffer = [0; 8192];
+                loop {
+                    match reader.read(&mut buffer) {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            if runtime
+                                .block_on(async_writer.write_all(&buffer[..n]))
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
+                        Err(err) => {
+                            tracing::error!("error reading from ddup_bak entry: {:#?}", err);
+                            break;
+                        }
+                    }
+                }
+            });
+
+            Ok((Box::new(async_reader), size))
+        },
+    )
     .await?
 }
 

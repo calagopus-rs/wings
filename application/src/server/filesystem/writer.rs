@@ -141,8 +141,9 @@ impl Drop for FileSystemWriter {
 pub struct AsyncFileSystemWriter {
     server: crate::server::Server,
     parent: Vec<String>,
-    writer: tokio::io::BufWriter<tokio::fs::File>,
+    writer: Option<tokio::io::BufWriter<tokio::fs::File>>,
     accumulated_bytes: i64,
+    modified: Option<SystemTime>,
     allocation_in_progress: Option<Pin<Box<dyn Future<Output = bool> + Send>>>,
 }
 
@@ -151,6 +152,7 @@ impl AsyncFileSystemWriter {
         server: crate::server::Server,
         destination: PathBuf,
         permissions: Option<Permissions>,
+        modified: Option<SystemTime>,
     ) -> Result<Self, anyhow::Error> {
         let parent_path = destination.parent().ok_or_else(|| {
             std::io::Error::new(
@@ -179,8 +181,12 @@ impl AsyncFileSystemWriter {
         Ok(Self {
             server,
             parent,
-            writer: tokio::io::BufWriter::with_capacity(ALLOCATION_THRESHOLD as usize, file),
+            writer: Some(tokio::io::BufWriter::with_capacity(
+                ALLOCATION_THRESHOLD as usize,
+                file,
+            )),
             accumulated_bytes: 0,
+            modified,
             allocation_in_progress: None,
         })
     }
@@ -246,7 +252,7 @@ impl AsyncWrite for AsyncFileSystemWriter {
             }
         }
 
-        Pin::new(&mut self.writer).poll_write(cx, buf)
+        Pin::new(self.writer.as_mut().unwrap()).poll_write(cx, buf)
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
@@ -266,7 +272,7 @@ impl AsyncWrite for AsyncFileSystemWriter {
             }
         }
 
-        Pin::new(&mut self.writer).poll_flush(cx)
+        Pin::new(self.writer.as_mut().unwrap()).poll_flush(cx)
     }
 
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
@@ -286,7 +292,7 @@ impl AsyncWrite for AsyncFileSystemWriter {
             }
         }
 
-        Pin::new(&mut self.writer).poll_shutdown(cx)
+        Pin::new(self.writer.as_mut().unwrap()).poll_shutdown(cx)
     }
 }
 
@@ -296,7 +302,7 @@ impl AsyncSeek for AsyncFileSystemWriter {
             self.start_allocation();
         }
 
-        Pin::new(&mut self.writer).start_seek(position)
+        Pin::new(self.writer.as_mut().unwrap()).start_seek(position)
     }
 
     fn poll_complete(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<u64>> {
@@ -306,7 +312,7 @@ impl AsyncSeek for AsyncFileSystemWriter {
             Poll::Pending => return Poll::Pending,
         }
 
-        Pin::new(&mut self.writer).poll_complete(cx)
+        Pin::new(self.writer.as_mut().unwrap()).poll_complete(cx)
     }
 }
 
@@ -320,6 +326,16 @@ impl Drop for AsyncFileSystemWriter {
             if bytes > 0 {
                 tokio::spawn(async move {
                     server.filesystem.allocate_in_path_raw(&parent, bytes).await;
+                });
+            }
+        }
+
+        if let Some(modified) = self.modified {
+            if let Some(writer) = self.writer.take() {
+                tokio::spawn(async move {
+                    let file = writer.into_inner().into_std().await;
+
+                    tokio::task::spawn_blocking(move || file.set_modified(modified));
                 });
             }
         }

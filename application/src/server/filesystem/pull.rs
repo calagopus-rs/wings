@@ -104,9 +104,10 @@ impl Download {
         let mut response = self.response.take().unwrap();
 
         let task = tokio::task::spawn(async move {
-            let mut writer = super::writer::AsyncFileSystemWriter::new(server, destination, None)
-                .await
-                .unwrap();
+            let mut writer =
+                super::writer::AsyncFileSystemWriter::new(server, destination, None, None)
+                    .await
+                    .unwrap();
 
             while let Ok(Some(chunk)) = response.chunk().await {
                 writer.write_all(&chunk).await.unwrap();

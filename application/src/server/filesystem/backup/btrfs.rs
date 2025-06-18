@@ -60,7 +60,7 @@ pub async fn reader(
     server: &crate::server::Server,
     uuid: uuid::Uuid,
     path: &Path,
-) -> std::io::Result<(Box<dyn std::io::Read + Send>, u64)> {
+) -> std::io::Result<(Box<dyn tokio::io::AsyncRead + Send>, u64)> {
     let full_path = tokio::fs::canonicalize(get_base_path(server, uuid).join(path)).await?;
 
     if !full_path.starts_with(get_base_path(server, uuid)) {
@@ -72,7 +72,6 @@ pub async fn reader(
 
     let file = tokio::fs::File::open(full_path).await?;
     let metadata = file.metadata().await?;
-    let file = file.into_std().await;
 
     Ok((Box::new(file), metadata.len()))
 }

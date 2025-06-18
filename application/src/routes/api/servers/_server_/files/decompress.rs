@@ -5,7 +5,6 @@ mod post {
     use crate::routes::{ApiError, api::servers::_server_::GetServer};
     use axum::http::StatusCode;
     use serde::{Deserialize, Serialize};
-    use std::sync::Arc;
     use utoipa::ToSchema;
 
     #[derive(ToSchema, Deserialize)]
@@ -79,14 +78,7 @@ mod post {
             };
 
         let reader = archive.reader().await;
-        archive
-            .extract(
-                Arc::clone(&server.filesystem.base_dir().await.unwrap()),
-                root.clone(),
-                reader,
-            )
-            .await
-            .unwrap();
+        archive.extract(root.clone(), reader).await.unwrap();
         server.filesystem.chown_path(&root).await;
 
         (
