@@ -11,10 +11,7 @@ pub mod servers;
 #[derive(Deserialize, Serialize, Default)]
 pub struct Pagination {
     current_page: usize,
-    from: usize,
     last_page: usize,
-    per_page: usize,
-    to: usize,
     total: usize,
 }
 
