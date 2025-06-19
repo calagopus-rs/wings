@@ -372,7 +372,19 @@ pub async fn delete_backup(
         }
     }
 
-    tokio::fs::remove_dir_all(get_backup_path(server, uuid)).await?;
+    let output = Command::new("btrfs")
+        .arg("subvolume")
+        .arg("delete")
+        .arg(&subvolume_path)
+        .output()
+        .await?;
+
+    if !output.status.success() {
+        return Err(anyhow::anyhow!(
+            "Failed to delete Btrfs subvolume: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
 
     Ok(())
 }
@@ -383,7 +395,7 @@ pub async fn list_backups(
     let mut backups = Vec::new();
     let path = Path::new(&server.config.system.backup_directory).join("btrfs");
 
-    if !path.exists() {
+    if tokio::fs::metadata(&path).await.is_err() {
         return Ok(backups);
     }
 

@@ -984,6 +984,57 @@ impl Filesystem {
         )
         .await
     }
+
+    pub async fn to_api_entry_tokio(
+        &self,
+        path: PathBuf,
+        metadata: std::fs::Metadata,
+    ) -> crate::models::DirectoryEntry {
+        let symlink_destination = if metadata.is_symlink() {
+            match tokio::fs::read_link(&path).await {
+                Ok(link) => tokio::fs::canonicalize(link)
+                    .await
+                    .ok()
+                    .filter(|p| p.starts_with(&self.base_path)),
+                Err(_) => None,
+            }
+        } else {
+            None
+        };
+
+        let symlink_destination_metadata =
+            if let Some(symlink_destination) = symlink_destination.clone() {
+                tokio::fs::symlink_metadata(&symlink_destination).await.ok()
+            } else {
+                None
+            };
+
+        let mut buffer = [0; 128];
+        let buffer = if metadata.is_file()
+            || (symlink_destination.is_some()
+                && symlink_destination_metadata
+                    .as_ref()
+                    .is_some_and(|m| m.is_file()))
+        {
+            let mut file = tokio::fs::File::open(symlink_destination.as_ref().unwrap_or(&path))
+                .await
+                .unwrap();
+            let bytes_read = file.read(&mut buffer).await.unwrap_or(0);
+
+            Some(&buffer[..bytes_read])
+        } else {
+            None
+        };
+
+        self.to_api_entry_buffer(
+            path,
+            &cap_std::fs::Metadata::from_just_metadata(metadata),
+            buffer,
+            symlink_destination,
+            symlink_destination_metadata.map(cap_std::fs::Metadata::from_just_metadata),
+        )
+        .await
+    }
 }
 
 impl Drop for Filesystem {

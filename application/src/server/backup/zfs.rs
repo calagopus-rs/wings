@@ -349,7 +349,7 @@ pub async fn list_backups(
     let mut backups = Vec::new();
     let path = Path::new(&server.config.system.backup_directory).join("zfs");
 
-    if !path.exists() {
+    if tokio::fs::metadata(&path).await.is_err() {
         return Ok(backups);
     }
 
