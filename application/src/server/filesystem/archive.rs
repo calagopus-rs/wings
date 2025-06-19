@@ -234,11 +234,13 @@ impl Archive {
                 None => destination,
             };
 
+            let metadata = self.file.metadata().await?;
+
             let mut writer = super::writer::AsyncFileSystemWriter::new(
                 self.server.clone(),
                 file_name,
-                None,
-                self.file.metadata().await?.modified().ok(),
+                Some(metadata.permissions()),
+                metadata.modified().ok(),
             )
             .await?;
 

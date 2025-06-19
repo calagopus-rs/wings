@@ -73,7 +73,7 @@ pub async fn create_backup(
         for line in output_str.lines() {
             let mut whitespace = line.split_whitespace();
 
-            if let Some(label) = line.split_whitespace().next() {
+            if let Some(label) = whitespace.next() {
                 match label {
                     "Generation:" => {
                         if let Some(parsed_generation) = whitespace.next() {
