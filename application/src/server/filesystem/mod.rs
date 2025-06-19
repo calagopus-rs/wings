@@ -451,8 +451,6 @@ impl Filesystem {
             if let Some(path) = path {
                 disk_usage.add_directory(
                     &abs_new_path
-                        .strip_prefix(&self.base_path)
-                        .unwrap()
                         .components()
                         .map(|c| c.as_os_str().to_string_lossy().to_string())
                         .collect::<Vec<_>>(),
