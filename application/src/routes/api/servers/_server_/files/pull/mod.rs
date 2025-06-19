@@ -112,7 +112,7 @@ mod post {
             );
         }
 
-        tokio::fs::create_dir_all(&path).await.unwrap();
+        server.filesystem.create_dir_all(&path).await.unwrap();
         let download = Arc::new(RwLock::new(
             crate::server::filesystem::pull::Download::new(
                 server.0.clone(),
