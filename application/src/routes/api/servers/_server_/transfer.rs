@@ -14,6 +14,7 @@ mod post {
 
         #[serde(default)]
         archive_format: crate::server::transfer::ArchiveFormat,
+        #[serde(deserialize_with = "crate::deserialize::deserialize_optional")]
         compression_level: Option<crate::server::filesystem::archive::CompressionLevel>,
     }
 

@@ -1,5 +1,6 @@
 pub mod commands;
 pub mod config;
+pub mod deserialize;
 pub mod extensions;
 pub mod models;
 pub mod remote;

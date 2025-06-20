@@ -73,7 +73,8 @@ nestify::nest! {
         #[schema(inline)]
         pub egg: #[derive(ToSchema, Deserialize, Serialize)] pub struct ServerConfigurationEgg {
             pub id: uuid::Uuid,
-            pub file_denylist: Option<Vec<String>>,
+            #[serde(default, deserialize_with = "crate::deserialize::deserialize_defaultable")]
+            pub file_denylist: Vec<String>,
         },
 
         #[schema(inline)]

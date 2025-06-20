@@ -70,19 +70,17 @@ impl InternalBackup {
             override_raw.push('\n');
         }
 
-        if let Some(file_denylist) = &server.configuration.read().await.egg.file_denylist {
-            for file in file_denylist {
-                if let Some(file) = file.strip_prefix('!') {
-                    override_builder.add(file).ok();
-                    override_raw.push_str(file);
-                } else {
-                    override_builder.add(&format!("!{}", file)).ok();
-                    override_raw.push('!');
-                    override_raw.push_str(file);
-                }
-
-                override_raw.push('\n');
+        for file in server.configuration.read().await.egg.file_denylist.iter() {
+            if let Some(file) = file.strip_prefix('!') {
+                override_builder.add(file).ok();
+                override_raw.push_str(file);
+            } else {
+                override_builder.add(&format!("!{}", file)).ok();
+                override_raw.push('!');
+                override_raw.push_str(file);
             }
+
+            override_raw.push('\n');
         }
 
         let internal_backup = Self { adapter, uuid };

@@ -76,11 +76,7 @@ impl Server {
             configuration.build.disk_space * 1024 * 1024,
             config.system.disk_check_interval,
             Arc::clone(&config),
-            configuration
-                .egg
-                .file_denylist
-                .as_ref()
-                .unwrap_or(&Vec::new()),
+            &configuration.egg.file_denylist,
         );
 
         let (rx, tx) = tokio::sync::broadcast::channel(128);
@@ -382,13 +378,7 @@ impl Server {
         client: &Arc<bollard::Docker>,
     ) {
         self.filesystem
-            .update_ignored(
-                configuration
-                    .egg
-                    .file_denylist
-                    .as_ref()
-                    .unwrap_or(&Vec::new()),
-            )
+            .update_ignored(&configuration.egg.file_denylist)
             .await;
         self.suspended
             .store(configuration.suspended, Ordering::SeqCst);
