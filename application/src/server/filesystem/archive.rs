@@ -63,6 +63,45 @@ pub enum ArchiveType {
     SevenZip,
 }
 
+#[inline]
+pub fn zip_entry_get_modified_time(
+    entry: &zip::read::ZipFile<impl std::io::Read>,
+) -> Option<std::time::SystemTime> {
+    for field in entry.extra_data_fields() {
+        if let zip::extra_fields::ExtraField::ExtendedTimestamp(ext) = field {
+            if let Some(mod_time) = ext.mod_time() {
+                return Some(
+                    std::time::UNIX_EPOCH + std::time::Duration::from_secs(mod_time as u64),
+                );
+            }
+        }
+    }
+
+    if let Some(time) = entry.last_modified() {
+        if time.is_valid() {
+            let chrono_date = chrono::NaiveDate::from_ymd_opt(
+                time.year() as i32,
+                time.month() as u32,
+                time.day() as u32,
+            )?;
+            let chrono_time = chrono::NaiveTime::from_hms_opt(
+                time.hour() as u32,
+                time.minute() as u32,
+                time.second() as u32,
+            )?;
+
+            return Some(
+                std::time::UNIX_EPOCH
+                    + std::time::Duration::from_secs(
+                        chrono_date.and_time(chrono_time).and_utc().timestamp() as u64,
+                    ),
+            );
+        }
+    }
+
+    None
+}
+
 pub struct Archive {
     pub compression: CompressionType,
     pub archive: ArchiveType,
@@ -362,7 +401,7 @@ impl Archive {
                                 self.server.clone(),
                                 destination_path,
                                 entry.unix_mode().map(Permissions::from_mode),
-                                None,
+                                zip_entry_get_modified_time(&entry),
                             )?;
 
                             std::io::copy(&mut entry, &mut writer)?;

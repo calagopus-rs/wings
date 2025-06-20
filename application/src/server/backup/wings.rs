@@ -382,7 +382,7 @@ pub async fn restore_backup(
                             server.clone(),
                             path,
                             entry.unix_mode().map(Permissions::from_mode),
-                            None,
+                            crate::server::filesystem::archive::zip_entry_get_modified_time(&entry),
                         )?;
 
                         std::io::copy(&mut entry, &mut writer)?;
