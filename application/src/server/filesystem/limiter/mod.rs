@@ -74,7 +74,7 @@ pub async fn attach(
         crate::config::SystemDiskLimiterMode::BtrfsSubvolume => {
             match btrfs_subvolume::attach(filesystem).await {
                 Err(err) => {
-                    tracing::error!(
+                    tracing::warn!(
                         path = %filesystem.base_path.display(),
                         "failed to attach btrfs subvolume for server, falling back to interval scan: {:#?}",
                         err
@@ -92,7 +92,7 @@ pub async fn attach(
         crate::config::SystemDiskLimiterMode::ZfsDataset => {
             match zfs_dataset::attach(filesystem).await {
                 Err(err) => {
-                    tracing::error!(
+                    tracing::warn!(
                         path = %filesystem.base_path.display(),
                         "failed to attach zfs dataset for server, falling back to interval scan: {:#?}",
                         err
@@ -110,7 +110,7 @@ pub async fn attach(
         crate::config::SystemDiskLimiterMode::XfsQuota => {
             match xfs_quota::attach(filesystem).await {
                 Err(err) => {
-                    tracing::error!(
+                    tracing::warn!(
                         path = %filesystem.base_path.display(),
                         "failed to attach xfs quota for server, falling back to interval scan: {:#?}",
                         err

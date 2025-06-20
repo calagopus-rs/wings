@@ -60,6 +60,7 @@ pub enum ArchiveType {
     None,
     Tar,
     Zip,
+    SevenZip,
 }
 
 pub struct Archive {
@@ -94,6 +95,7 @@ impl Archive {
         let archive_format = match path.extension() {
             Some(ext) if ext == "tar" => ArchiveType::Tar,
             Some(ext) if ext == "zip" => ArchiveType::Zip,
+            Some(ext) if ext == "7z" => ArchiveType::SevenZip,
             _ => path.file_stem().map_or(ArchiveType::None, |stem| {
                 if stem.to_str().is_some_and(|s| s.ends_with(".tar")) {
                     ArchiveType::Tar
@@ -228,29 +230,26 @@ impl Archive {
         destination: PathBuf,
         reader: Option<Box<dyn AsyncRead + Send + Unpin>>,
     ) -> Result<(), anyhow::Error> {
-        if matches!(self.archive, ArchiveType::None) {
-            let file_name = match self.path.file_stem() {
-                Some(stem) => destination.join(stem),
-                None => destination,
-            };
-
-            let metadata = self.file.metadata().await?;
-
-            let mut writer = super::writer::AsyncFileSystemWriter::new(
-                self.server.clone(),
-                file_name,
-                Some(metadata.permissions()),
-                metadata.modified().ok(),
-            )
-            .await?;
-
-            tokio::io::copy(&mut reader.unwrap(), &mut writer).await?;
-            writer.flush().await?;
-
-            return Ok(());
-        }
-
         match self.archive {
+            ArchiveType::None => {
+                let file_name = match self.path.file_stem() {
+                    Some(stem) => destination.join(stem),
+                    None => destination,
+                };
+
+                let metadata = self.file.metadata().await?;
+
+                let mut writer = super::writer::AsyncFileSystemWriter::new(
+                    self.server.clone(),
+                    file_name,
+                    Some(metadata.permissions()),
+                    metadata.modified().ok(),
+                )
+                .await?;
+
+                tokio::io::copy(&mut reader.unwrap(), &mut writer).await?;
+                writer.flush().await?;
+            }
             ArchiveType::Tar => {
                 let mut archive = tokio_tar::Archive::new(reader.unwrap());
 
@@ -375,7 +374,62 @@ impl Archive {
                 })
                 .await??;
             }
-            ArchiveType::None => unreachable!(),
+            ArchiveType::SevenZip => {
+                let filesystem = self.server.filesystem.base_dir().await?;
+
+                tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
+                    let mut file = self.file.try_into_std().unwrap();
+                    let archive = sevenz_rust2::Archive::read(&mut file, &[])?;
+
+                    for folder_index in 0..archive.folders.len() {
+                        let folder =
+                            sevenz_rust2::BlockDecoder::new(folder_index, &archive, &[], &mut file);
+
+                        folder.for_each_entries(&mut |entry, reader| {
+                            let path = entry.name();
+                            if path.starts_with('/') || path.starts_with('\\') {
+                                return Ok(true);
+                            }
+
+                            let destination_path = destination.join(path);
+
+                            if self
+                                .server
+                                .filesystem
+                                .is_ignored_sync(&destination_path, entry.is_directory())
+                            {
+                                return Ok(true);
+                            }
+
+                            if entry.is_directory() {
+                                filesystem.create_dir_all(&destination_path)?;
+                            } else {
+                                filesystem.create_dir_all(destination_path.parent().unwrap())?;
+
+                                let mut writer = super::writer::FileSystemWriter::new(
+                                    self.server.clone(),
+                                    destination_path,
+                                    None,
+                                    if entry.has_last_modified_date {
+                                        Some(entry.last_modified_date.into())
+                                    } else {
+                                        None
+                                    },
+                                )
+                                .map_err(|e| std::io::Error::other(e.to_string()))?;
+
+                                std::io::copy(reader, &mut writer)?;
+                                writer.flush()?;
+                            }
+
+                            Ok(true)
+                        })?;
+                    }
+
+                    Ok(())
+                })
+                .await??;
+            }
         }
 
         Ok(())
