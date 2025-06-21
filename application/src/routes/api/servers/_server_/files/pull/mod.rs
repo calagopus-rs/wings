@@ -15,12 +15,6 @@ mod get {
 
     #[utoipa::path(get, path = "/", responses(
         (status = OK, body = inline(Response)),
-    ), params(
-        (
-            "server" = uuid::Uuid,
-            description = "The server uuid",
-            example = "123e4567-e89b-12d3-a456-426614174000",
-        ),
     ))]
     pub async fn route(server: GetServer) -> axum::Json<serde_json::Value> {
         let mut downloads = Vec::new();
@@ -37,7 +31,7 @@ mod post {
     use crate::routes::{ApiError, GetState, api::servers::_server_::GetServer};
     use axum::http::StatusCode;
     use serde::{Deserialize, Serialize};
-    use std::sync::Arc;
+    use std::{path::PathBuf, sync::Arc};
     use tokio::sync::RwLock;
     use utoipa::ToSchema;
 
@@ -63,26 +57,15 @@ mod post {
     #[utoipa::path(post, path = "/", responses(
         (status = OK, body = inline(Response)),
         (status = EXPECTATION_FAILED, body = inline(ApiError)),
-    ), params(
-        (
-            "server" = uuid::Uuid,
-            description = "The server uuid",
-            example = "123e4567-e89b-12d3-a456-426614174000",
-        ),
     ), request_body = inline(Payload))]
     pub async fn route(
         state: GetState,
         server: GetServer,
         axum::Json(data): axum::Json<Payload>,
     ) -> (StatusCode, axum::Json<serde_json::Value>) {
-        let path = match server.filesystem.canonicalize(data.root).await {
+        let path = match server.filesystem.canonicalize(&data.root).await {
             Ok(path) => path,
-            Err(_) => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    axum::Json(ApiError::new("root not found").to_json()),
-                );
-            }
+            Err(_) => PathBuf::from(data.root),
         };
 
         let metadata = server.filesystem.symlink_metadata(&path).await;

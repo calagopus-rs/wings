@@ -5,7 +5,7 @@ mod post {
     use crate::routes::{ApiError, api::servers::_server_::GetServer};
     use axum::http::StatusCode;
     use serde::{Deserialize, Serialize};
-    use std::path::Path;
+    use std::path::PathBuf;
     use utoipa::ToSchema;
 
     #[derive(ToSchema, Deserialize)]
@@ -32,7 +32,10 @@ mod post {
         server: GetServer,
         axum::Json(data): axum::Json<Payload>,
     ) -> (StatusCode, axum::Json<serde_json::Value>) {
-        let path = Path::new(&data.path);
+        let path = match server.filesystem.canonicalize(&data.path).await {
+            Ok(path) => path,
+            Err(_) => PathBuf::from(data.path),
+        };
 
         let metadata = server.filesystem.metadata(&path).await;
         if !metadata.map(|m| m.is_dir()).unwrap_or(true) {
@@ -42,7 +45,7 @@ mod post {
             );
         }
 
-        if server.filesystem.is_ignored(path, true).await {
+        if server.filesystem.is_ignored(&path, true).await {
             return (
                 StatusCode::NOT_FOUND,
                 axum::Json(ApiError::new("path not found").to_json()),
