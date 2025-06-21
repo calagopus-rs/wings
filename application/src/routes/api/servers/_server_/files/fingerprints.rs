@@ -39,6 +39,11 @@ mod get {
         (status = OK, body = inline(Response)),
     ), params(
         (
+            "server" = uuid::Uuid,
+            description = "The server uuid",
+            example = "123e4567-e89b-12d3-a456-426614174000",
+        ),
+        (
             "algorithm" = Algorithm, Query,
             description = "The algorithm to use for the fingerprint",
         ),

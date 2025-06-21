@@ -35,6 +35,11 @@ mod get {
         (status = NOT_FOUND, body = inline(ApiError)),
     ), params(
         (
+            "server" = uuid::Uuid,
+            description = "The server uuid",
+            example = "123e4567-e89b-12d3-a456-426614174000",
+        ),
+        (
             "game" = Game, Query,
             description = "The game logic to use for the sha256 hash",
         ),

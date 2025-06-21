@@ -31,6 +31,12 @@ mod put {
     #[utoipa::path(put, path = "/", responses(
         (status = OK, body = inline(Response)),
         (status = NOT_FOUND, body = inline(ApiError)),
+    ), params(
+        (
+            "server" = uuid::Uuid,
+            description = "The server uuid",
+            example = "123e4567-e89b-12d3-a456-426614174000",
+        ),
     ), request_body = inline(Payload))]
     pub async fn route(
         server: GetServer,

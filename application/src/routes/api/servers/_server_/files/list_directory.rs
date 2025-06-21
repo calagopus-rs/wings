@@ -20,6 +20,11 @@ mod get {
         (status = EXPECTATION_FAILED, body = inline(ApiError)),
     ), params(
         (
+            "server" = uuid::Uuid,
+            description = "The server uuid",
+            example = "123e4567-e89b-12d3-a456-426614174000",
+        ),
+        (
             "directory" = String, Query,
             description = "The directory to list files from",
         ),

@@ -81,6 +81,12 @@ mod get {
 
     #[utoipa::path(get, path = "/", responses(
         (status = OK, body = crate::models::Server),
+    ), params(
+        (
+            "server" = uuid::Uuid,
+            description = "The server uuid",
+            example = "123e4567-e89b-12d3-a456-426614174000",
+        ),
     ))]
     pub async fn route(server: GetServer) -> axum::Json<serde_json::Value> {
         axum::Json(serde_json::to_value(server.to_api_response().await).unwrap())
@@ -97,6 +103,12 @@ mod delete {
 
     #[utoipa::path(delete, path = "/", responses(
         (status = OK, body = inline(Response)),
+    ), params(
+        (
+            "server" = uuid::Uuid,
+            description = "The server uuid",
+            example = "123e4567-e89b-12d3-a456-426614174000",
+        ),
     ))]
     pub async fn route(state: GetState, server: GetServer) -> axum::Json<serde_json::Value> {
         state.server_manager.delete_server(&server).await;
