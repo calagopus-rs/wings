@@ -4,7 +4,7 @@ use std::{
     fs::Permissions,
     io::{SeekFrom, Write},
     os::unix::fs::PermissionsExt,
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 use tokio::{
     fs::File,
@@ -61,6 +61,7 @@ pub enum ArchiveType {
     Tar,
     Zip,
     SevenZip,
+    Ddup,
 }
 
 #[inline]
@@ -135,6 +136,7 @@ impl Archive {
             Some(ext) if ext == "tar" => ArchiveType::Tar,
             Some(ext) if ext == "zip" => ArchiveType::Zip,
             Some(ext) if ext == "7z" => ArchiveType::SevenZip,
+            Some(ext) if ext == "ddup" => ArchiveType::Ddup,
             _ => path.file_stem().map_or(ArchiveType::None, |stem| {
                 if stem.to_str().is_some_and(|s| s.ends_with(".tar")) {
                     ArchiveType::Tar
@@ -394,7 +396,7 @@ impl Archive {
 
                         if entry.is_dir() {
                             filesystem.create_dir_all(&destination_path)?;
-                        } else {
+                        } else if entry.is_file() {
                             filesystem.create_dir_all(destination_path.parent().unwrap())?;
 
                             let mut writer = super::writer::FileSystemWriter::new(
@@ -406,6 +408,16 @@ impl Archive {
 
                             std::io::copy(&mut entry, &mut writer)?;
                             writer.flush()?;
+                        } else if entry.is_symlink() {
+                            let link = std::io::read_to_string(entry).unwrap_or_default();
+                            filesystem
+                                .symlink(link, destination_path)
+                                .unwrap_or_else(|err| {
+                                    tracing::debug!(
+                                        "failed to create symlink from archive: {:#?}",
+                                        err
+                                    );
+                                });
                         }
                     }
 
@@ -463,6 +475,74 @@ impl Archive {
 
                             Ok(true)
                         })?;
+                    }
+
+                    Ok(())
+                })
+                .await??;
+            }
+            ArchiveType::Ddup => {
+                let filesystem = self.server.filesystem.base_dir().await?;
+
+                tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
+                    let file = self.file.try_into_std().unwrap();
+                    let archive = ddup_bak::archive::Archive::open_file(file)?;
+
+                    fn recursive_traverse(
+                        filesystem: &std::sync::Arc<cap_std::fs::Dir>,
+                        server: &crate::server::Server,
+                        destination: &Path,
+                        entry: ddup_bak::archive::entries::Entry,
+                    ) -> Result<(), anyhow::Error> {
+                        let destination_path = destination.join(entry.name());
+                        if server
+                            .filesystem
+                            .is_ignored_sync(&destination_path, entry.is_directory())
+                        {
+                            return Ok(());
+                        }
+
+                        match entry {
+                            ddup_bak::archive::entries::Entry::Directory(dir) => {
+                                filesystem.create_dir_all(&destination_path)?;
+
+                                for entry in dir.entries {
+                                    recursive_traverse(
+                                        filesystem,
+                                        server,
+                                        &destination_path,
+                                        entry,
+                                    )?;
+                                }
+                            }
+                            ddup_bak::archive::entries::Entry::File(mut file) => {
+                                let mut writer = super::writer::FileSystemWriter::new(
+                                    server.clone(),
+                                    destination_path,
+                                    Some(file.mode.into()),
+                                    Some(file.mtime),
+                                )?;
+
+                                std::io::copy(&mut file, &mut writer)?;
+                                writer.flush()?;
+                            }
+                            ddup_bak::archive::entries::Entry::Symlink(link) => {
+                                filesystem
+                                    .symlink(link.target, destination_path)
+                                    .unwrap_or_else(|err| {
+                                        tracing::debug!(
+                                            "failed to create symlink from archive: {:#?}",
+                                            err
+                                        );
+                                    });
+                            }
+                        }
+
+                        Ok(())
+                    }
+
+                    for entry in archive.into_entries() {
+                        recursive_traverse(&filesystem, &self.server, &destination, entry)?;
                     }
 
                     Ok(())

@@ -61,7 +61,6 @@ pub async fn create_backup(
             ),
             Some(&server.filesystem.base_path),
             None,
-            None,
             Some({
                 let compression_format = server.config.system.backups.ddup_bak.compression_format;
 
@@ -144,7 +143,7 @@ pub async fn restore_backup(
 
             if server
                 .filesystem
-                .is_ignored_sync(&path, matches!(entry, Entry::Directory(_)))
+                .is_ignored_sync(&path, entry.is_directory())
             {
                 return Ok(());
             }

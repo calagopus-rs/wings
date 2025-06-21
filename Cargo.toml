@@ -20,13 +20,6 @@ chrono = { version = "0.4.40", features = ["serde"] }
 futures-util = "0.3.31"
 tokio-util = { version = "0.7.15", features = ["full"] }
 uuid = { version = "1.16.0", features = ["serde", "v4"] }
-tar = "0.4.44"
-tokio-tar = "0.3.1"
-zip = { version = "3.0.0", default-features = false, features = ["bzip2", "deflate", "sha1", "time", "zstd", "lzma-rs"] }
-sevenz-rust2 = { version = "0.14.1", features = ["deflate", "brotli", "zstd", "bzip2", "lz4"] }
-flate2 = "1.1.1"
-zstd = "0.13.3"
-async-compression = { version = "0.4.23", features = ["tokio", "bzip2", "gzip", "lz4", "xz", "zstd"] }
 
 [profile.dev.package."*"]
 opt-level = 3

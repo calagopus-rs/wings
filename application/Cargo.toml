@@ -1,6 +1,6 @@
 [package]
 name = "wings-rs"
-version = "0.11.9"
+version = "0.11.10"
 edition = "2024"
 
 [dependencies]
@@ -29,17 +29,17 @@ users = "0.11.0"
 futures-util = { workspace = true }
 tokio-util = { workspace = true }
 uuid = { workspace = true }
-tar = { workspace = true }
-tokio-tar = { workspace = true }
-zip = { workspace = true }
-sevenz-rust2 = { workspace = true }
-flate2 = { workspace = true }
-zstd = { workspace = true }
-async-compression = { workspace = true }
+tar = "0.4.44"
+tokio-tar = "0.3.1"
+zip = { version = "3.0.0", default-features = false, features = ["bzip2", "deflate", "sha1", "time", "zstd", "lzma-rs"] }
+sevenz-rust2 = { version = "0.14.1", features = ["deflate", "brotli", "zstd", "bzip2", "lz4"] }
+flate2 = "1.1.1"
+zstd = "0.13.3"
+async-compression = { version = "0.4.23", features = ["tokio", "bzip2", "gzip", "lz4", "xz", "zstd"] }
 jwt = "0.16.0"
 hmac = { version = "0.12.1", features = ["std"] }
 sha2 = "0.10.9"
-ddup-bak = "0.6.0"
+ddup-bak = "0.7.0"
 infer = "0.19.0"
 rustls = { version = "0.23.27", features = ["ring"] }
 rand = "0.9.1"

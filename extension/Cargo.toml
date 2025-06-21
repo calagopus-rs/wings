@@ -25,10 +25,3 @@ chrono = { workspace = true }
 futures-util = { workspace = true }
 tokio-util = { workspace = true }
 uuid = { workspace = true }
-tar = { workspace = true }
-tokio-tar = { workspace = true }
-zip = { workspace = true }
-sevenz-rust2 = { workspace = true }
-flate2 = { workspace = true }
-zstd = { workspace = true }
-async-compression = { workspace = true }

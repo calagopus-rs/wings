@@ -110,7 +110,7 @@ pub async fn list(
     let entries =
         tokio::task::spawn_blocking(move || -> Result<Vec<DirectoryEntry>, std::io::Error> {
             let archive = repository.get_archive(&uuid.to_string())?;
-            let entry = match archive.find_archive_entry(&path)? {
+            let entry = match archive.find_archive_entry(&path) {
                 Some(entry) => entry,
                 None => {
                     let mut entries =
@@ -173,8 +173,8 @@ pub async fn reader(
             let full_path = path.to_path_buf();
             let archive = repository.get_archive(&uuid.to_string())?;
             let entry = match archive.find_archive_entry(&full_path) {
-                Ok(Some(entry)) => entry,
-                _ => {
+                Some(entry) => entry,
+                None => {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::NotFound,
                         format!("Path not found in archive: {}", full_path.display()),
@@ -245,7 +245,7 @@ pub async fn directory_reader(
 
         let archive = repository.get_archive(&uuid.to_string())?;
         match archive.find_archive_entry(&path) {
-            Ok(Some(entry)) => {
+            Some(entry) => {
                 let entry = match entry {
                     ddup_bak::archive::entries::Entry::Directory(dir) => dir.clone(),
                     _ => {
@@ -269,7 +269,7 @@ pub async fn directory_reader(
                     tar.finish().unwrap();
                 }
             }
-            _ => {
+            None => {
                 for entry in archive.into_entries() {
                     if *exit_early {
                         break;
