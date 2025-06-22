@@ -665,14 +665,15 @@ impl Filesystem {
     ///
     /// - `path`: The path to allocate space for
     /// - `size`: The amount of space to allocate (positive) or deallocate (negative)
+    ///  - `ignorant`: If `true`, ignores disk limit checks
     ///
     /// Returns `true` if allocation was successful, `false` if it would exceed disk limit
-    pub async fn allocate_in_path_raw(&self, path: &[String], delta: i64) -> bool {
+    pub async fn allocate_in_path_raw(&self, path: &[String], delta: i64, ignorant: bool) -> bool {
         if delta == 0 {
             return true;
         }
 
-        if delta > 0 {
+        if delta > 0 && !ignorant {
             let current_usage = self.disk_usage_cached.load(Ordering::Relaxed) as i64;
 
             if self.disk_limit() != 0 && current_usage + delta > self.disk_limit() {
@@ -704,7 +705,7 @@ impl Filesystem {
     pub async fn allocate_in_path(&self, path: &Path, delta: i64) -> bool {
         let components = self.path_to_components(path);
 
-        self.allocate_in_path_raw(&components, delta).await
+        self.allocate_in_path_raw(&components, delta, false).await
     }
 
     pub async fn truncate_root(&self) {

@@ -1034,6 +1034,7 @@ impl russh_sftp::server::Handler for SftpSession {
             .allocate_in_path_raw(
                 &handle.path_components[0..handle.path_components.len() - 1],
                 data.len() as i64,
+                false,
             )
             .await
         {

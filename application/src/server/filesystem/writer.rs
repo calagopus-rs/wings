@@ -14,6 +14,7 @@ pub struct FileSystemWriter {
     server: crate::server::Server,
     parent: Vec<String>,
     writer: Option<BufWriter<cap_std::fs::File>>,
+    ignorant: bool,
     accumulated_bytes: i64,
     modified: Option<SystemTime>,
 }
@@ -59,18 +60,26 @@ impl FileSystemWriter {
                 ALLOCATION_THRESHOLD as usize,
                 file,
             )),
+            ignorant: false,
             accumulated_bytes: 0,
             modified,
         })
     }
 
+    /// Skip Disk Limit Checks
+    pub fn ignorant(mut self) -> Self {
+        self.ignorant = true;
+
+        self
+    }
+
     fn allocate_accumulated(&mut self) -> std::io::Result<()> {
         if self.accumulated_bytes > 0 {
-            if !futures::executor::block_on(
-                self.server
-                    .filesystem
-                    .allocate_in_path_raw(&self.parent, self.accumulated_bytes),
-            ) {
+            if !futures::executor::block_on(self.server.filesystem.allocate_in_path_raw(
+                &self.parent,
+                self.accumulated_bytes,
+                self.ignorant,
+            )) {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::StorageFull,
                     "Failed to allocate space",
@@ -142,6 +151,7 @@ pub struct AsyncFileSystemWriter {
     server: crate::server::Server,
     parent: Vec<String>,
     writer: Option<tokio::io::BufWriter<tokio::fs::File>>,
+    ignorant: bool,
     accumulated_bytes: i64,
     modified: Option<SystemTime>,
     allocation_in_progress: Option<Pin<Box<dyn Future<Output = bool> + Send>>>,
@@ -185,10 +195,18 @@ impl AsyncFileSystemWriter {
                 ALLOCATION_THRESHOLD as usize,
                 file,
             )),
+            ignorant: false,
             accumulated_bytes: 0,
             modified,
             allocation_in_progress: None,
         })
+    }
+
+    /// Skip Disk Limit Checks
+    pub fn ignorant(mut self) -> Self {
+        self.ignorant = true;
+
+        self
     }
 
     fn start_allocation(&mut self) {
@@ -196,9 +214,13 @@ impl AsyncFileSystemWriter {
             let server = self.server.clone();
             let parent = self.parent.clone();
             let bytes = self.accumulated_bytes;
+            let ignorant = self.ignorant;
 
             self.allocation_in_progress = Some(Box::pin(async move {
-                server.filesystem.allocate_in_path_raw(&parent, bytes).await
+                server
+                    .filesystem
+                    .allocate_in_path_raw(&parent, bytes, ignorant)
+                    .await
             }));
 
             self.accumulated_bytes = 0;
@@ -322,10 +344,14 @@ impl Drop for AsyncFileSystemWriter {
             let server = self.server.clone();
             let parent = self.parent.clone();
             let bytes = self.accumulated_bytes;
+            let ignorant = self.ignorant;
 
             if bytes > 0 {
                 tokio::spawn(async move {
-                    server.filesystem.allocate_in_path_raw(&parent, bytes).await;
+                    server
+                        .filesystem
+                        .allocate_in_path_raw(&parent, bytes, ignorant)
+                        .await;
                 });
             }
         }

@@ -71,7 +71,7 @@ mod post {
             );
         }
 
-        let mut archive =
+        let archive =
             match crate::server::filesystem::archive::Archive::open(server.0.clone(), source).await
             {
                 Some(archive) => archive,
@@ -83,8 +83,36 @@ mod post {
                 }
             };
 
-        let reader = archive.reader().await;
-        archive.extract(root.clone(), reader).await.unwrap();
+        match tokio::spawn(archive.extract(root.clone())).await {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                tracing::error!(
+                    server = %server.uuid,
+                    root = %root.display(),
+                    "failed to decompress archive: {:#?}",
+                    err,
+                );
+
+                return (
+                    StatusCode::EXPECTATION_FAILED,
+                    axum::Json(ApiError::new("failed to decompress archive").to_json()),
+                );
+            }
+            Err(err) => {
+                tracing::error!(
+                    server = %server.uuid,
+                    root = %root.display(),
+                    "failed to decompress archive: {:#?}",
+                    err,
+                );
+
+                return (
+                    StatusCode::EXPECTATION_FAILED,
+                    axum::Json(ApiError::new("failed to decompress archive").to_json()),
+                );
+            }
+        }
+
         server.filesystem.chown_path(&root).await;
 
         (

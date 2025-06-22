@@ -239,12 +239,11 @@ impl Archive {
         }
     }
 
-    pub async fn reader(&mut self) -> Option<Box<dyn AsyncRead + Send + Unpin>> {
-        self.file.seek(SeekFrom::Start(0)).await.ok()?;
+    pub async fn reader(&mut self) -> Result<Box<dyn AsyncRead + Send + Unpin>, anyhow::Error> {
+        self.file.seek(SeekFrom::Start(0)).await?;
+        let file = BufReader::new(self.file.try_clone().await?);
 
-        let file = BufReader::new(self.file.try_clone().await.ok()?);
-
-        let reader: Box<dyn AsyncRead + Send + Unpin> = match self.compression {
+        Ok(match self.compression {
             CompressionType::None => Box::new(file),
             CompressionType::Gz => {
                 Box::new(async_compression::tokio::bufread::GzipDecoder::new(file))
@@ -261,16 +260,10 @@ impl Archive {
             CompressionType::Zstd => {
                 Box::new(async_compression::tokio::bufread::ZstdDecoder::new(file))
             }
-        };
-
-        Some(reader)
+        })
     }
 
-    pub async fn extract(
-        self,
-        destination: PathBuf,
-        reader: Option<Box<dyn AsyncRead + Send + Unpin>>,
-    ) -> Result<(), anyhow::Error> {
+    pub async fn extract(mut self, destination: PathBuf) -> Result<(), anyhow::Error> {
         match self.archive {
             ArchiveType::None => {
                 let file_name = match self.path.file_stem() {
@@ -288,13 +281,13 @@ impl Archive {
                 )
                 .await?;
 
-                tokio::io::copy(&mut reader.unwrap(), &mut writer).await?;
+                tokio::io::copy(&mut self.reader().await?, &mut writer).await?;
                 writer.flush().await?;
             }
             ArchiveType::Tar => {
-                let mut archive = tokio_tar::Archive::new(reader.unwrap());
-
+                let mut archive = tokio_tar::Archive::new(self.reader().await?);
                 let mut entries = archive.entries()?;
+
                 while let Some(Ok(mut entry)) = entries.next().await {
                     let path = entry.path().unwrap();
 
@@ -308,10 +301,7 @@ impl Archive {
                     if self
                         .server
                         .filesystem
-                        .is_ignored(
-                            &destination_path,
-                            header.entry_type() == tokio_tar::EntryType::Directory,
-                        )
+                        .is_ignored(&destination_path, header.entry_type().is_dir())
                         .await
                     {
                         continue;
@@ -341,11 +331,10 @@ impl Archive {
                                     })
                                     .ok(),
                             )
-                            .await
-                            .unwrap();
+                            .await?;
 
-                            tokio::io::copy(&mut entry, &mut writer).await.unwrap();
-                            writer.flush().await.unwrap();
+                            tokio::io::copy(&mut entry, &mut writer).await?;
+                            writer.flush().await?;
                         }
                         tokio_tar::EntryType::Symlink => {
                             let link = entry.link_name().unwrap_or_default().unwrap_or_default();
@@ -370,7 +359,6 @@ impl Archive {
 
                 tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
                     let file = self.file.try_into_std().unwrap();
-
                     let mut archive = zip::ZipArchive::new(file)?;
 
                     for i in 0..archive.len() {

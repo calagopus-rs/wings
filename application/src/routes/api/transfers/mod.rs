@@ -16,10 +16,10 @@ mod post {
         extract::Multipart,
         http::{HeaderMap, StatusCode},
     };
-    use futures::TryStreamExt;
+    use futures::{StreamExt, TryStreamExt};
     use serde::Serialize;
-    use std::{fs::Permissions, io::Write, os::unix::fs::PermissionsExt, str::FromStr};
-    use tokio_util::io::SyncIoBridge;
+    use std::{fs::Permissions, os::unix::fs::PermissionsExt, str::FromStr};
+    use tokio::io::AsyncWriteExt;
     use utoipa::ToSchema;
 
     #[derive(ToSchema, Serialize)]
@@ -110,40 +110,42 @@ mod post {
             .transferring
             .store(true, std::sync::atomic::Ordering::SeqCst);
 
-        let filesystem = server.filesystem.base_dir().await.unwrap();
-
-        let runtime = tokio::runtime::Handle::current();
         server
             .clone()
             .incoming_transfer
             .write()
             .await
-            .replace(tokio::task::spawn_blocking(move || {
-                while let Ok(Some(field)) = runtime.block_on(multipart.next_field()) {
+            .replace(tokio::spawn(async move {
+                while let Ok(Some(field)) = multipart.next_field().await {
                     if let Some("archive") = field.name() {
                         let file_name = field.file_name().unwrap_or("archive.tar.gz").to_string();
-                        let sync_reader = SyncIoBridge::new(tokio_util::io::StreamReader::new(
+                        let reader = tokio_util::io::StreamReader::new(
                             field.into_stream().map_err(|err| {
                                 std::io::Error::other(format!(
                                     "failed to read multipart field: {}",
                                     err
                                 ))
                             }),
-                        ));
-                        let reader: Box<dyn std::io::Read> =
+                        );
+                        let reader: Box<dyn tokio::io::AsyncRead + Send> =
                             match ArchiveFormat::from_str(&file_name).unwrap_or(ArchiveFormat::TarGz) {
-                                ArchiveFormat::Tar => Box::new(sync_reader),
+                                ArchiveFormat::Tar => Box::new(reader),
                                 ArchiveFormat::TarGz => {
-                                    Box::new(flate2::read::GzDecoder::new(sync_reader))
+                                    Box::new(async_compression::tokio::bufread::GzipDecoder::new(
+                                        reader,
+                                    ))
                                 }
                                 ArchiveFormat::TarZstd => {
-                                    Box::new(zstd::Decoder::new(sync_reader).unwrap())
+                                    Box::new(async_compression::tokio::bufread::ZstdDecoder::new(
+                                        reader,
+                                    ))
                                 }
                             };
-                        let mut archive = tar::Archive::new(reader);
 
-                        for entry in archive.entries().unwrap() {
-                            let mut entry = entry.unwrap();
+                        let mut archive = tokio_tar::Archive::new(Box::into_pin(reader));
+                        let mut entries = archive.entries().unwrap();
+
+                        while let Some(Ok(mut entry)) = entries.next().await {
                             let path = entry.path().unwrap();
 
                             if path.is_absolute() {
@@ -152,14 +154,14 @@ mod post {
 
                             let header = entry.header();
                             match header.entry_type() {
-                                tar::EntryType::Directory => {
-                                    filesystem.create_dir_all(&path).unwrap();
+                                tokio_tar::EntryType::Directory => {
+                                    server.filesystem.create_dir_all(path.as_ref()).await.unwrap();
                                 }
-                                tar::EntryType::Regular => {
-                                    filesystem.create_dir_all(path.parent().unwrap()).unwrap();
+                                tokio_tar::EntryType::Regular => {
+                                    server.filesystem.create_dir_all(path.parent().unwrap()).await.unwrap();
 
                                     let mut writer =
-                                        crate::server::filesystem::writer::FileSystemWriter::new(
+                                        crate::server::filesystem::writer::AsyncFileSystemWriter::new(
                                             server.clone(),
                                             path.to_path_buf(),
                                             header.mode().map(Permissions::from_mode).ok(),
@@ -171,22 +173,24 @@ mod post {
                                                 })
                                                 .ok(),
                                         )
-                                        .unwrap();
+                                        .await
+                                        .unwrap()
+                                        .ignorant();
 
-                                    if let Err(err) = std::io::copy(&mut entry, &mut writer) {
+                                    if let Err(err) = tokio::io::copy(&mut entry, &mut writer).await {
                                         tracing::error!(
                                             "failed to copy file from transfer archive: {:#?}",
                                             err
                                         );
                                     }
-                                    if let Err(err) = writer.flush() {
+                                    if let Err(err) = writer.flush().await {
                                         tracing::error!(
                                             "failed to flush file from transfer archive: {:#?}",
                                             err
                                         );
                                     }
                                 }
-                                tar::EntryType::Symlink => {
+                                tokio_tar::EntryType::Symlink => {
                                     let link = match entry.link_name() {
                                         Ok(link) => link.unwrap_or_default(),
                                         Err(err) => {
@@ -198,10 +202,10 @@ mod post {
                                         }
                                     };
 
-                                    if let Err(err) = filesystem.symlink(
-                                        link,
-                                        &path,
-                                    ) {
+                                    if let Err(err) = server.filesystem.symlink(
+                                        link.as_ref(),
+                                        path.as_ref(),
+                                    ).await {
                                         tracing::error!(
                                             "failed to create symlink from transfer archive: {:#?}",
                                             err
@@ -214,8 +218,7 @@ mod post {
                     }
                 }
 
-                futures::executor::block_on(state.config.client.set_server_transfer(subject, true))
-                    .ok();
+                state.config.client.set_server_transfer(subject, true).await.unwrap();
                 server
                     .transferring
                     .store(false, std::sync::atomic::Ordering::SeqCst);

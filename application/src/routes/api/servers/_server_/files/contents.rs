@@ -154,8 +154,15 @@ mod get {
         };
 
         let reader = match file.reader().await {
-            Some(reader) => reader,
-            None => {
+            Ok(reader) => reader,
+            Err(err) => {
+                tracing::error!(
+                    server = %server.uuid,
+                    path = %path.display(),
+                    "failed to open file for reading: {:#?}",
+                    err,
+                );
+
                 return (
                     StatusCode::EXPECTATION_FAILED,
                     HeaderMap::from_iter([(
