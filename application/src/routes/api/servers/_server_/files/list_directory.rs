@@ -43,9 +43,7 @@ mod get {
 
         if let Some((backup, path)) = server.filesystem.backup_fs(&server, &path).await {
             match crate::server::filesystem::backup::list(backup, &server, &path).await {
-                Ok(entries_list) => {
-                    entries.extend(entries_list);
-                }
+                Ok(entries_list) => entries.extend(entries_list),
                 Err(err) => {
                     tracing::error!(
                         server = %server.uuid,

@@ -5,12 +5,15 @@ use std::{
     io::{SeekFrom, Write},
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
+    sync::{Arc, RwLock, atomic::AtomicUsize},
 };
 use tokio::{
     fs::File,
     io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader},
 };
 use utoipa::ToSchema;
+
+pub mod multi_reader;
 
 #[derive(Clone, Copy)]
 pub enum CompressionType {
@@ -313,12 +316,20 @@ impl Archive {
                                 .filesystem
                                 .create_dir_all(&destination_path)
                                 .await?;
+                            if let Ok(permissions) = header.mode().map(Permissions::from_mode) {
+                                self.server
+                                    .filesystem
+                                    .set_permissions(
+                                        &destination_path,
+                                        cap_std::fs::Permissions::from_std(permissions),
+                                    )
+                                    .await?;
+                            }
                         }
                         tokio_tar::EntryType::Regular => {
-                            self.server
-                                .filesystem
-                                .create_dir_all(destination_path.parent().unwrap())
-                                .await?;
+                            if let Some(parent) = destination_path.parent() {
+                                self.server.filesystem.create_dir_all(parent).await?;
+                            }
 
                             let mut writer = super::writer::AsyncFileSystemWriter::new(
                                 self.server.clone(),
@@ -358,58 +369,109 @@ impl Archive {
                 let filesystem = self.server.filesystem.base_dir().await?;
 
                 tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
-                    let file = self.file.try_into_std().unwrap();
-                    let mut archive = zip::ZipArchive::new(file)?;
+                    let file = Arc::new(self.file.try_into_std().unwrap());
+                    let archive = zip::ZipArchive::new(multi_reader::MultiReader::new(file))?;
+                    let entry_index = Arc::new(AtomicUsize::new(0));
 
-                    for i in 0..archive.len() {
-                        let mut entry = archive.by_index(i)?;
-                        let path = match entry.enclosed_name() {
-                            Some(path) => path,
-                            None => continue,
-                        };
+                    let pool = rayon::ThreadPoolBuilder::new()
+                        .num_threads(self.server.config.api.file_decompression_threads)
+                        .build()
+                        .unwrap();
 
-                        if path.is_absolute() {
-                            continue;
-                        }
+                    let error = Arc::new(RwLock::new(None));
 
-                        let destination_path = destination.join(path);
+                    pool.in_place_scope(|scope| {
+                        let error_clone = Arc::clone(&error);
 
-                        if self
-                            .server
-                            .filesystem
-                            .is_ignored_sync(&destination_path, entry.is_dir())
-                        {
-                            continue;
-                        }
+                        scope.spawn_broadcast(move |_, _| {
+                            let mut archive = archive.clone();
+                            let entry_index = Arc::clone(&entry_index);
+                            let filesystem = Arc::clone(&filesystem);
+                            let error_clone2 = Arc::clone(&error_clone);
+                            let destination = destination.clone();
+                            let server = self.server.clone();
 
-                        if entry.is_dir() {
-                            filesystem.create_dir_all(&destination_path)?;
-                        } else if entry.is_file() {
-                            filesystem.create_dir_all(destination_path.parent().unwrap())?;
+                            let mut run = move || -> Result<(), anyhow::Error> {
+                                loop {
+                                    if error_clone2.read().unwrap().is_some() {
+                                        return Ok(());
+                                    }
 
-                            let mut writer = super::writer::FileSystemWriter::new(
-                                self.server.clone(),
-                                destination_path,
-                                entry.unix_mode().map(Permissions::from_mode),
-                                zip_entry_get_modified_time(&entry),
-                            )?;
+                                    let i = entry_index
+                                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                                    if i >= archive.len() {
+                                        return Ok(());
+                                    }
 
-                            std::io::copy(&mut entry, &mut writer)?;
-                            writer.flush()?;
-                        } else if entry.is_symlink() {
-                            let link = std::io::read_to_string(entry).unwrap_or_default();
-                            filesystem
-                                .symlink(link, destination_path)
-                                .unwrap_or_else(|err| {
-                                    tracing::debug!(
-                                        "failed to create symlink from archive: {:#?}",
-                                        err
-                                    );
-                                });
-                        }
+                                    let mut entry = archive.by_index(i)?;
+                                    let path = match entry.enclosed_name() {
+                                        Some(path) => path,
+                                        None => continue,
+                                    };
+
+                                    if path.is_absolute() {
+                                        continue;
+                                    }
+
+                                    let destination_path = destination.join(path);
+
+                                    if server
+                                        .filesystem
+                                        .is_ignored_sync(&destination_path, entry.is_dir())
+                                    {
+                                        continue;
+                                    }
+
+                                    if entry.is_dir() {
+                                        filesystem.create_dir_all(&destination_path)?;
+                                        filesystem.set_permissions(
+                                            &destination_path,
+                                            cap_std::fs::Permissions::from_std(
+                                                Permissions::from_mode(
+                                                    entry.unix_mode().unwrap_or(0o755),
+                                                ),
+                                            ),
+                                        )?;
+                                    } else if entry.is_file() {
+                                        if let Some(parent) = destination_path.parent() {
+                                            filesystem.create_dir_all(parent)?;
+                                        }
+
+                                        let mut writer = super::writer::FileSystemWriter::new(
+                                            server.clone(),
+                                            destination_path,
+                                            entry.unix_mode().map(Permissions::from_mode),
+                                            zip_entry_get_modified_time(&entry),
+                                        )?;
+
+                                        std::io::copy(&mut entry, &mut writer)?;
+                                        writer.flush()?;
+                                    } else if entry.is_symlink() {
+                                        let link =
+                                            std::io::read_to_string(entry).unwrap_or_default();
+                                        filesystem.symlink(link, destination_path).unwrap_or_else(
+                                            |err| {
+                                                tracing::debug!(
+                                                    "failed to create symlink from archive: {:#?}",
+                                                    err
+                                                );
+                                            },
+                                        );
+                                    }
+                                }
+                            };
+
+                            if let Err(err) = run() {
+                                error_clone.write().unwrap().replace(err);
+                            }
+                        });
+                    });
+
+                    if let Some(err) = error.write().unwrap().take() {
+                        Err(err)
+                    } else {
+                        Ok(())
                     }
-
-                    Ok(())
                 })
                 .await??;
             }
@@ -443,7 +505,9 @@ impl Archive {
                             if entry.is_directory() {
                                 filesystem.create_dir_all(&destination_path)?;
                             } else {
-                                filesystem.create_dir_all(destination_path.parent().unwrap())?;
+                                if let Some(parent) = destination_path.parent() {
+                                    filesystem.create_dir_all(parent)?;
+                                }
 
                                 let mut writer = super::writer::FileSystemWriter::new(
                                     self.server.clone(),
@@ -476,7 +540,13 @@ impl Archive {
                     let file = self.file.try_into_std().unwrap();
                     let archive = ddup_bak::archive::Archive::open_file(file)?;
 
+                    let pool = rayon::ThreadPoolBuilder::new()
+                        .num_threads(self.server.config.api.file_decompression_threads)
+                        .build()
+                        .unwrap();
+
                     fn recursive_traverse(
+                        scope: &rayon::Scope,
                         filesystem: &std::sync::Arc<cap_std::fs::Dir>,
                         server: &crate::server::Server,
                         destination: &Path,
@@ -493,9 +563,14 @@ impl Archive {
                         match entry {
                             ddup_bak::archive::entries::Entry::Directory(dir) => {
                                 filesystem.create_dir_all(&destination_path)?;
+                                filesystem.set_permissions(
+                                    &destination_path,
+                                    cap_std::fs::Permissions::from_std(dir.mode.into()),
+                                )?;
 
                                 for entry in dir.entries {
                                     recursive_traverse(
+                                        scope,
                                         filesystem,
                                         server,
                                         &destination_path,
@@ -504,15 +579,22 @@ impl Archive {
                                 }
                             }
                             ddup_bak::archive::entries::Entry::File(mut file) => {
-                                let mut writer = super::writer::FileSystemWriter::new(
-                                    server.clone(),
-                                    destination_path,
-                                    Some(file.mode.into()),
-                                    Some(file.mtime),
-                                )?;
+                                scope.spawn({
+                                    let server = server.clone();
 
-                                std::io::copy(&mut file, &mut writer)?;
-                                writer.flush()?;
+                                    move |_| {
+                                        let mut writer = super::writer::FileSystemWriter::new(
+                                            server,
+                                            destination_path,
+                                            Some(file.mode.into()),
+                                            Some(file.mtime),
+                                        )
+                                        .unwrap();
+
+                                        std::io::copy(&mut file, &mut writer).unwrap();
+                                        writer.flush().unwrap();
+                                    }
+                                });
                             }
                             ddup_bak::archive::entries::Entry::Symlink(link) => {
                                 filesystem
@@ -529,11 +611,19 @@ impl Archive {
                         Ok(())
                     }
 
-                    for entry in archive.into_entries() {
-                        recursive_traverse(&filesystem, &self.server, &destination, entry)?;
-                    }
+                    pool.in_place_scope(|scope| {
+                        for entry in archive.into_entries() {
+                            recursive_traverse(
+                                scope,
+                                &filesystem,
+                                &self.server,
+                                &destination,
+                                entry,
+                            )?;
+                        }
 
-                    Ok(())
+                        Ok(())
+                    })
                 })
                 .await??;
             }

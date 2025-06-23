@@ -29,6 +29,9 @@ fn api_directory_entry_limit() -> usize {
 fn api_file_search_threads() -> usize {
     4
 }
+fn api_file_decompression_threads() -> usize {
+    2
+}
 fn api_upload_limit() -> usize {
     100
 }
@@ -120,6 +123,10 @@ fn system_backup_mounting_enabled() -> bool {
 }
 fn system_backup_mounting_path() -> String {
     ".backups".to_string()
+}
+
+fn system_backup_wings_restore_threads() -> usize {
+    4
 }
 
 fn system_backup_ddup_bak_create_threads() -> usize {
@@ -263,6 +270,8 @@ nestify::nest! {
             pub send_offline_server_logs: bool,
             #[serde(default = "api_file_search_threads")]
             pub file_search_threads: usize,
+            #[serde(default = "api_file_decompression_threads")]
+            pub file_decompression_threads: usize,
             #[serde(default = "api_upload_limit")]
             /// MB
             pub upload_limit: usize,
@@ -383,6 +392,9 @@ nestify::nest! {
 
                 #[serde(default)]
                 pub wings: #[derive(Deserialize, Serialize, DefaultFromSerde)] #[serde(default)] pub struct SystemBackupsWings {
+                    #[serde(default = "system_backup_wings_restore_threads")]
+                    pub restore_threads: usize,
+
                     #[serde(default)]
                     pub archive_format: #[derive(Clone, Copy, Deserialize, Serialize, Default)] #[serde(rename_all = "snake_case")] pub enum SystemBackupsWingsArchiveFormat {
                         Tar,

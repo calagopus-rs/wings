@@ -12,6 +12,7 @@ use std::{
     io::Write,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
+    sync::{Arc, RwLock, atomic::AtomicUsize},
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 
@@ -346,51 +347,112 @@ pub async fn restore_backup(
             }
         }
         crate::config::SystemBackupsWingsArchiveFormat::Zip => {
-            let file = file.into_std().await;
+            let file = Arc::new(file.into_std().await);
+            let filesystem = server.filesystem.base_dir().await?;
+            let runtime = tokio::runtime::Handle::current();
 
             tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
-                let runtime = tokio::runtime::Handle::current();
-                let filesystem = server.filesystem.sync_base_dir()?;
+                let archive = zip::ZipArchive::new(crate::server::filesystem::archive::multi_reader::MultiReader::new(file))?;
+                let entry_index = Arc::new(AtomicUsize::new(0));
 
-                let mut archive = zip::ZipArchive::new(file).unwrap();
+                let pool = rayon::ThreadPoolBuilder::new()
+                    .num_threads(server.config.system.backups.wings.restore_threads)
+                    .build()?;
 
-                for i in 0..archive.len() {
-                    let mut entry = archive.by_index(i)?;
-                    let path = match entry.enclosed_name() {
-                        Some(path) => path,
-                        None => continue,
-                    };
+                let error = Arc::new(RwLock::new(None));
 
-                    if path.is_absolute() {
-                        continue;
-                    }
+                pool.in_place_scope(|scope| {
+                    let error_clone = Arc::clone(&error);
 
-                    if server.filesystem.is_ignored_sync(&path, entry.is_dir()) {
-                        continue;
-                    }
+                    scope.spawn_broadcast(move |_, _| {
+                        let mut archive = archive.clone();
+                        let runtime = runtime.clone();
+                        let entry_index = Arc::clone(&entry_index);
+                        let filesystem = Arc::clone(&filesystem);
+                        let error_clone2 = Arc::clone(&error_clone);
+                        let server = server.clone();
 
-                    if entry.is_dir() {
-                        filesystem.create_dir_all(&path)?;
-                    } else {
-                        runtime.block_on(
-                            server.log_daemon(format!("(restoring): {}", path.display())),
-                        );
+                        let mut run = move || -> Result<(), anyhow::Error> {
+                            loop {
+                                if error_clone2.read().unwrap().is_some() {
+                                    return Ok(());
+                                }
 
-                        filesystem.create_dir_all(path.parent().unwrap())?;
+                                let i =
+                                    entry_index.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                                if i >= archive.len() {
+                                    return Ok(());
+                                }
 
-                        let mut writer = crate::server::filesystem::writer::FileSystemWriter::new(
-                            server.clone(),
-                            path,
-                            entry.unix_mode().map(Permissions::from_mode),
-                            crate::server::filesystem::archive::zip_entry_get_modified_time(&entry),
-                        )?;
+                                let mut entry = archive.by_index(i)?;
+                                let path = match entry.enclosed_name() {
+                                    Some(path) => path,
+                                    None => continue,
+                                };
 
-                        std::io::copy(&mut entry, &mut writer)?;
-                        writer.flush()?;
-                    }
+                                if path.is_absolute() {
+                                    continue;
+                                }
+
+                                if server
+                                    .filesystem
+                                    .is_ignored_sync(&path, entry.is_dir())
+                                {
+                                    continue;
+                                }
+
+                                if entry.is_dir() {
+                                    filesystem.create_dir_all(&path)?;
+                                    filesystem.set_permissions(
+                                        &path,
+                                        cap_std::fs::Permissions::from_std(Permissions::from_mode(
+                                            entry.unix_mode().unwrap_or(0o755),
+                                        )),
+                                    )?;
+                                } else if entry.is_file() {
+                                    runtime.block_on(
+                                        server
+                                            .log_daemon(format!("(restoring): {}", path.display())),
+                                    );
+
+                                    if let Some(parent) = path.parent() {
+                                        filesystem.create_dir_all(parent)?;
+                                    }
+
+                                    let mut writer = crate::server::filesystem::writer::FileSystemWriter::new(
+                                        server.clone(),
+                                        path,
+                                        entry.unix_mode().map(Permissions::from_mode),
+                                        crate::server::filesystem::archive::zip_entry_get_modified_time(&entry),
+                                    )?;
+
+                                    std::io::copy(&mut entry, &mut writer)?;
+                                    writer.flush()?;
+                                } else if entry.is_symlink() {
+                                    let link = std::io::read_to_string(entry).unwrap_or_default();
+                                    filesystem.symlink(link, path).unwrap_or_else(
+                                        |err| {
+                                            tracing::debug!(
+                                                "failed to create symlink from archive: {:#?}",
+                                                err
+                                            );
+                                        },
+                                    );
+                                }
+                            }
+                        };
+
+                        if let Err(err) = run() {
+                            error_clone.write().unwrap().replace(err);
+                        }
+                    });
+                });
+
+                if let Some(err) = error.write().unwrap().take() {
+                    Err(err)
+                } else {
+                    Ok(())
                 }
-
-                Ok(())
             })
             .await??;
         }

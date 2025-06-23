@@ -47,12 +47,6 @@ impl FileSystemWriter {
             )?;
         }
 
-        tokio::spawn({
-            let server = server.clone();
-
-            async move { server.filesystem.chown_path(&destination).await }
-        });
-
         Ok(Self {
             server,
             parent,
