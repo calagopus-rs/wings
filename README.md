@@ -21,6 +21,8 @@ api:
   send_offline_server_logs: false
   # how many threads to use when searching files using file search
   file_search_threads: 4
+  # how many threads to use when decompressing .zip/.ddup
+  file_decompression_threads: 2
 
 system:
   # apply a real quota limit to each server
@@ -48,6 +50,8 @@ system:
 
     # settings for the wings backup driver
     wings:
+      # how many threads to use when restoring a zip wings backup
+      restore_threads: 4
       # what archive format to use for local (wings) backups
       # tar, tar_gz, tar_zstd, zip
       archive_format: tar_gz

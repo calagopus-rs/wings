@@ -370,7 +370,7 @@ impl Archive {
 
                 tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
                     let file = Arc::new(self.file.try_into_std().unwrap());
-                    let archive = zip::ZipArchive::new(multi_reader::MultiReader::new(file))?;
+                    let archive = zip::ZipArchive::new(multi_reader::MultiReader::new(file)?)?;
                     let entry_index = Arc::new(AtomicUsize::new(0));
 
                     let pool = rayon::ThreadPoolBuilder::new()
@@ -446,7 +446,9 @@ impl Archive {
 
                                         std::io::copy(&mut entry, &mut writer)?;
                                         writer.flush()?;
-                                    } else if entry.is_symlink() {
+                                    } else if entry.is_symlink()
+                                        && (1..=2048).contains(&entry.size())
+                                    {
                                         let link =
                                             std::io::read_to_string(entry).unwrap_or_default();
                                         filesystem.symlink(link, destination_path).unwrap_or_else(
@@ -479,57 +481,92 @@ impl Archive {
                 let filesystem = self.server.filesystem.base_dir().await?;
 
                 tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
-                    let mut file = self.file.try_into_std().unwrap();
-                    let archive = sevenz_rust2::Archive::read(&mut file, &[])?;
+                    let file = multi_reader::MultiReader::new(Arc::new(
+                        self.file.try_into_std().unwrap(),
+                    ))?;
+                    let archive = sevenz_rust2::Archive::read(&mut file.clone(), &[])?;
 
-                    for folder_index in 0..archive.folders.len() {
-                        let folder =
-                            sevenz_rust2::BlockDecoder::new(folder_index, &archive, &[], &mut file);
+                    let pool = rayon::ThreadPoolBuilder::new()
+                        .num_threads(self.server.config.api.file_decompression_threads)
+                        .build()
+                        .unwrap();
 
-                        folder.for_each_entries(&mut |entry, reader| {
-                            let path = entry.name();
-                            if path.starts_with('/') || path.starts_with('\\') {
-                                return Ok(true);
-                            }
+                    let error = Arc::new(RwLock::new(None));
 
-                            let destination_path = destination.join(path);
+                    pool.in_place_scope(|scope| {
+                        for folder_index in 0..archive.folders.len() {
+                            let archive = archive.clone();
+                            let mut file = file.clone();
+                            let filesystem = Arc::clone(&filesystem);
+                            let destination = destination.clone();
+                            let server = self.server.clone();
+                            let error_clone = Arc::clone(&error);
 
-                            if self
-                                .server
-                                .filesystem
-                                .is_ignored_sync(&destination_path, entry.is_directory())
-                            {
-                                return Ok(true);
-                            }
-
-                            if entry.is_directory() {
-                                filesystem.create_dir_all(&destination_path)?;
-                            } else {
-                                if let Some(parent) = destination_path.parent() {
-                                    filesystem.create_dir_all(parent)?;
+                            scope.spawn(move |_| {
+                                if error_clone.read().unwrap().is_some() {
+                                    return;
                                 }
 
-                                let mut writer = super::writer::FileSystemWriter::new(
-                                    self.server.clone(),
-                                    destination_path,
-                                    None,
-                                    if entry.has_last_modified_date {
-                                        Some(entry.last_modified_date.into())
+                                let folder = sevenz_rust2::BlockDecoder::new(
+                                    folder_index,
+                                    &archive,
+                                    &[],
+                                    &mut file,
+                                );
+
+                                let result = folder.for_each_entries(&mut |entry, reader| {
+                                    let path = entry.name();
+                                    if path.starts_with('/') || path.starts_with('\\') {
+                                        return Ok(true);
+                                    }
+
+                                    let destination_path = destination.join(path);
+
+                                    if server
+                                        .filesystem
+                                        .is_ignored_sync(&destination_path, entry.is_directory())
+                                    {
+                                        return Ok(true);
+                                    }
+
+                                    if entry.is_directory() {
+                                        filesystem.create_dir_all(&destination_path)?;
                                     } else {
-                                        None
-                                    },
-                                )
-                                .map_err(|e| std::io::Error::other(e.to_string()))?;
+                                        if let Some(parent) = destination_path.parent() {
+                                            filesystem.create_dir_all(parent)?;
+                                        }
 
-                                std::io::copy(reader, &mut writer)?;
-                                writer.flush()?;
-                            }
+                                        let mut writer = super::writer::FileSystemWriter::new(
+                                            server.clone(),
+                                            destination_path,
+                                            None,
+                                            if entry.has_last_modified_date {
+                                                Some(entry.last_modified_date.into())
+                                            } else {
+                                                None
+                                            },
+                                        )
+                                        .map_err(|e| std::io::Error::other(e.to_string()))?;
 
-                            Ok(true)
-                        })?;
+                                        std::io::copy(reader, &mut writer)?;
+                                        writer.flush()?;
+                                    }
+
+                                    Ok(true)
+                                });
+
+                                if let Err(err) = result {
+                                    error_clone.write().unwrap().replace(err);
+                                }
+                            });
+                        }
+                    });
+
+                    if let Some(err) = error.write().unwrap().take() {
+                        Err(err.into())
+                    } else {
+                        Ok(())
                     }
-
-                    Ok(())
                 })
                 .await??;
             }

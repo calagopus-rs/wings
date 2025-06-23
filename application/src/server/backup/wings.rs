@@ -352,7 +352,7 @@ pub async fn restore_backup(
             let runtime = tokio::runtime::Handle::current();
 
             tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
-                let archive = zip::ZipArchive::new(crate::server::filesystem::archive::multi_reader::MultiReader::new(file))?;
+                let archive = zip::ZipArchive::new(crate::server::filesystem::archive::multi_reader::MultiReader::new(file)?)?;
                 let entry_index = Arc::new(AtomicUsize::new(0));
 
                 let pool = rayon::ThreadPoolBuilder::new()
@@ -428,7 +428,7 @@ pub async fn restore_backup(
 
                                     std::io::copy(&mut entry, &mut writer)?;
                                     writer.flush()?;
-                                } else if entry.is_symlink() {
+                                } else if entry.is_symlink() && (1..=2048).contains(&entry.size()) {
                                     let link = std::io::read_to_string(entry).unwrap_or_default();
                                     filesystem.symlink(link, path).unwrap_or_else(
                                         |err| {

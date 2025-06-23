@@ -8,12 +8,19 @@ use std::{
 #[derive(Clone)]
 pub struct MultiReader {
     file: Arc<File>,
+    file_size: u64,
     offset: u64,
 }
 
 impl MultiReader {
-    pub fn new(file: Arc<File>) -> Self {
-        MultiReader { file, offset: 0 }
+    pub fn new(file: Arc<File>) -> std::io::Result<Self> {
+        let file_size = file.metadata()?.len();
+
+        Ok(MultiReader {
+            file,
+            file_size,
+            offset: 0,
+        })
     }
 }
 
@@ -31,11 +38,10 @@ impl Seek for MultiReader {
         self.offset = match pos {
             SeekFrom::Start(offset) => offset,
             SeekFrom::End(offset) => {
-                let file_size = self.file.metadata()?.len();
                 if offset >= 0 {
-                    file_size.saturating_add(offset as u64)
+                    self.file_size.saturating_add(offset as u64)
                 } else {
-                    file_size.saturating_sub((-offset) as u64)
+                    self.file_size.saturating_sub((-offset) as u64)
                 }
             }
             SeekFrom::Current(offset) => {
