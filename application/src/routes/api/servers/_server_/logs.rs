@@ -34,7 +34,7 @@ mod get {
         let size = data.size.unwrap_or(100).min(100);
         let log = server.read_log(&state.docker, size).await.unwrap();
 
-        axum::Json(serde_json::to_value(&Response { data: log }).unwrap())
+        axum::Json(serde_json::to_value(Response { data: log }).unwrap())
     }
 }
 

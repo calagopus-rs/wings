@@ -220,7 +220,7 @@ mod post {
         (
             StatusCode::OK,
             axum::Json(
-                serde_json::to_value(&Response {
+                serde_json::to_value(Response {
                     results: &results.lock().unwrap(),
                 })
                 .unwrap(),

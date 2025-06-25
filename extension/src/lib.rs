@@ -2,6 +2,8 @@ use wings_rs::{export_extension, extensions::Extension};
 
 export_extension!(ExampleExtension);
 
+mod routes;
+
 #[derive(Default)]
 pub struct ExampleExtension;
 
@@ -19,7 +21,7 @@ impl Extension for ExampleExtension {
         }
     }
 
-    fn on_init(&self, state: wings_rs::routes::State) {
+    fn on_init(&mut self, state: wings_rs::routes::State) {
         println!(
             "ExampleExtension initialized with app version: {:?}",
             state.version
@@ -27,7 +29,7 @@ impl Extension for ExampleExtension {
     }
 
     fn router(
-        &self,
+        &mut self,
         state: wings_rs::routes::State,
     ) -> utoipa_axum::router::OpenApiRouter<wings_rs::routes::State> {
         utoipa_axum::router::OpenApiRouter::new()
@@ -35,6 +37,7 @@ impl Extension for ExampleExtension {
                 "/example",
                 axum::routing::get(|| async { "This is an example endpoint." }),
             )
+            .merge(routes::router(&state))
             .with_state(state)
     }
 }

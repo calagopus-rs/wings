@@ -17,7 +17,7 @@ impl Manager {
                         unsafe extern "C" fn() -> Box<dyn super::Extension>,
                     > = unsafe { library.get(b"load_extension\0").unwrap() };
 
-                    let api_version: Symbol<unsafe extern "C" fn() -> u32> =
+                    let api_version: Symbol<unsafe extern "C" fn() -> &'static str> =
                         unsafe { library.get(b"api_version\0").unwrap() };
                     let api_version = unsafe { api_version() };
                     if api_version != super::API_VERSION {
@@ -31,8 +31,7 @@ impl Manager {
                         continue;
                     }
 
-                    let extension: Box<dyn super::Extension + 'static> =
-                        unsafe { load_extension() };
+                    let extension = unsafe { load_extension() };
 
                     tracing::info!(
                         info = ?extension.info(),
@@ -49,7 +48,7 @@ impl Manager {
                 }
             }
         } else {
-            tracing::error!(path = path, "failed to read extensions directory");
+            tracing::warn!(path = path, "failed to read extensions directory");
         }
 
         Self {
@@ -60,5 +59,17 @@ impl Manager {
 
     pub fn get_extensions(&self) -> &[Box<dyn super::Extension>] {
         &self.extensions
+    }
+
+    /// # Safety
+    /// This method allows mutable access to the extensions
+    /// without any checks. It should only be used when you are certain that
+    /// the extensions will not be accessed concurrently. (e.g., during initialization)
+    #[allow(clippy::mut_from_ref)]
+    pub fn get_extensions_mut_unchecked(&self) -> &mut [Box<dyn super::Extension>] {
+        let len = self.extensions.len();
+        let ptr = self.extensions.as_ptr() as *mut Box<dyn super::Extension>;
+
+        unsafe { std::slice::from_raw_parts_mut(ptr, len) }
     }
 }

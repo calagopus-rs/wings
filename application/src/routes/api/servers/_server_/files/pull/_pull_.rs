@@ -48,7 +48,7 @@ mod delete {
 
         (
             StatusCode::OK,
-            axum::Json(serde_json::to_value(&Response {}).unwrap()),
+            axum::Json(serde_json::to_value(Response {}).unwrap()),
         )
     }
 }

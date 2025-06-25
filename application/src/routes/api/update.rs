@@ -52,7 +52,7 @@ mod post {
         axum::Json(data): axum::Json<Payload>,
     ) -> axum::Json<serde_json::Value> {
         if state.config.ignore_panel_config_updates {
-            return axum::Json(serde_json::to_value(&Response { applied: false }).unwrap());
+            return axum::Json(serde_json::to_value(Response { applied: false }).unwrap());
         }
 
         let config = state.config.unsafe_mut();
@@ -109,7 +109,7 @@ mod post {
             .unwrap()
             .unwrap();
 
-        axum::Json(serde_json::to_value(&Response { applied: true }).unwrap())
+        axum::Json(serde_json::to_value(Response { applied: true }).unwrap())
     }
 }
 

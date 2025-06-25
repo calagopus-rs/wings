@@ -307,7 +307,7 @@ async fn main() {
 
     let mut extension_router = OpenApiRouter::new();
 
-    for extension in extension_manager.get_extensions() {
+    for extension in extension_manager.get_extensions_mut_unchecked() {
         extension.on_init(state.clone());
 
         extension_router = extension_router.merge(extension.router(state.clone()));

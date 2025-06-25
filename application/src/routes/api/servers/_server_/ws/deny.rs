@@ -31,7 +31,7 @@ mod post {
             state.config.jwt.deny(&jti);
         }
 
-        axum::Json(serde_json::to_value(&Response {}).unwrap())
+        axum::Json(serde_json::to_value(Response {}).unwrap())
     }
 }
 

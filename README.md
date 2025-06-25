@@ -21,7 +21,7 @@ api:
   send_offline_server_logs: false
   # how many threads to use when searching files using file search
   file_search_threads: 4
-  # how many threads to use when decompressing .zip/.ddup
+  # how many threads to use when decompressing .zip/.7z/.ddup
   file_decompression_threads: 2
 
 system:
@@ -105,6 +105,7 @@ docker:
 - add support for `name` property on `POST /api/servers/{server}/files/copy`
 - add support for opening individual compressed file (e.g. `.log.gz`) in `GET /api/servers/{server}/files/contents`
 - add (real) folder size support on `GET /api/servers/{server}/files/list-directory`
+- add multithreading support to `POST /api/servers/{server}/files/decompress`
 
 ### sftp
 

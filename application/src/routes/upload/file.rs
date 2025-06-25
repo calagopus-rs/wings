@@ -135,6 +135,10 @@ mod post {
                 );
             }
 
+            if let Some(parent) = file_path.parent() {
+                server.filesystem.create_dir_all(parent).await.unwrap();
+            }
+
             let mut written_size = 0;
             let mut writer = crate::server::filesystem::writer::AsyncFileSystemWriter::new(
                 server.clone(),
@@ -182,7 +186,7 @@ mod post {
 
         (
             StatusCode::OK,
-            axum::Json(serde_json::to_value(&Response {}).unwrap()),
+            axum::Json(serde_json::to_value(Response {}).unwrap()),
         )
     }
 }

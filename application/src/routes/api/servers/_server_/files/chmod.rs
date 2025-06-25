@@ -103,7 +103,7 @@ mod post {
         (
             StatusCode::OK,
             axum::Json(
-                serde_json::to_value(&Response {
+                serde_json::to_value(Response {
                     updated: updated_count,
                 })
                 .unwrap(),

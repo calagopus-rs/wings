@@ -16,7 +16,7 @@ mod get {
     ))]
     pub async fn route(state: GetState) -> axum::Json<serde_json::Value> {
         axum::Json(
-            serde_json::to_value(&Response {
+            serde_json::to_value(Response {
                 extensions: state
                     .extension_manager
                     .get_extensions()

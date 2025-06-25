@@ -62,7 +62,7 @@ mod get {
                 Ok(path) => path,
                 Err(_) => continue,
             };
-            let metadata = match server.filesystem.symlink_metadata(&path).await {
+            let metadata = match server.filesystem.metadata(&path).await {
                 Ok(metadata) => metadata,
                 Err(_) => continue,
             };
@@ -249,7 +249,7 @@ mod get {
         let joined_fingerprints = futures::future::join_all(fingerprint_handles).await;
 
         axum::Json(
-            serde_json::to_value(&Response {
+            serde_json::to_value(Response {
                 fingerprints: HashMap::from_iter(joined_fingerprints),
             })
             .unwrap(),

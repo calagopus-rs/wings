@@ -141,7 +141,7 @@ mod get {
                 (
                     StatusCode::OK,
                     axum::Json(
-                        serde_json::to_value(&Response {
+                        serde_json::to_value(Response {
                             hash: format!("{:x}", hasher.finalize()),
                         })
                         .unwrap(),

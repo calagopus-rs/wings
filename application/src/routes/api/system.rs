@@ -28,7 +28,7 @@ mod get {
             .unwrap_or_else(|_| "unknown".to_string());
 
         axum::Json(
-            serde_json::to_value(&Response {
+            serde_json::to_value(Response {
                 architecture: std::env::consts::ARCH,
                 cpu_count: rayon::current_num_threads(),
                 kernel_version: kernel_version.trim(),

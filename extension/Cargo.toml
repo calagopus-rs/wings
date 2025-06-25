@@ -25,3 +25,4 @@ chrono = { workspace = true }
 futures-util = { workspace = true }
 tokio-util = { workspace = true }
 uuid = { workspace = true }
+rand = { workspace = true }

@@ -5,7 +5,7 @@ use utoipa_axum::router::OpenApiRouter;
 
 pub mod manager;
 
-pub const API_VERSION: u32 = 1;
+pub const API_VERSION: &str = env!("CARGO_GIT_COMMIT");
 
 #[derive(Debug, ToSchema, Serialize)]
 pub struct ExtensionInfo {
@@ -19,13 +19,13 @@ pub struct ExtensionInfo {
     pub additional: serde_json::value::Map<String, serde_json::Value>,
 }
 
+#[allow(unused_variables)]
 pub trait Extension: Send + Sync + 'static {
     fn info(&self) -> ExtensionInfo;
 
-    #[allow(unused_variables)]
-    fn on_init(&self, state: State) {}
+    fn on_init(&mut self, state: State);
 
-    fn router(&self, state: State) -> OpenApiRouter<crate::routes::State> {
+    fn router(&mut self, state: State) -> OpenApiRouter<crate::routes::State> {
         OpenApiRouter::new().with_state(state)
     }
 }
@@ -40,7 +40,7 @@ macro_rules! export_extension {
         }
 
         #[unsafe(no_mangle)]
-        pub extern "C" fn api_version() -> u32 {
+        pub extern "C" fn api_version() -> &'static str {
             wings_rs::extensions::API_VERSION
         }
     };

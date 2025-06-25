@@ -12,7 +12,7 @@ pub struct Client {
 
 impl Client {
     pub fn new(config: &crate::config::InnerConfig, ignore_certificate_errors: bool) -> Self {
-        let mut headers = HeaderMap::new();
+        let mut headers = HeaderMap::with_capacity(3);
         headers.insert(
             "User-Agent",
             format!(

@@ -113,7 +113,7 @@ mod delete {
     pub async fn route(state: GetState, server: GetServer) -> axum::Json<serde_json::Value> {
         state.server_manager.delete_server(&server).await;
 
-        axum::Json(serde_json::to_value(&Response {}).unwrap())
+        axum::Json(serde_json::to_value(Response {}).unwrap())
     }
 }
 

@@ -23,13 +23,15 @@ mod get {
         ),
     ))]
     pub async fn route(server: GetServer) -> axum::Json<serde_json::Value> {
+        let values = server.filesystem.pulls().await;
         let mut downloads = Vec::new();
+        downloads.reserve_exact(values.len());
 
-        for download in server.filesystem.pulls().await.values() {
+        for download in values.values() {
             downloads.push(download.read().await.to_api_response());
         }
 
-        axum::Json(serde_json::to_value(&Response { downloads }).unwrap())
+        axum::Json(serde_json::to_value(Response { downloads }).unwrap())
     }
 }
 
@@ -157,7 +159,7 @@ mod post {
 
         (
             StatusCode::OK,
-            axum::Json(serde_json::to_value(&Response { identifier }).unwrap()),
+            axum::Json(serde_json::to_value(Response { identifier }).unwrap()),
         )
     }
 }
