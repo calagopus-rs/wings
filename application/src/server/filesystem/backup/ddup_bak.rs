@@ -2,7 +2,10 @@ use crate::{
     models::DirectoryEntry,
     server::backup::ddup_bak::{get_repository, tar_recursive_convert_entries},
 };
-use std::{io::Read, path::Path};
+use std::{
+    io::Read,
+    path::{Path, PathBuf},
+};
 use tokio::io::AsyncWriteExt;
 
 fn ddup_bak_entry_to_directory_entry(
@@ -101,11 +104,10 @@ fn ddup_bak_entry_to_directory_entry(
 pub async fn list(
     server: &crate::server::Server,
     uuid: uuid::Uuid,
-    path: &Path,
+    path: PathBuf,
 ) -> std::io::Result<Vec<DirectoryEntry>> {
     let repository = get_repository(server).await;
 
-    let path = path.to_path_buf();
     let directory_entry_limit = server.config.api.directory_entry_limit;
     let entries =
         tokio::task::spawn_blocking(move || -> Result<Vec<DirectoryEntry>, std::io::Error> {
@@ -163,21 +165,19 @@ pub async fn list(
 pub async fn reader(
     server: &crate::server::Server,
     uuid: uuid::Uuid,
-    path: &Path,
+    path: PathBuf,
 ) -> std::io::Result<(Box<dyn tokio::io::AsyncRead + Send>, u64)> {
     let repository = get_repository(server).await;
 
-    let path = path.to_path_buf();
     tokio::task::spawn_blocking(
         move || -> std::io::Result<(Box<dyn tokio::io::AsyncRead + Send>, u64)> {
-            let full_path = path.to_path_buf();
             let archive = repository.get_archive(&uuid.to_string())?;
-            let entry = match archive.find_archive_entry(&full_path) {
+            let entry = match archive.find_archive_entry(&path) {
                 Some(entry) => entry,
                 None => {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::NotFound,
-                        format!("Path not found in archive: {}", full_path.display()),
+                        format!("Path not found in archive: {}", path.display()),
                     ));
                 }
             };
@@ -227,13 +227,12 @@ pub async fn reader(
 pub async fn directory_reader(
     server: &crate::server::Server,
     uuid: uuid::Uuid,
-    path: &Path,
+    path: PathBuf,
 ) -> std::io::Result<tokio::io::DuplexStream> {
     let repository = get_repository(server).await;
 
     let (writer, reader) = tokio::io::duplex(65536);
 
-    let path = path.to_path_buf();
     tokio::task::spawn_blocking(move || {
         let writer = tokio_util::io::SyncIoBridge::new(writer);
         let writer = flate2::write::GzEncoder::new(writer, flate2::Compression::default());
@@ -247,7 +246,7 @@ pub async fn directory_reader(
         match archive.find_archive_entry(&path) {
             Some(entry) => {
                 let entry = match entry {
-                    ddup_bak::archive::entries::Entry::Directory(dir) => dir.clone(),
+                    ddup_bak::archive::entries::Entry::Directory(dir) => dir,
                     _ => {
                         *exit_early = true;
                         return Err(std::io::Error::new(
@@ -257,7 +256,7 @@ pub async fn directory_reader(
                     }
                 };
 
-                for entry in entry.entries {
+                for entry in entry.entries.iter() {
                     if *exit_early {
                         break;
                     }
@@ -270,7 +269,7 @@ pub async fn directory_reader(
                 }
             }
             None => {
-                for entry in archive.into_entries() {
+                for entry in archive.entries() {
                     if *exit_early {
                         break;
                     }

@@ -11,7 +11,7 @@ use utoipa::ToSchema;
 mod btrfs;
 pub mod ddup_bak;
 mod s3;
-mod wings;
+pub mod wings;
 mod zfs;
 
 #[derive(ToSchema, Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]

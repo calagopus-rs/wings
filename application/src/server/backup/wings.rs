@@ -49,7 +49,7 @@ fn get_file_name(server: &crate::server::Server, uuid: uuid::Uuid) -> PathBuf {
 }
 
 #[inline]
-async fn get_first_file_name(
+pub async fn get_first_file_name(
     server: &crate::server::Server,
     uuid: uuid::Uuid,
 ) -> Result<(crate::config::SystemBackupsWingsArchiveFormat, PathBuf), anyhow::Error> {
@@ -94,7 +94,7 @@ pub async fn create_backup(
     overrides: ignore::overrides::Override,
 ) -> Result<RawServerBackup, anyhow::Error> {
     let file_name = get_file_name(&server, uuid);
-    let writer = std::fs::File::create(&file_name)?;
+    let writer = tokio::fs::File::create(&file_name).await?.into_std().await;
 
     let archive_format = server.config.system.backups.wings.archive_format;
     let compression_level = server.config.system.backups.compression_level;
@@ -163,56 +163,41 @@ pub async fn create_backup(
                     let metadata = entry.metadata()?;
 
                     if let Ok(relative) = path.strip_prefix(&server.filesystem.base_path) {
+                        let mut options: zip::write::FileOptions<'_, ()> =
+                            zip::write::FileOptions::default()
+                                .compression_level(Some(
+                                    compression_level.flate2_compression_level().level() as i64,
+                                ))
+                                .unix_permissions(metadata.permissions().mode());
+
+                        if let Ok(mtime) = metadata.modified() {
+                            let mtime: chrono::DateTime<chrono::Local> =
+                                chrono::DateTime::from(mtime);
+
+                            options =
+                                options.last_modified_time(zip::DateTime::from_date_and_time(
+                                    mtime.year() as u16,
+                                    mtime.month() as u8,
+                                    mtime.day() as u8,
+                                    mtime.hour() as u8,
+                                    mtime.minute() as u8,
+                                    mtime.second() as u8,
+                                )?);
+                        }
+
                         if metadata.is_dir() {
-                            let mut options: zip::write::FileOptions<'_, ()> =
-                                zip::write::FileOptions::default()
-                                    .compression_level(Some(
-                                        compression_level.flate2_compression_level().level() as i64,
-                                    ))
-                                    .unix_permissions(metadata.permissions().mode());
-
-                            if let Ok(mtime) = metadata.modified() {
-                                let mtime: chrono::DateTime<chrono::Local> =
-                                    chrono::DateTime::from(mtime);
-
-                                options =
-                                    options.last_modified_time(zip::DateTime::from_date_and_time(
-                                        mtime.year() as u16,
-                                        mtime.month() as u8,
-                                        mtime.day() as u8,
-                                        mtime.hour() as u8,
-                                        mtime.minute() as u8,
-                                        mtime.second() as u8,
-                                    )?);
-                            }
-
                             zip.add_directory(relative.to_string_lossy(), options).ok();
                         } else if metadata.is_file() {
-                            let mut options: zip::write::FileOptions<'_, ()> =
-                                zip::write::FileOptions::default()
-                                    .compression_level(Some(
-                                        compression_level.flate2_compression_level().level() as i64,
-                                    ))
-                                    .unix_permissions(metadata.permissions().mode());
-
-                            if let Ok(mtime) = metadata.modified() {
-                                let mtime: chrono::DateTime<chrono::Local> =
-                                    chrono::DateTime::from(mtime);
-
-                                options =
-                                    options.last_modified_time(zip::DateTime::from_date_and_time(
-                                        mtime.year() as u16,
-                                        mtime.month() as u8,
-                                        mtime.day() as u8,
-                                        mtime.hour() as u8,
-                                        mtime.minute() as u8,
-                                        mtime.second() as u8,
-                                    )?);
-                            }
-
                             zip.start_file(relative.to_string_lossy(), options)?;
                             let mut file = std::fs::File::open(&path)?;
                             std::io::copy(&mut file, &mut zip)?;
+                        } else if metadata.is_symlink() {
+                            let link = std::fs::read_link(&path)?;
+                            zip.add_symlink(
+                                relative.to_string_lossy(),
+                                link.to_string_lossy(),
+                                options,
+                            )?;
                         }
                     }
                 }

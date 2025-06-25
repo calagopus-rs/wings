@@ -226,7 +226,7 @@ pub async fn download_backup(
         tar.mode(tar::HeaderMode::Complete);
 
         let exit_early = &mut false;
-        for entry in archive.into_entries() {
+        for entry in archive.entries() {
             if *exit_early {
                 break;
             }
@@ -258,7 +258,7 @@ pub async fn download_backup(
 }
 
 pub fn tar_recursive_convert_entries(
-    entry: Entry,
+    entry: &Entry,
     exit_early: &mut bool,
     repository: &ddup_bak::repository::Repository,
     archive: &mut tar::Builder<
@@ -307,7 +307,7 @@ pub fn tar_recursive_convert_entries(
                 return;
             }
 
-            for entry in entries.entries {
+            for entry in entries.entries.iter() {
                 tar_recursive_convert_entries(entry, exit_early, repository, archive, &path);
             }
         }
@@ -334,7 +334,7 @@ pub fn tar_recursive_convert_entries(
 
             let size_real = file.size_real as usize;
             let reader = FixedReader::new(
-                Box::new(repository.entry_reader(Entry::File(file)).unwrap()),
+                Box::new(repository.entry_reader(Entry::File(file.clone())).unwrap()),
                 size_real,
             );
 

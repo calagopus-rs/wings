@@ -13,7 +13,7 @@ fn get_base_path(server: &crate::server::Server, uuid: uuid::Uuid) -> PathBuf {
 pub async fn list(
     server: &crate::server::Server,
     uuid: uuid::Uuid,
-    path: &Path,
+    path: PathBuf,
 ) -> std::io::Result<Vec<DirectoryEntry>> {
     let full_path = tokio::fs::canonicalize(get_base_path(server, uuid).join(path)).await?;
 
@@ -56,7 +56,7 @@ pub async fn list(
 pub async fn reader(
     server: &crate::server::Server,
     uuid: uuid::Uuid,
-    path: &Path,
+    path: PathBuf,
 ) -> std::io::Result<(Box<dyn tokio::io::AsyncRead + Send>, u64)> {
     let full_path = tokio::fs::canonicalize(get_base_path(server, uuid).join(path)).await?;
 
@@ -76,7 +76,7 @@ pub async fn reader(
 pub async fn directory_reader(
     server: &crate::server::Server,
     uuid: uuid::Uuid,
-    path: &Path,
+    path: PathBuf,
 ) -> std::io::Result<tokio::io::DuplexStream> {
     let full_path = tokio::fs::canonicalize(get_base_path(server, uuid).join(path)).await?;
 

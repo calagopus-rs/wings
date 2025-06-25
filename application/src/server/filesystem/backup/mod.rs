@@ -6,6 +6,7 @@ use std::path::Path;
 
 mod btrfs;
 mod ddup_bak;
+mod wings;
 mod zfs;
 
 pub async fn list(
@@ -13,7 +14,10 @@ pub async fn list(
     server: &crate::server::Server,
     path: &Path,
 ) -> std::io::Result<Vec<DirectoryEntry>> {
+    let path = super::Filesystem::resolve_path(path);
+
     match backup.adapter {
+        BackupAdapter::Wings => wings::list(server, backup.uuid, path).await,
         BackupAdapter::DdupBak => ddup_bak::list(server, backup.uuid, path).await,
         BackupAdapter::Btrfs => btrfs::list(server, backup.uuid, path).await,
         BackupAdapter::Zfs => zfs::list(server, backup.uuid, path).await,
@@ -29,7 +33,10 @@ pub async fn reader(
     server: &crate::server::Server,
     path: &Path,
 ) -> std::io::Result<(Box<dyn tokio::io::AsyncRead + Send>, u64)> {
+    let path = super::Filesystem::resolve_path(path);
+
     match backup.adapter {
+        BackupAdapter::Wings => wings::reader(server, backup.uuid, path).await,
         BackupAdapter::DdupBak => ddup_bak::reader(server, backup.uuid, path).await,
         BackupAdapter::Btrfs => btrfs::reader(server, backup.uuid, path).await,
         BackupAdapter::Zfs => zfs::reader(server, backup.uuid, path).await,
@@ -45,7 +52,10 @@ pub async fn directory_reader(
     server: &crate::server::Server,
     path: &Path,
 ) -> std::io::Result<tokio::io::DuplexStream> {
+    let path = super::Filesystem::resolve_path(path);
+
     match backup.adapter {
+        BackupAdapter::Wings => wings::directory_reader(server, backup.uuid, path).await,
         BackupAdapter::DdupBak => ddup_bak::directory_reader(server, backup.uuid, path).await,
         BackupAdapter::Btrfs => btrfs::directory_reader(server, backup.uuid, path).await,
         BackupAdapter::Zfs => zfs::directory_reader(server, backup.uuid, path).await,
