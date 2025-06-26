@@ -318,6 +318,16 @@ pub async fn install_server(
         }
     };
 
+    if script.script.is_empty() {
+        tracing::info!(
+            server = %server.uuid,
+            "no installation script provided, marking server as installed"
+        );
+
+        unset_installing(true).await?;
+        return Ok(());
+    }
+
     *server.installation_script.write().await = Some((reinstall, script.clone()));
     *container_script.lock().await = Some(script.clone());
 
@@ -476,7 +486,12 @@ pub async fn install_server(
 
             async move {
                 client
-                    .wait_container::<String>(&container.id, None)
+                    .wait_container(
+                        &container.id,
+                        Some(bollard::container::WaitContainerOptions {
+                            condition: "next-exit",
+                        }),
+                    )
                     .next()
                     .await;
             }
