@@ -33,8 +33,8 @@ fn ddup_bak_entry_to_directory_entry(
 
     let mut buffer = [0; 128];
     let buffer = match repository.entry_reader(entry.clone()) {
-        Ok(reader) => {
-            if reader.take(128).read(&mut buffer).is_err() {
+        Ok(mut reader) => {
+            if reader.read(&mut buffer).is_err() {
                 None
             } else {
                 Some(&buffer)

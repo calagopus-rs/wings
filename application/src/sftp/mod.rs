@@ -93,7 +93,7 @@ struct SftpSession {
 
 impl SftpSession {
     #[inline]
-    fn convert_entry(path: &Path, metadata: Metadata) -> File {
+    fn convert_entry(path: &Path, metadata: Metadata, target_metadata: Option<Metadata>) -> File {
         let mut attrs = FileAttributes {
             size: Some(metadata.len()),
             atime: None,
@@ -112,9 +112,26 @@ impl SftpSession {
             ..Default::default()
         };
 
-        attrs.set_dir(metadata.is_dir());
-        attrs.set_regular(metadata.is_file());
-        attrs.set_symlink(metadata.is_symlink());
+        match rustix::fs::FileType::from_raw_mode(metadata.permissions().mode()) {
+            rustix::fs::FileType::RegularFile => attrs.set_regular(true),
+            rustix::fs::FileType::Directory => attrs.set_dir(true),
+            rustix::fs::FileType::Symlink => attrs.set_symlink(true),
+            rustix::fs::FileType::BlockDevice => attrs.set_block(true),
+            rustix::fs::FileType::CharacterDevice => attrs.set_character(true),
+            rustix::fs::FileType::Fifo => attrs.set_fifo(true),
+            _ => {}
+        }
+
+        if let Some(target_metadata) = target_metadata {
+            match rustix::fs::FileType::from_raw_mode(target_metadata.permissions().mode()) {
+                rustix::fs::FileType::RegularFile => attrs.set_regular(true),
+                rustix::fs::FileType::Directory => attrs.set_dir(true),
+                rustix::fs::FileType::BlockDevice => attrs.set_block(true),
+                rustix::fs::FileType::CharacterDevice => attrs.set_character(true),
+                rustix::fs::FileType::Fifo => attrs.set_fifo(true),
+                _ => {}
+            }
+        }
 
         File::new(
             path.file_name()
@@ -281,7 +298,13 @@ impl russh_sftp::server::Handler for SftpSession {
                 continue;
             }
 
-            files.push(Self::convert_entry(&path, metadata));
+            let target_metadata = if metadata.is_symlink() {
+                self.server.filesystem.metadata(&path).await.ok()
+            } else {
+                None
+            };
+
+            files.push(Self::convert_entry(&path, metadata, target_metadata));
             handle.consumed += 1;
 
             if handle.consumed >= self.state.config.system.sftp.directory_entry_limit
@@ -664,7 +687,7 @@ impl russh_sftp::server::Handler for SftpSession {
             Err(_) => return Err(StatusCode::NoSuchFile),
         };
 
-        let metadata = match self.server.filesystem.symlink_metadata(&path).await {
+        let metadata = match self.server.filesystem.metadata(&path).await {
             Ok(metadata) => metadata,
             Err(_) => return Err(StatusCode::NoSuchFile),
         };
@@ -678,7 +701,7 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::NoSuchFile);
         }
 
-        let file = Self::convert_entry(&path, metadata);
+        let file = Self::convert_entry(&path, metadata, None);
 
         Ok(russh_sftp::protocol::Attrs {
             id,
@@ -733,7 +756,13 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::NoSuchFile);
         }
 
-        let file = Self::convert_entry(path, metadata);
+        let target_metadata = if metadata.is_symlink() {
+            self.server.filesystem.metadata(path).await.ok()
+        } else {
+            None
+        };
+
+        let file = Self::convert_entry(path, metadata, target_metadata);
 
         Ok(russh_sftp::protocol::Attrs {
             id,
@@ -769,7 +798,13 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::NoSuchFile);
         }
 
-        let file = Self::convert_entry(&path, metadata);
+        let target_metadata = if metadata.is_symlink() {
+            self.server.filesystem.metadata(&path).await.ok()
+        } else {
+            None
+        };
+
+        let file = Self::convert_entry(&path, metadata, target_metadata);
 
         Ok(Name {
             id,

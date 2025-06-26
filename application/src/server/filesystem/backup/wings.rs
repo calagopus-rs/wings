@@ -8,7 +8,7 @@ use tokio::io::AsyncWriteExt;
 fn zip_entry_to_directory_entry(
     path: &Path,
     sizes: &[(u64, PathBuf)],
-    entry: &mut zip::read::ZipFile<impl Read + Seek>,
+    mut entry: zip::read::ZipFile<impl Read + Seek>,
 ) -> DirectoryEntry {
     let size = if entry.is_dir() {
         sizes
@@ -21,7 +21,7 @@ fn zip_entry_to_directory_entry(
     };
 
     let mut buffer = [0; 128];
-    let buffer = if entry.take(128).read(&mut buffer).is_err() {
+    let buffer = if entry.read(&mut buffer).is_err() {
         None
     } else {
         Some(&buffer)
@@ -70,7 +70,7 @@ fn zip_entry_to_directory_entry(
     DirectoryEntry {
         name: path.file_name().unwrap().to_string_lossy().to_string(),
         created: chrono::DateTime::from_timestamp(0, 0).unwrap(),
-        modified: crate::server::filesystem::archive::zip_entry_get_modified_time(entry)
+        modified: crate::server::filesystem::archive::zip_entry_get_modified_time(&entry)
             .map(|dt| dt.into())
             .unwrap_or_default(),
         mode: mode_str,
@@ -133,7 +133,7 @@ pub async fn list(
             let path_len = path.components().count();
             let mut matched_entries = 0;
             for i in 0..archive.len() {
-                let mut entry = archive.by_index(i)?;
+                let entry = archive.by_index(i)?;
                 let name = match entry.enclosed_name() {
                     Some(name) => name,
                     None => continue,
@@ -155,7 +155,7 @@ pub async fn list(
                     }
                 }
 
-                let entry = zip_entry_to_directory_entry(&name, &sizes, &mut entry);
+                let entry = zip_entry_to_directory_entry(&name, &sizes, entry);
                 entries.push(entry);
 
                 if let Some(per_page) = per_page {
