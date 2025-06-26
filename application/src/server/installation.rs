@@ -1,4 +1,5 @@
 use super::configuration::string_to_option;
+use anyhow::Context;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -14,6 +15,8 @@ use tokio::{io::AsyncWriteExt, sync::Mutex};
 pub struct InstallationScript {
     pub container_image: String,
     pub entrypoint: String,
+
+    #[serde(deserialize_with = "crate::deserialize::deserialize_defaultable")]
     pub script: String,
 }
 
@@ -306,20 +309,25 @@ pub async fn install_server(
         .client
         .server_install_script(server.uuid)
         .await
+        .context("Failed to fetch installation script")
     {
         Ok(script) => script,
         Err(err) => {
             unset_installing(false).await?;
-            return Err(err.into());
+            return Err(err);
         }
     };
 
     *server.installation_script.write().await = Some((reinstall, script.clone()));
     *container_script.lock().await = Some(script.clone());
 
-    if let Err(err) = server.pull_image(client, &script.container_image).await {
+    if let Err(err) = server
+        .pull_image(client, &script.container_image)
+        .await
+        .context("Failed to pull installation container image")
+    {
         unset_installing(false).await?;
-        return Err(err.into());
+        return Err(err);
     }
 
     let container = match client
@@ -337,11 +345,12 @@ pub async fn install_server(
             },
         )
         .await
+        .context("Failed to create installation container")
     {
         Ok(container) => container,
         Err(err) => {
             unset_installing(false).await?;
-            return Err(err.into());
+            return Err(err);
         }
     };
 

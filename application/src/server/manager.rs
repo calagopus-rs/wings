@@ -200,7 +200,7 @@ impl Manager {
                     {
                         tracing::error!(
                             server = %server.uuid,
-                            "failed to reinstall server: {:#?}",
+                            "failed to install server: {:#?}",
                             err
                         );
                     } else if server
