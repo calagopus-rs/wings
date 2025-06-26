@@ -14,6 +14,8 @@ pub async fn list(
     server: &crate::server::Server,
     uuid: uuid::Uuid,
     path: PathBuf,
+    per_page: Option<usize>,
+    page: usize,
 ) -> std::io::Result<Vec<DirectoryEntry>> {
     let full_path = tokio::fs::canonicalize(get_base_path(server, uuid).join(path)).await?;
 
@@ -25,6 +27,7 @@ pub async fn list(
     }
 
     let mut entries = Vec::new();
+    let mut matched_entries = 0;
 
     let mut directory = tokio::fs::read_dir(full_path).await?;
     while let Ok(Some(entry)) = directory.next_entry().await {
@@ -38,6 +41,13 @@ pub async fn list(
             continue;
         }
 
+        matched_entries += 1;
+        if let Some(per_page) = per_page {
+            if matched_entries <= (page - 1) * per_page {
+                continue;
+            }
+        }
+
         let mut entry = server.filesystem.to_api_entry_tokio(path, metadata).await;
         if entry.directory {
             entry.size = 0;
@@ -45,8 +55,10 @@ pub async fn list(
 
         entries.push(entry);
 
-        if entries.len() >= server.config.api.directory_entry_limit {
-            break;
+        if let Some(per_page) = per_page {
+            if entries.len() >= per_page {
+                break;
+            }
         }
     }
 

@@ -855,10 +855,13 @@ impl Filesystem {
         let real_path = symlink_destination.as_ref().unwrap_or(&path);
 
         let size = if real_metadata.is_dir() {
-            let disk_usage = self.disk_usage.read().await;
             let components = self.path_to_components(real_path);
 
-            disk_usage.get_size(&components).unwrap_or(0)
+            self.disk_usage
+                .read()
+                .await
+                .get_size(&components)
+                .unwrap_or(0)
         } else {
             real_metadata.len()
         };
@@ -881,14 +884,18 @@ impl Filesystem {
 
         let mut mode_str = String::new();
         let mode = metadata.permissions().mode();
-        const TYPE_CHARS: &str = "dalTLDpSugct?";
 
-        let file_type = (mode >> 28) & 0xF;
-        if file_type < TYPE_CHARS.len() as u32 {
-            mode_str.push(TYPE_CHARS.chars().nth(file_type as usize).unwrap());
-        } else {
-            mode_str.push('?');
-        }
+        mode_str.reserve_exact(10);
+        mode_str.push(match rustix::fs::FileType::from_raw_mode(mode) {
+            rustix::fs::FileType::RegularFile => '-',
+            rustix::fs::FileType::Directory => 'd',
+            rustix::fs::FileType::Symlink => 'l',
+            rustix::fs::FileType::BlockDevice => 'b',
+            rustix::fs::FileType::CharacterDevice => 'c',
+            rustix::fs::FileType::Socket => 's',
+            rustix::fs::FileType::Fifo => 'p',
+            rustix::fs::FileType::Unknown => '?',
+        });
 
         const RWX: &str = "rwxrwxrwx";
         for i in 0..9 {

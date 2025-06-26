@@ -12,6 +12,9 @@ mod get {
     pub struct Params {
         #[serde(default)]
         pub directory: String,
+
+        pub per_page: Option<usize>,
+        pub page: Option<usize>,
     }
 
     #[utoipa::path(get, path = "/", responses(
@@ -34,7 +37,14 @@ mod get {
         server: GetServer,
         Query(data): Query<Params>,
     ) -> (StatusCode, axum::Json<serde_json::Value>) {
-        let mut entries = Vec::new();
+        let per_page = match data.per_page {
+            Some(per_page) => Some(per_page),
+            None => match state.config.api.directory_entry_limit {
+                0 => None,
+                limit => Some(limit),
+            },
+        };
+        let page = data.page.unwrap_or(1);
 
         let path = match server.filesystem.canonicalize(&data.directory).await {
             Ok(path) => path,
@@ -42,8 +52,12 @@ mod get {
         };
 
         if let Some((backup, path)) = server.filesystem.backup_fs(&server, &path).await {
-            match crate::server::filesystem::backup::list(backup, &server, &path).await {
-                Ok(entries_list) => entries.extend(entries_list),
+            let mut entries = match crate::server::filesystem::backup::list(
+                backup, &server, &path, per_page, page,
+            )
+            .await
+            {
+                Ok(entries) => entries,
                 Err(err) => {
                     tracing::error!(
                         server = %server.uuid,
@@ -57,7 +71,7 @@ mod get {
                         axum::Json(ApiError::new("failed to list backup directory").to_json()),
                     );
                 }
-            }
+            };
 
             entries.sort_by(|a, b| {
                 if a.directory && !b.directory {
@@ -91,6 +105,10 @@ mod get {
         }
 
         let mut directory = server.filesystem.read_dir(&path).await.unwrap();
+
+        let mut entries = Vec::new();
+        let mut matched_entries = 0;
+
         while let Some(Ok(entry)) = directory.next_entry().await {
             let path = path.join(entry);
             let metadata = match server.filesystem.symlink_metadata(&path).await {
@@ -102,10 +120,19 @@ mod get {
                 continue;
             }
 
+            matched_entries += 1;
+            if let Some(per_page) = per_page {
+                if matched_entries <= (page - 1) * per_page {
+                    continue;
+                }
+            }
+
             entries.push(server.filesystem.to_api_entry(path, metadata).await);
 
-            if entries.len() >= state.config.api.directory_entry_limit {
-                break;
+            if let Some(per_page) = per_page {
+                if entries.len() >= per_page {
+                    break;
+                }
             }
         }
 

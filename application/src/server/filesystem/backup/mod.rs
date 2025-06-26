@@ -13,14 +13,16 @@ pub async fn list(
     backup: InternalBackup,
     server: &crate::server::Server,
     path: &Path,
+    per_page: Option<usize>,
+    page: usize,
 ) -> std::io::Result<Vec<DirectoryEntry>> {
     let path = super::Filesystem::resolve_path(path);
 
     match backup.adapter {
-        BackupAdapter::Wings => wings::list(server, backup.uuid, path).await,
-        BackupAdapter::DdupBak => ddup_bak::list(server, backup.uuid, path).await,
-        BackupAdapter::Btrfs => btrfs::list(server, backup.uuid, path).await,
-        BackupAdapter::Zfs => zfs::list(server, backup.uuid, path).await,
+        BackupAdapter::Wings => wings::list(server, backup.uuid, path, per_page, page).await,
+        BackupAdapter::DdupBak => ddup_bak::list(server, backup.uuid, path, per_page, page).await,
+        BackupAdapter::Btrfs => btrfs::list(server, backup.uuid, path, per_page, page).await,
+        BackupAdapter::Zfs => zfs::list(server, backup.uuid, path, per_page, page).await,
         _ => Err(std::io::Error::new(
             std::io::ErrorKind::Unsupported,
             "This backup adapter does not support listing files",

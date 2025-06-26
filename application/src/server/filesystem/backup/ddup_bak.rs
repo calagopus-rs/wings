@@ -61,14 +61,18 @@ fn ddup_bak_entry_to_directory_entry(
 
     let mut mode_str = String::new();
     let mode = entry.mode().bits();
-    const TYPE_CHARS: &str = "dalTLDpSugct?";
 
-    let file_type = (mode >> 28) & 0xF;
-    if file_type < TYPE_CHARS.len() as u32 {
-        mode_str.push(TYPE_CHARS.chars().nth(file_type as usize).unwrap());
-    } else {
-        mode_str.push('?');
-    }
+    mode_str.reserve_exact(10);
+    mode_str.push(match rustix::fs::FileType::from_raw_mode(mode) {
+        rustix::fs::FileType::RegularFile => '-',
+        rustix::fs::FileType::Directory => 'd',
+        rustix::fs::FileType::Symlink => 'l',
+        rustix::fs::FileType::BlockDevice => 'b',
+        rustix::fs::FileType::CharacterDevice => 'c',
+        rustix::fs::FileType::Socket => 's',
+        rustix::fs::FileType::Fifo => 'p',
+        rustix::fs::FileType::Unknown => '?',
+    });
 
     const RWX: &str = "rwxrwxrwx";
     for i in 0..9 {
@@ -105,20 +109,33 @@ pub async fn list(
     server: &crate::server::Server,
     uuid: uuid::Uuid,
     path: PathBuf,
+    per_page: Option<usize>,
+    page: usize,
 ) -> std::io::Result<Vec<DirectoryEntry>> {
     let repository = get_repository(server).await;
 
-    let directory_entry_limit = server.config.api.directory_entry_limit;
     let entries =
         tokio::task::spawn_blocking(move || -> Result<Vec<DirectoryEntry>, std::io::Error> {
             let archive = repository.get_archive(&uuid.to_string())?;
             let entry = match archive.find_archive_entry(&path) {
                 Some(entry) => entry,
                 None => {
-                    let mut entries =
-                        Vec::with_capacity(archive.entries().len().min(directory_entry_limit));
+                    let mut entries = Vec::with_capacity(
+                        archive
+                            .entries()
+                            .len()
+                            .min(per_page.unwrap_or(archive.entries().len())),
+                    );
+                    let mut matched_entries = 0;
                     for entry in archive.into_entries() {
                         let path = path.join(entry.name());
+
+                        matched_entries += 1;
+                        if let Some(per_page) = per_page {
+                            if matched_entries < (page - 1) * per_page {
+                                continue;
+                            }
+                        }
 
                         entries.push(ddup_bak_entry_to_directory_entry(
                             &path,
@@ -126,8 +143,10 @@ pub async fn list(
                             &entry,
                         ));
 
-                        if entries.len() >= directory_entry_limit {
-                            break;
+                        if let Some(per_page) = per_page {
+                            if entries.len() >= per_page {
+                                break;
+                            }
                         }
                     }
 
@@ -137,15 +156,26 @@ pub async fn list(
 
             match entry {
                 ddup_bak::archive::entries::Entry::Directory(dir) => {
-                    let mut entries =
-                        Vec::with_capacity(dir.entries.len().min(directory_entry_limit));
+                    let mut entries = Vec::with_capacity(
+                        dir.entries.len().min(per_page.unwrap_or(dir.entries.len())),
+                    );
+                    let mut matched_entries = 0;
                     for entry in &dir.entries {
                         let path = path.join(&dir.name).join(entry.name());
 
+                        matched_entries += 1;
+                        if let Some(per_page) = per_page {
+                            if matched_entries <= (page - 1) * per_page {
+                                continue;
+                            }
+                        }
+
                         entries.push(ddup_bak_entry_to_directory_entry(&path, &repository, entry));
 
-                        if entries.len() >= directory_entry_limit {
-                            break;
+                        if let Some(per_page) = per_page {
+                            if entries.len() >= per_page {
+                                break;
+                            }
                         }
                     }
 

@@ -15,7 +15,7 @@ wings version
 
 ```yml
 api:
-  # how many entries can be listed on the /list-directory API call
+  # how many entries can be listed on a single page on the /list-directory API call, 0 means unlimited
   directory_entry_limit: 10000
   # send server logs of an offline server when connecting to ws
   send_offline_server_logs: false
@@ -34,7 +34,7 @@ system:
     key_algorithm: ssh-ed25519
     # whether to disable password auth for the sftp server
     disable_password_auth: false
-    # how many entries can be listed on readdir
+    # how many entries can be listed on readdir, 0 means unlimited
     directory_entry_limit: 20000
     # how many entries to send on each readdir call (chunk size)
     directory_entry_send_amount: 500
