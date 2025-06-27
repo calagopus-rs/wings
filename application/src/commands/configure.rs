@@ -75,7 +75,7 @@ pub async fn configure(matches: &ArgMatches, config: Option<&Arc<crate::config::
             panel_url.to_string().trim_end_matches('/'),
             node
         ))
-        .header("Authorization", format!("Bearer {}", token))
+        .header("Authorization", format!("Bearer {token}"))
         .header("Accept", "application/vnd.pterodactyl.v1+json")
         .send()
         .await;

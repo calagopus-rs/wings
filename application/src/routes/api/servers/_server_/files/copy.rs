@@ -66,7 +66,7 @@ mod post {
             let mut extension = location
                 .extension()
                 .and_then(|ext| ext.to_str())
-                .map(|ext| format!(".{}", ext))
+                .map(|ext| format!(".{ext}"))
                 .unwrap_or("".to_string());
             let mut base_name = location
                 .file_stem()
@@ -75,7 +75,7 @@ mod post {
                 .to_string();
 
             if base_name.ends_with(".tar") {
-                extension = format!(".tar{}", extension);
+                extension = format!(".tar{extension}");
                 base_name.truncate(base_name.len() - 4);
             }
 
@@ -84,10 +84,10 @@ mod post {
 
             for i in 0..51 {
                 if i > 0 {
-                    suffix = format!(" copy {}", i);
+                    suffix = format!(" copy {i}");
                 }
 
-                let new_name = format!("{}{}{}", base_name, suffix, extension);
+                let new_name = format!("{base_name}{suffix}{extension}");
                 let new_path = parent.join(&new_name);
 
                 if !new_path.exists() {
@@ -96,14 +96,14 @@ mod post {
 
                 if i == 50 {
                     let timestamp = chrono::Utc::now().to_rfc3339();
-                    suffix = format!("copy.{}", timestamp);
+                    suffix = format!("copy.{timestamp}");
 
-                    let final_name = format!("{}{}{}", base_name, suffix, extension);
+                    let final_name = format!("{base_name}{suffix}{extension}");
                     return final_name;
                 }
             }
 
-            format!("{}{}{}", base_name, suffix, extension)
+            format!("{base_name}{suffix}{extension}")
         });
         let file_name = location.parent().unwrap().join(&new_name);
 

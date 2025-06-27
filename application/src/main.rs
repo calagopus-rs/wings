@@ -149,7 +149,7 @@ async fn handle_request(req: Request<Body>, next: Next) -> Result<Response<Body>
         req.method().to_string().to_lowercase(),
         req.uri().path().cyan(),
         if let Some(query) = req.uri().query() {
-            format!("?{}", query)
+            format!("?{query}")
         } else {
             "".to_string()
         }

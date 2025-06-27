@@ -28,7 +28,7 @@ static DISK_USAGE: LazyLock<Arc<RwLock<DiskUsageMap>>> = LazyLock::new(|| {
                     };
 
                     if dataset_name.is_empty() {
-                        *dataset_name = format!("{}/server-{}", pool_name, server);
+                        *dataset_name = format!("{pool_name}/server-{server}");
                     }
 
                     let output = Command::new("zfs")
@@ -116,8 +116,7 @@ async fn get_pool_from_path(path: &Path) -> Result<String, std::io::Error> {
     }
 
     Err(std::io::Error::other(format!(
-        "No ZFS pool found for path: {}",
-        path_str
+        "No ZFS pool found for path: {path_str}"
     )))
 }
 

@@ -145,7 +145,7 @@ async fn cleanup_container(
 
     let mut env = String::new();
     for var in container_env {
-        env.push_str(&format!("  {}\n", var));
+        env.push_str(&format!("  {var}\n"));
     }
 
     let log_path = Path::new(&server.config.system.log_directory)

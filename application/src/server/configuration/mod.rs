@@ -159,8 +159,8 @@ impl ServerConfiguration {
                     host_port: Some(port.to_string()),
                 };
 
-                let tcp = format!("{}/tcp", port);
-                let udp = format!("{}/udp", port);
+                let tcp = format!("{port}/tcp");
+                let udp = format!("{port}/udp");
 
                 let tcp_bindings = map.entry(tcp).or_insert_with(|| Some(Vec::new()));
                 tcp_bindings.as_mut().unwrap().push(binding.clone());

@@ -702,7 +702,7 @@ impl Server {
                     Ok(status) => {
                         if let Some(status_str) = status.status {
                             if let Some(progress) = status.progress {
-                                self.log_daemon_install(format!("{} {}", status_str, progress))
+                                self.log_daemon_install(format!("{status_str} {progress}"))
                                     .await;
                             } else {
                                 self.log_daemon_install(status_str).await;
@@ -717,7 +717,7 @@ impl Server {
                             err
                         );
 
-                        self.log_daemon_error(&format!("failed to pull image: {}", err))
+                        self.log_daemon_error(&format!("failed to pull image: {err}"))
                             .await;
 
                         if let Ok(images) = client
@@ -839,7 +839,7 @@ impl Server {
                             err
                         );
 
-                        self.log_daemon_error(&format!("failed to start container: {}", err))
+                        self.log_daemon_error(&format!("failed to start container: {err}"))
                             .await;
 
                         return Err(anyhow::anyhow!(err));

@@ -169,11 +169,11 @@ pub async fn diagnostics(matches: &ArgMatches, config: Option<&Arc<crate::config
                     }
                 }
 
-                write!(output, "{}", result_line).unwrap();
+                write!(output, "{result_line}").unwrap();
             }
         }
         Err(err) => {
-            writeln!(output, "failed to read wings-rs logs: {}", err).unwrap();
+            writeln!(output, "failed to read wings-rs logs: {err}").unwrap();
         }
     }
 
@@ -191,7 +191,7 @@ pub async fn diagnostics(matches: &ArgMatches, config: Option<&Arc<crate::config
         }
     }
 
-    println!("{}", output);
+    println!("{output}");
 
     if review_before_upload {
         let confirm = Confirm::with_theme(&ColorfulTheme::default())
@@ -241,11 +241,11 @@ pub async fn diagnostics(matches: &ArgMatches, config: Option<&Arc<crate::config
 
 #[inline]
 fn write_header(output: &mut String, name: &str) {
-    writeln!(output, "\n|\n| {}", name).unwrap();
+    writeln!(output, "\n|\n| {name}").unwrap();
     writeln!(output, "| ------------------------------").unwrap();
 }
 
 #[inline]
 fn write_line(output: &mut String, name: &str, value: &str) {
-    writeln!(output, "{:>20}: {}", name, value).unwrap();
+    writeln!(output, "{name:>20}: {value}").unwrap();
 }

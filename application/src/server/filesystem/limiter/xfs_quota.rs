@@ -177,7 +177,7 @@ pub async fn setup(
     let output = Command::new("xfs_quota")
         .arg("-x")
         .arg("-c")
-        .arg(format!("project -s {}", project_id))
+        .arg(format!("project -s {project_id}"))
         .arg(get_mount_point(&filesystem.base_path).await?)
         .output()
         .await?;
@@ -253,8 +253,7 @@ pub async fn update_disk_limit(
         .arg("-x")
         .arg("-c")
         .arg(format!(
-            "limit -p bsoft={} bhard={} {}",
-            limit_mb, limit_mb, project_id
+            "limit -p bsoft={limit_mb} bhard={limit_mb} {project_id}"
         ))
         .arg(get_mount_point(&filesystem.base_path).await?)
         .output()
@@ -288,7 +287,7 @@ pub async fn destroy(
         let project_id = uuid_to_project_id(&filesystem.uuid);
         let new_contents: String = contents
             .lines()
-            .filter(|line| !line.starts_with(&format!("{}:", project_id)))
+            .filter(|line| !line.starts_with(&format!("{project_id}:")))
             .collect::<Vec<&str>>()
             .join("\n");
 

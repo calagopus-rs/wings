@@ -74,7 +74,7 @@ impl Download {
                                 .map(char::from)
                                 .collect();
 
-                            format!("download_{}", random_string)
+                            format!("download_{random_string}")
                         }),
                 );
             } else if let Some(file_name) = file_name {

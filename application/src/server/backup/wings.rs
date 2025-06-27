@@ -18,22 +18,22 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 
 #[inline]
 fn get_tar_file_name(server: &crate::server::Server, uuid: uuid::Uuid) -> PathBuf {
-    Path::new(&server.config.system.backup_directory).join(format!("{}.tar", uuid))
+    Path::new(&server.config.system.backup_directory).join(format!("{uuid}.tar"))
 }
 
 #[inline]
 fn get_tar_gz_file_name(server: &crate::server::Server, uuid: uuid::Uuid) -> PathBuf {
-    Path::new(&server.config.system.backup_directory).join(format!("{}.tar.gz", uuid))
+    Path::new(&server.config.system.backup_directory).join(format!("{uuid}.tar.gz"))
 }
 
 #[inline]
 fn get_tar_zstd_file_name(server: &crate::server::Server, uuid: uuid::Uuid) -> PathBuf {
-    Path::new(&server.config.system.backup_directory).join(format!("{}.tar.zst", uuid))
+    Path::new(&server.config.system.backup_directory).join(format!("{uuid}.tar.zst"))
 }
 
 #[inline]
 fn get_zip_file_name(server: &crate::server::Server, uuid: uuid::Uuid) -> PathBuf {
-    Path::new(&server.config.system.backup_directory).join(format!("{}.zip", uuid))
+    Path::new(&server.config.system.backup_directory).join(format!("{uuid}.zip"))
 }
 
 #[inline]
@@ -459,16 +459,14 @@ pub async fn download_backup(
         crate::config::SystemBackupsWingsArchiveFormat::Tar => {
             headers.insert(
                 "Content-Disposition",
-                format!("attachment; filename={}.tar", uuid)
-                    .parse()
-                    .unwrap(),
+                format!("attachment; filename={uuid}.tar").parse().unwrap(),
             );
             headers.insert("Content-Type", "application/x-tar".parse().unwrap());
         }
         crate::config::SystemBackupsWingsArchiveFormat::TarGz => {
             headers.insert(
                 "Content-Disposition",
-                format!("attachment; filename={}.tar.gz", uuid)
+                format!("attachment; filename={uuid}.tar.gz")
                     .parse()
                     .unwrap(),
             );
@@ -477,7 +475,7 @@ pub async fn download_backup(
         crate::config::SystemBackupsWingsArchiveFormat::TarZstd => {
             headers.insert(
                 "Content-Disposition",
-                format!("attachment; filename={}.tar.zst", uuid)
+                format!("attachment; filename={uuid}.tar.zst")
                     .parse()
                     .unwrap(),
             );
@@ -486,9 +484,7 @@ pub async fn download_backup(
         crate::config::SystemBackupsWingsArchiveFormat::Zip => {
             headers.insert(
                 "Content-Disposition",
-                format!("attachment; filename={}.zip", uuid)
-                    .parse()
-                    .unwrap(),
+                format!("attachment; filename={uuid}.zip").parse().unwrap(),
             );
             headers.insert("Content-Type", "application/zip".parse().unwrap());
         }

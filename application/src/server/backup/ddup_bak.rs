@@ -242,7 +242,7 @@ pub async fn download_backup(
     let mut headers = HeaderMap::new();
     headers.insert(
         "Content-Disposition",
-        format!("attachment; filename={}.tar.gz", uuid)
+        format!("attachment; filename={uuid}.tar.gz")
             .parse()
             .unwrap(),
     );
@@ -295,7 +295,7 @@ pub fn tar_recursive_convert_entries(
             let dir_path = if path.ends_with('/') {
                 path.clone()
             } else {
-                format!("{}/", path)
+                format!("{path}/")
             };
 
             if archive

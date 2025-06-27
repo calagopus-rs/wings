@@ -625,10 +625,10 @@ impl Config {
         debug: bool,
         ignore_certificate_errors: bool,
     ) -> Result<(Arc<Self>, WorkerGuard), anyhow::Error> {
-        let file = File::open(path).context(format!("failed to open config file {}", path))?;
+        let file = File::open(path).context(format!("failed to open config file {path}"))?;
         let reader = std::io::BufReader::new(file);
         let config: InnerConfig = serde_yml::from_reader(reader)
-            .context(format!("failed to parse config file {}", path))?;
+            .context(format!("failed to parse config file {path}"))?;
 
         let client = crate::remote::client::Client::new(&config, ignore_certificate_errors);
         let jwt = crate::remote::jwt::JwtClient::new(&config.token);
@@ -693,11 +693,11 @@ impl Config {
 
     pub fn save_new(path: &str, config: InnerConfig) -> Result<(), anyhow::Error> {
         std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap())
-            .context(format!("failed to create config directory {}", path))?;
-        let file = File::create(path).context(format!("failed to create config file {}", path))?;
+            .context(format!("failed to create config directory {path}"))?;
+        let file = File::create(path).context(format!("failed to create config file {path}"))?;
         let writer = std::io::BufWriter::new(file);
         serde_yml::to_writer(writer, &config)
-            .context(format!("failed to write config file {}", path))?;
+            .context(format!("failed to write config file {path}"))?;
 
         Ok(())
     }

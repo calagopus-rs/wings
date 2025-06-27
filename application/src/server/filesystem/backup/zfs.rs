@@ -7,7 +7,7 @@ fn get_base_path(server: &crate::server::Server, uuid: uuid::Uuid) -> PathBuf {
     Path::new(&server.filesystem.base_path)
         .join("zfs")
         .join(uuid.to_string())
-        .join(format!("backup-{}", uuid))
+        .join(format!("backup-{uuid}"))
 }
 
 pub async fn list(

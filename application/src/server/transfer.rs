@@ -80,7 +80,7 @@ impl OutgoingServerTransfer {
             .websocket
             .send(super::websocket::WebsocketMessage::new(
                 super::websocket::WebsocketEvent::ServerTransferLogs,
-                &[format!("{} {}", prelude, message)],
+                &[format!("{prelude} {message}")],
             ))
             .ok();
     }
@@ -249,11 +249,7 @@ impl OutgoingServerTransfer {
                         Self::log(
                             &server,
                             &format!(
-                                "Transferred {} of {} ({}/s, {})",
-                                formatted_bytes_archived,
-                                formatted_total_bytes,
-                                formatted_diff,
-                                formatted_percentage
+                                "Transferred {formatted_bytes_archived} of {formatted_total_bytes} ({formatted_diff}/s, {formatted_percentage})"
                             ),
                         );
                         tracing::debug!(

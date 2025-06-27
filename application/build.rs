@@ -15,7 +15,7 @@ fn main() {
         if let Ok(head) = std::fs::read_to_string("../.git/HEAD") {
             if head.starts_with("ref: ") {
                 let head_ref = head.trim_start_matches("ref: ").trim();
-                println!("cargo:rerun-if-changed=../.git/{}", head_ref);
+                println!("cargo:rerun-if-changed=../.git/{head_ref}");
             }
         }
 
@@ -42,9 +42,6 @@ fn main() {
     let target_env =
         std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_else(|_| "unknown".to_string());
 
-    println!("cargo:rustc-env=CARGO_GIT_COMMIT={}", git_hash);
-    println!(
-        "cargo:rustc-env=CARGO_TARGET={}-{}",
-        target_arch, target_env
-    );
+    println!("cargo:rustc-env=CARGO_GIT_COMMIT={git_hash}");
+    println!("cargo:rustc-env=CARGO_TARGET={target_arch}-{target_env}");
 }

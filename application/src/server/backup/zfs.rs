@@ -19,7 +19,7 @@ fn get_backup_path(server: &crate::server::Server, uuid: uuid::Uuid) -> PathBuf 
 
 #[inline]
 fn get_snapshot_name(uuid: uuid::Uuid) -> String {
-    format!("backup-{}", uuid)
+    format!("backup-{uuid}")
 }
 
 #[inline]
@@ -60,7 +60,7 @@ pub async fn create_backup(
 
     let output = Command::new("zfs")
         .arg("snapshot")
-        .arg(format!("{}@{}", dataset_name, snapshot_name))
+        .arg(format!("{dataset_name}@{snapshot_name}"))
         .output()
         .await?;
 
@@ -297,7 +297,7 @@ pub async fn download_backup(
     let mut headers = HeaderMap::new();
     headers.insert(
         "Content-Disposition",
-        format!("attachment; filename={}.tar.gz", uuid)
+        format!("attachment; filename={uuid}.tar.gz")
             .parse()
             .unwrap(),
     );

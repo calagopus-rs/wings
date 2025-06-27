@@ -89,7 +89,7 @@ impl AsyncRead for BoundedReader {
 
 #[inline]
 fn get_file_name(server: &crate::server::Server, uuid: uuid::Uuid) -> PathBuf {
-    Path::new(&server.config.system.backup_directory).join(format!("{}.s3.tar.gz", uuid))
+    Path::new(&server.config.system.backup_directory).join(format!("{uuid}.s3.tar.gz"))
 }
 
 pub async fn create_backup(

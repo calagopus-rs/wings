@@ -146,7 +146,7 @@ impl SftpSession {
         let id = self.handle_id;
         self.handle_id += 1;
 
-        format!("{:x}", id)
+        format!("{id:x}")
     }
 
     #[inline]

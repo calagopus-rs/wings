@@ -75,7 +75,7 @@ impl InternalBackup {
                 override_builder.add(file).ok();
                 override_raw.push_str(file);
             } else {
-                override_builder.add(&format!("!{}", file)).ok();
+                override_builder.add(&format!("!{file}")).ok();
                 override_raw.push('!');
                 override_raw.push_str(file);
             }

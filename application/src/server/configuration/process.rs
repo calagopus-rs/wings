@@ -440,7 +440,7 @@ async fn process_properties_file(
                         key, original_value, value
                     );
 
-                    updated_line = format!("{}={}", key, value);
+                    updated_line = format!("{key}={value}");
                     break;
                 }
             }
@@ -812,7 +812,7 @@ async fn process_ini_file(
             let full_key = if current_section.is_empty() {
                 key.to_string()
             } else {
-                format!("{}.{}", current_section, key)
+                format!("{current_section}.{key}")
             };
 
             processed_keys.insert(full_key.clone(), lines.len());
@@ -839,7 +839,7 @@ async fn process_ini_file(
                         "updating existing key '{}' in section '{}'",
                         key, section
                     );
-                    lines[*line_idx] = format!("{}={}", key, value);
+                    lines[*line_idx] = format!("{key}={value}");
                 } else {
                     if !sections.contains_key(section) {
                         tracing::debug!(
@@ -848,14 +848,14 @@ async fn process_ini_file(
                             section
                         );
                         sections.insert(section.to_string(), true);
-                        lines.push(format!("[{}]", section));
+                        lines.push(format!("[{section}]"));
                     }
                     tracing::debug!(
                         server = %server.uuid,
                         "adding new key '{}' to section '{}'",
                         key, section
                     );
-                    lines.push(format!("{}={}", key, value));
+                    lines.push(format!("{key}={value}"));
                 }
             } else {
                 let key = parts[0];
@@ -866,14 +866,14 @@ async fn process_ini_file(
                         "updating existing key '{}' in root section",
                         key
                     );
-                    lines[*line_idx] = format!("{}={}", key, value);
+                    lines[*line_idx] = format!("{key}={value}");
                 } else {
                     tracing::debug!(
                         server = %server.uuid,
                         "adding new key '{}' to root section",
                         key
                     );
-                    lines.push(format!("{}={}", key, value));
+                    lines.push(format!("{key}={value}"));
                 }
             }
         }
@@ -913,8 +913,8 @@ async fn process_xml_file(
             }
 
             let tag_name = parts.last().unwrap();
-            let start_tag = format!("<{}>", tag_name);
-            let end_tag = format!("</{}>", tag_name);
+            let start_tag = format!("<{tag_name}>");
+            let end_tag = format!("</{tag_name}>");
 
             if xml_content.contains(&start_tag) && xml_content.contains(&end_tag) {
                 if let Some(start_pos) = xml_content.find(&start_tag) {
@@ -934,7 +934,7 @@ async fn process_xml_file(
                 if let Some(root_end_idx) = xml_content.rfind("</root>") {
                     xml_content.insert_str(
                         root_end_idx,
-                        &format!("\n  <{}>{}</{}>\n", tag_name, value, tag_name),
+                        &format!("\n  <{tag_name}>{value}</{tag_name}>\n"),
                     );
                 }
             }

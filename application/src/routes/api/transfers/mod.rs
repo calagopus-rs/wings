@@ -122,8 +122,7 @@ mod post {
                         let reader = tokio_util::io::StreamReader::new(
                             field.into_stream().map_err(|err| {
                                 std::io::Error::other(format!(
-                                    "failed to read multipart field: {}",
-                                    err
+                                    "failed to read multipart field: {err}"
                                 ))
                             }),
                         );
