@@ -38,8 +38,6 @@ nestify::nest! {
         pub suspended: bool,
         pub invocation: String,
         pub skip_egg_scripts: bool,
-        #[serde(default)]
-        pub crash_detection_enabled: bool,
 
         pub environment: HashMap<String, serde_json::Value>,
         #[serde(default)]

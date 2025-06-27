@@ -310,7 +310,7 @@ pub async fn download_backup(
         inner.flush().unwrap();
     });
 
-    let mut headers = HeaderMap::new();
+    let mut headers = HeaderMap::with_capacity(2);
     headers.insert(
         "Content-Disposition",
         format!("attachment; filename={uuid}.tar.gz")

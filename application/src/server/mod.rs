@@ -204,6 +204,15 @@ impl Server {
                         | ContainerStateStatusEnum::EXITED => {
                             server.state.set_state(state::ServerState::Offline);
 
+                            tracing::debug!(
+                                server = %server.uuid,
+                                restarting = %server.restarting.load(Ordering::Relaxed),
+                                stopping = %server.stopping.load(Ordering::Relaxed),
+                                crash_handled = %server.crash_handled.load(Ordering::Relaxed),
+                                "container state changed to {:?}, handling crash",
+                                status
+                            );
+
                             if server.restarting.load(Ordering::Relaxed) {
                                 server
                                     .crash_handled
@@ -235,7 +244,6 @@ impl Server {
                                     .stopping
                                     .store(false, Ordering::Relaxed);
                             } else if server.config.system.crash_detection.enabled
-                                && server.configuration.read().await.crash_detection_enabled
                                 && !server
                                     .crash_handled
                                     .load(Ordering::Relaxed)

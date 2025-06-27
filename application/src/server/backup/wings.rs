@@ -453,8 +453,7 @@ pub async fn download_backup(
     let (file_format, file_name) = get_first_file_name(server, uuid).await?;
     let file = tokio::fs::File::open(&file_name).await?;
 
-    let mut headers = HeaderMap::new();
-
+    let mut headers = HeaderMap::with_capacity(3);
     match file_format {
         crate::config::SystemBackupsWingsArchiveFormat::Tar => {
             headers.insert(
