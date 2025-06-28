@@ -481,23 +481,7 @@ pub async fn install_server(
             .await
             .unwrap();
 
-        let wait_thread = {
-            let client = Arc::clone(client);
-
-            async move {
-                client
-                    .wait_container(
-                        &container.id,
-                        Some(bollard::container::WaitContainerOptions {
-                            condition: "next-exit",
-                        }),
-                    )
-                    .next()
-                    .await;
-            }
-        };
-
-        tokio::join!(thread, wait_thread);
+        thread.await;
     })
     .await
     .is_err()
@@ -540,6 +524,7 @@ pub async fn attach_install_container(
                 .names
                 .as_ref()
                 .is_some_and(|names| names.iter().any(|name| name.contains("installer")))
+                && container.state != Some("Exited".to_string())
             {
                 tracing::info!(
                     server = %server.uuid,
