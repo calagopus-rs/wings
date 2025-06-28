@@ -524,15 +524,33 @@ pub async fn attach_install_container(
                 .names
                 .as_ref()
                 .is_some_and(|names| names.iter().any(|name| name.contains("installer")))
-                && container.state != Some("Exited".to_string())
             {
-                tracing::info!(
-                    server = %server.uuid,
-                    "attaching to existing installation container {}",
-                    container.id.clone().unwrap()
-                );
+                if container.state == Some("Running".to_string()) {
+                    tracing::info!(
+                        server = %server.uuid,
+                        "attaching to existing installation container {}",
+                        container.id.clone().unwrap()
+                    );
 
-                *container_id.lock().await = Some(container.id.unwrap());
+                    *container_id.lock().await = Some(container.id.unwrap());
+                } else {
+                    tracing::info!(
+                        server = %server.uuid,
+                        "found existing installation container {} but it is not running, deleting it",
+                        container.id.clone().unwrap()
+                    );
+
+                    client
+                        .remove_container(
+                            &container.id.unwrap(),
+                            Some(bollard::container::RemoveContainerOptions {
+                                force: true,
+                                ..Default::default()
+                            }),
+                        )
+                        .await
+                        .ok();
+                }
             }
         }
     }
