@@ -264,6 +264,8 @@ nestify::nest! {
 
             #[serde(default)]
             pub disable_remote_download: bool,
+            #[serde(default)]
+            pub disable_directory_size: bool,
             #[serde(default = "api_directory_entry_limit")]
             pub directory_entry_limit: usize,
             #[serde(default)]

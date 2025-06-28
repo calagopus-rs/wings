@@ -100,11 +100,11 @@ impl Filesystem {
         }
 
         let checker_abort = Arc::new(AtomicBool::new(false));
-
         std::thread::spawn({
             let disk_usage = Arc::clone(&disk_usage);
             let disk_usage_cached = Arc::clone(&disk_usage_cached);
             let checker_abort = Arc::clone(&checker_abort);
+            let disable_directory_size = config.api.disable_directory_size;
             let base_path = base_path.clone();
 
             move || {
@@ -124,6 +124,7 @@ impl Filesystem {
                         path: &Path,
                         relative_path: &[String],
                         disk_usage: &mut usage::DiskUsage,
+                        disable_directory_size: bool,
                     ) -> u64 {
                         let mut total_size = 0;
                         let metadata = match path.symlink_metadata() {
@@ -149,8 +150,15 @@ impl Filesystem {
                                     total_size += metadata.len();
 
                                     if metadata.is_dir() {
-                                        let size = recursive_size(&path, &new_path, disk_usage);
-                                        disk_usage.update_size(&new_path, size as i64);
+                                        let size = recursive_size(
+                                            &path,
+                                            &new_path,
+                                            disk_usage,
+                                            disable_directory_size,
+                                        );
+                                        if !disable_directory_size {
+                                            disk_usage.update_size(&new_path, size as i64);
+                                        }
                                     }
                                 }
                             }
@@ -159,7 +167,12 @@ impl Filesystem {
                         total_size
                     }
 
-                    let total_size = recursive_size(&base_path, &[], &mut tmp_disk_usage);
+                    let total_size = recursive_size(
+                        &base_path,
+                        &[],
+                        &mut tmp_disk_usage,
+                        disable_directory_size,
+                    );
                     let total_entry_size =
                         tmp_disk_usage.entries.values().map(|e| e.size).sum::<u64>();
 
@@ -854,7 +867,7 @@ impl Filesystem {
         let real_metadata = symlink_destination_metadata.as_ref().unwrap_or(metadata);
         let real_path = symlink_destination.as_ref().unwrap_or(&path);
 
-        let size = if real_metadata.is_dir() {
+        let size = if real_metadata.is_dir() && !self.config.api.disable_directory_size {
             let components = self.path_to_components(real_path);
 
             self.disk_usage
