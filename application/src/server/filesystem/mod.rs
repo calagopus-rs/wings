@@ -414,18 +414,18 @@ impl Filesystem {
 
         self.allocate_in_path(&path, -(size as i64)).await;
 
-        if metadata.is_dir() && size > 0 {
+        if metadata.is_dir() {
             let mut disk_usage = self.disk_usage.write().await;
             disk_usage.remove_path(&components);
         }
 
         if metadata.is_dir() {
             tokio::task::spawn_blocking(move || filesystem.remove_dir_all(path)).await??;
-            Ok(())
         } else {
             tokio::task::spawn_blocking(move || filesystem.remove_file(path)).await??;
-            Ok(())
         }
+
+        Ok(())
     }
 
     pub async fn rename_path(

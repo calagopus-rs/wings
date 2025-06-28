@@ -338,16 +338,11 @@ impl russh_sftp::server::Handler for SftpSession {
 
         let path = match self.server.filesystem.canonicalize(&filename).await {
             Ok(path) => path,
-            Err(_) => return Err(StatusCode::NoSuchFile),
-        };
-
-        let parent = match path.parent() {
-            Some(parent) => parent,
-            None => return Err(StatusCode::NoSuchFile),
+            Err(_) => PathBuf::from(filename),
         };
 
         if let Ok(metadata) = self.server.filesystem.symlink_metadata(&path).await {
-            if !metadata.is_file() {
+            if metadata.is_dir() {
                 return Err(StatusCode::NoSuchFile);
             }
 
@@ -364,10 +359,6 @@ impl russh_sftp::server::Handler for SftpSession {
                 return Err(StatusCode::NoSuchFile);
             }
 
-            self.server
-                .filesystem
-                .allocate_in_path(parent, -(metadata.len() as i64))
-                .await;
             self.server
                 .activity
                 .log_activity(Activity {

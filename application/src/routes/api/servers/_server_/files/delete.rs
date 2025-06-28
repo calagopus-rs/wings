@@ -45,7 +45,7 @@ mod post {
             }
         };
 
-        let metadata = server.filesystem.metadata(&root).await;
+        let metadata = server.filesystem.symlink_metadata(&root).await;
         if !metadata.map(|m| m.is_dir()).unwrap_or(false) {
             return (
                 StatusCode::EXPECTATION_FAILED,
@@ -66,7 +66,7 @@ mod post {
                     &destination,
                     server
                         .filesystem
-                        .metadata(&destination)
+                        .symlink_metadata(&destination)
                         .await
                         .is_ok_and(|m| m.is_dir()),
                 )

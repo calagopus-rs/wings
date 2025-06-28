@@ -53,7 +53,7 @@ mod post {
             }
         };
 
-        let metadata = server.filesystem.metadata(&root).await;
+        let metadata = server.filesystem.symlink_metadata(&root).await;
         if !metadata.map(|m| m.is_dir()).unwrap_or(true) {
             return (
                 StatusCode::EXPECTATION_FAILED,
@@ -63,16 +63,14 @@ mod post {
 
         let mut updated_count = 0;
         for file in data.files {
-            let source = match server.filesystem.canonicalize(root.join(file.file)).await {
-                Ok(path) => path,
-                Err(_) => continue,
-            };
+            let source = root.join(file.file);
+            if source == root {
+                continue;
+            }
 
             let metadata = match server.filesystem.symlink_metadata(&source).await {
                 Ok(metadata) => metadata,
-                Err(_) => {
-                    continue;
-                }
+                Err(_) => continue,
             };
 
             if server
@@ -85,9 +83,7 @@ mod post {
 
             let mode = match u32::from_str_radix(&file.mode, 8) {
                 Ok(mode) => mode,
-                Err(_) => {
-                    continue;
-                }
+                Err(_) => continue,
             };
 
             if server
