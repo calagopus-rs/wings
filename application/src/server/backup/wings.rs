@@ -265,10 +265,14 @@ pub async fn restore_backup(
                     continue;
                 }
 
-                if server.filesystem.is_ignored_sync(
-                    &path,
-                    entry.header().entry_type() == tokio_tar::EntryType::Directory,
-                ) {
+                if server
+                    .filesystem
+                    .is_ignored(
+                        &path,
+                        entry.header().entry_type() == tokio_tar::EntryType::Directory,
+                    )
+                    .await
+                {
                     continue;
                 }
 
@@ -291,10 +295,9 @@ pub async fn restore_backup(
                             .log_daemon(format!("(restoring): {}", path.display()))
                             .await;
 
-                        server
-                            .filesystem
-                            .create_dir_all(path.parent().unwrap())
-                            .await?;
+                        if let Some(parent) = path.parent() {
+                            server.filesystem.create_dir_all(parent).await?;
+                        }
 
                         let mut writer =
                             crate::server::filesystem::writer::AsyncFileSystemWriter::new(
