@@ -4,7 +4,7 @@ use ignore::WalkBuilder;
 use serde::Deserialize;
 use sha2::Digest;
 use std::{
-    collections::HashMap,
+    os::unix::fs::PermissionsExt,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -195,14 +195,55 @@ impl OutgoingServerTransfer {
                             continue;
                         }
 
-                        if metadata.is_file() {
-                            bytes_archived.fetch_add(metadata.len(), Ordering::Relaxed);
-                        }
-
                         if metadata.is_dir() {
                             tar.append_dir(path, entry.path()).ok();
-                        } else {
-                            tar.append_path_with_name(entry.path(), path).ok();
+                            bytes_archived.fetch_add(
+                                metadata.len(),
+                                Ordering::SeqCst,
+                            );
+                        } else if metadata.is_file() {
+                            let file = match std::fs::File::open(entry.path()) {
+                                Ok(file) => file,
+                                Err(_) => continue,
+                            };
+
+                            let reader = counting_reader::CountingReader::new_with_bytes_read(
+                                file,
+                                Arc::clone(&bytes_archived),
+                            );
+
+                            let mut header = tar::Header::new_gnu();
+                            header.set_size(metadata.len());
+                            header.set_mode(metadata.permissions().mode());
+                            header.set_mtime(
+                                metadata
+                                    .modified()
+                                    .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default())
+                                    .unwrap_or_default()
+                                    .as_secs() as u64,
+                            );
+
+                            tar.append_data(&mut header, path, reader).ok();
+                        } else if let Ok(link_target) = std::fs::read_link(entry.path()) {
+                            let mut header = tar::Header::new_gnu();
+                            header.set_size(0);
+                            header.set_mode(metadata.permissions().mode());
+                            header.set_mtime(
+                                metadata
+                                    .modified()
+                                    .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default())
+                                    .unwrap_or_default()
+                                    .as_secs() as u64,
+                            );
+                            header.set_entry_type(tar::EntryType::Symlink);
+
+                            tar
+                                .append_link(&mut header, path, link_target)
+                                .unwrap();
+                            bytes_archived.fetch_add(
+                                metadata.len(),
+                                Ordering::SeqCst,
+                            );
                         }
                     }
 
@@ -253,7 +294,7 @@ impl OutgoingServerTransfer {
                     .unwrap(),
                 );
 
-            let mut backup_progress = HashMap::new();
+            let mut total_bytes = server.filesystem.limiter_usage().await;
             let backup_list = super::backup::InternalBackup::list(&server).await;
 
             if !backups.is_empty() {
@@ -273,7 +314,7 @@ impl OutgoingServerTransfer {
                                         continue;
                                     }
                                 };
-                                let counting_reader = counting_reader::CountingReader::new(
+                                let counting_reader = counting_reader::AsyncCountingReader::new_with_bytes_read(
                                     match tokio::fs::File::open(&file_name).await {
                                         Ok(file) => file,
                                         Err(err) => {
@@ -286,13 +327,13 @@ impl OutgoingServerTransfer {
                                             continue;
                                         }
                                     },
+                                    Arc::clone(&bytes_archived),
                                 );
-                                let progress = Arc::clone(&counting_reader.bytes_read);
 
-                                backup_progress.insert(
-                                    backup.uuid,
-                                    (progress, tokio::fs::metadata(&file_name).await.map_or(0, |f| f.len()))
-                                );
+                                total_bytes += tokio::fs::metadata(&file_name)
+                                    .await
+                                    .map(|m| m.len())
+                                    .unwrap_or(0);
 
                                 form = form.part(
                                     format!("backup-{}", backup.uuid),
@@ -326,14 +367,19 @@ impl OutgoingServerTransfer {
                 let server = server.clone();
 
                 async move {
-                    let total_bytes = server.filesystem.limiter_usage().await
-                        + backup_progress.values().map(|(_, size)| *size).sum::<u64>();
                     let formatted_total_bytes = human_bytes(total_bytes as f64);
                     let mut total_n_bytes_archived = 0.0;
 
                     loop {
-                        let bytes_archived = bytes_archived.load(Ordering::SeqCst)
-                            + backup_progress.values().map(|(progress, _)| progress.load(Ordering::SeqCst)).sum::<u64>();
+                        if !server.transferring.load(Ordering::SeqCst) {
+                            tracing::info!(
+                                server = %server.uuid,
+                                "transfer aborted, stopping progress task"
+                            );
+                            break;
+                        }
+
+                        let bytes_archived = bytes_archived.load(Ordering::SeqCst);
                         total_n_bytes_archived += 1.0;
 
                         let formatted_bytes_archived = human_bytes(bytes_archived as f64);
@@ -420,18 +466,23 @@ impl OutgoingServerTransfer {
             }
 
             server.transferring.store(false, Ordering::SeqCst);
-            server
-                .websocket
-                .send(super::websocket::WebsocketMessage::new(
-                    super::websocket::WebsocketEvent::ServerTransferStatus,
-                    &["completed".to_string()],
-                ))
-                .ok();
 
             tracing::info!(
                 server = %server.uuid,
                 "finished outgoing server transfer"
             );
+
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+                server
+                    .websocket
+                    .send(super::websocket::WebsocketMessage::new(
+                        super::websocket::WebsocketEvent::ServerTransferStatus,
+                        &["completed".to_string()],
+                    ))
+                    .ok();
+            });
         }));
 
         if let Some(old_task) = old_task {

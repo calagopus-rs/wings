@@ -8,21 +8,39 @@ use std::{
 };
 use tokio::io::AsyncRead;
 
-pub struct CountingReader<R: AsyncRead + Unpin> {
+pub struct CountingReader<R: std::io::Read> {
     inner: R,
     pub bytes_read: Arc<AtomicU64>,
 }
 
-impl<R: AsyncRead + Unpin> CountingReader<R> {
-    pub fn new(inner: R) -> Self {
-        Self {
-            inner,
-            bytes_read: Arc::new(AtomicU64::new(0)),
-        }
+impl<R: std::io::Read> CountingReader<R> {
+    pub fn new_with_bytes_read(inner: R, bytes_read: Arc<AtomicU64>) -> Self {
+        Self { inner, bytes_read }
     }
 }
 
-impl<R: AsyncRead + Unpin> AsyncRead for CountingReader<R> {
+impl<R: std::io::Read> std::io::Read for CountingReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let bytes_read = self.inner.read(buf)?;
+        self.bytes_read
+            .fetch_add(bytes_read as u64, Ordering::Relaxed);
+
+        Ok(bytes_read)
+    }
+}
+
+pub struct AsyncCountingReader<R: AsyncRead + Unpin> {
+    inner: R,
+    pub bytes_read: Arc<AtomicU64>,
+}
+
+impl<R: AsyncRead + Unpin> AsyncCountingReader<R> {
+    pub fn new_with_bytes_read(inner: R, bytes_read: Arc<AtomicU64>) -> Self {
+        Self { inner, bytes_read }
+    }
+}
+
+impl<R: AsyncRead + Unpin> AsyncRead for AsyncCountingReader<R> {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
