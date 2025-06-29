@@ -18,7 +18,7 @@ mod post {
     };
     use futures::{StreamExt, TryStreamExt};
     use serde::Serialize;
-    use std::{fs::Permissions, os::unix::fs::PermissionsExt, str::FromStr};
+    use std::{fs::Permissions, os::unix::fs::PermissionsExt, path::Path, str::FromStr};
     use tokio::io::AsyncWriteExt;
     use utoipa::ToSchema;
 
@@ -212,6 +212,74 @@ mod post {
                                     }
                                 }
                                 _ => {}
+                            }
+                        }
+                    } else if field.name().is_some_and(|n| n.starts_with("backup-")) {
+                        tracing::debug!(
+                            "processing backup field: {}",
+                            field.name().unwrap_or("unknown")
+                        );
+
+                        let file_name = match field.file_name() {
+                            Some(name) => name.to_string(),
+                            None => {
+                                tracing::warn!("backup field without file name found in transfer archive");
+                                continue;
+                            }
+                        };
+
+                        match field.content_type() {
+                            Some("backup/wings") => {
+                                let file_name = Path::new(&state.config.system.backup_directory).join(file_name);
+                                let mut reader = tokio_util::io::StreamReader::new(
+                                    field.into_stream().map_err(|err| {
+                                        std::io::Error::other(format!(
+                                            "failed to read multipart field: {err}"
+                                        ))
+                                    }),
+                                );
+
+                                let mut file = match tokio::fs::File::create(&file_name).await {
+                                    Ok(file) => file,
+                                    Err(err) => {
+                                        tracing::error!(
+                                            "failed to create backup file {}: {:#?}",
+                                            file_name.display(),
+                                            err
+                                        );
+                                        continue;
+                                    }
+                                };
+
+                                if let Err(err) = tokio::io::copy(&mut reader, &mut file).await {
+                                    tracing::error!(
+                                        "failed to copy backup file {}: {:#?}",
+                                        file_name.display(),
+                                        err
+                                    );
+                                    continue;
+                                }
+
+                                if let Err(err) = file.flush().await {
+                                    tracing::error!(
+                                        "failed to flush backup file {}: {:#?}",
+                                        file_name.display(),
+                                        err
+                                    );
+                                    continue;
+                                }
+
+                                tracing::debug!(
+                                    "backup file {} transferred successfully",
+                                    file_name.display()
+                                );
+                            },
+                            _ => {
+                                tracing::warn!(
+                                    "invalid content type for backup field: {}",
+                                    field.content_type().unwrap_or("unknown")
+                                );
+                                continue;
                             }
                         }
                     }

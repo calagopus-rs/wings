@@ -1,6 +1,9 @@
 use crate::{
     routes::GetState,
-    server::{permissions::Permission, websocket},
+    server::{
+        permissions::Permission,
+        websocket::{self, send_message},
+    },
 };
 use axum::{
     body::Bytes,
@@ -118,6 +121,15 @@ pub async fn handle_ws(
                                 "error handling jwt: {}",
                                 err,
                             );
+
+                            send_message(
+                                &sender,
+                                websocket::WebsocketMessage::new(
+                                    websocket::WebsocketEvent::JwtError,
+                                    &[err.to_string()],
+                                ),
+                            )
+                            .await;
                         }
                     }
                 }

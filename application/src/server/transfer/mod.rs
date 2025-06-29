@@ -3,12 +3,17 @@ use human_bytes::human_bytes;
 use ignore::WalkBuilder;
 use serde::Deserialize;
 use sha2::Digest;
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use utoipa::ToSchema;
+
+mod counting_reader;
 
 #[derive(Clone, Copy, ToSchema, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -109,7 +114,9 @@ impl OutgoingServerTransfer {
         client: &Arc<bollard::Docker>,
         url: String,
         token: String,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        backups: Vec<uuid::Uuid>,
+        delete_backups: bool,
+    ) -> Result<(), anyhow::Error> {
         let client = Arc::clone(client);
         let bytes_archived = Arc::clone(&self.bytes_archived);
         let archive_format = self.archive_format;
@@ -206,7 +213,7 @@ impl OutgoingServerTransfer {
                 }
             });
 
-            let checksum_task = tokio::task::spawn(async move {
+            let checksum_task = Box::pin(async move {
                 let mut hasher = sha2::Sha256::new();
 
                 let mut buffer = [0; 8192];
@@ -226,19 +233,110 @@ impl OutgoingServerTransfer {
                     .unwrap();
             });
 
-            let progress_task = tokio::task::spawn({
+            let mut form = reqwest::multipart::Form::new()
+                .part(
+                    "archive",
+                    reqwest::multipart::Part::stream(reqwest::Body::wrap_stream(
+                        tokio_util::io::ReaderStream::new(Box::pin(reader)),
+                    ))
+                    .file_name(format!("archive.{}", archive_format.extension()))
+                    .mime_str("application/x-tar")
+                    .unwrap(),
+                )
+                .part(
+                    "checksum",
+                    reqwest::multipart::Part::stream(reqwest::Body::wrap_stream(
+                        tokio_util::io::ReaderStream::new(Box::pin(checksum_reader)),
+                    ))
+                    .file_name("checksum")
+                    .mime_str("text/plain")
+                    .unwrap(),
+                );
+
+            let mut backup_progress = HashMap::new();
+            let backup_list = super::backup::InternalBackup::list(&server).await;
+
+            if !backups.is_empty() {
+                for backup in &backups {
+                    if let Some(backup) = backup_list.iter().find(|b| b.uuid == *backup) {
+                        match backup.adapter {
+                            super::backup::BackupAdapter::Wings => {
+                                let file_name = match super::backup::wings::get_first_file_name(&server, backup.uuid).await {
+                                    Ok((_, file_name)) => file_name,
+                                    Err(err) => {
+                                        tracing::error!(
+                                            server = %server.uuid,
+                                            "failed to get first file name for backup {}: {}",
+                                            backup.uuid,
+                                            err
+                                        );
+                                        continue;
+                                    }
+                                };
+                                let counting_reader = counting_reader::CountingReader::new(
+                                    match tokio::fs::File::open(&file_name).await {
+                                        Ok(file) => file,
+                                        Err(err) => {
+                                            tracing::error!(
+                                                server = %server.uuid,
+                                                "failed to open backup file {}: {}",
+                                                file_name.display(),
+                                                err
+                                            );
+                                            continue;
+                                        }
+                                    },
+                                );
+                                let progress = Arc::clone(&counting_reader.bytes_read);
+
+                                backup_progress.insert(
+                                    backup.uuid,
+                                    (progress, tokio::fs::metadata(&file_name).await.map_or(0, |f| f.len()))
+                                );
+
+                                form = form.part(
+                                    format!("backup-{}", backup.uuid),
+                                    reqwest::multipart::Part::stream(reqwest::Body::wrap_stream(
+                                        tokio_util::io::ReaderStream::new(Box::pin(counting_reader)),
+                                    ))
+                                    .file_name(file_name.file_name().unwrap_or_default().to_string_lossy().to_string())
+                                    .mime_str("backup/wings")
+                                    .unwrap(),
+                                );
+                            }
+                            _ => {
+                                tracing::warn!(
+                                    server = %server.uuid,
+                                    "backup {} is not a Wings backup and cannot be transferred, skipping",
+                                    backup.uuid
+                                );
+                            }
+                        }
+                    } else {
+                        tracing::warn!(
+                            server = %server.uuid,
+                            "requested backup {} does not exist",
+                            backup
+                        );
+                    }
+                }
+            }
+
+            let progress_task = tokio::spawn({
                 let server = server.clone();
 
                 async move {
-                    let total_bytes = server.filesystem.limiter_usage().await;
+                    let total_bytes = server.filesystem.limiter_usage().await
+                        + backup_progress.values().map(|(_, size)| *size).sum::<u64>();
+                    let formatted_total_bytes = human_bytes(total_bytes as f64);
                     let mut total_n_bytes_archived = 0.0;
 
                     loop {
-                        let bytes_archived = bytes_archived.load(Ordering::SeqCst);
+                        let bytes_archived = bytes_archived.load(Ordering::SeqCst)
+                            + backup_progress.values().map(|(progress, _)| progress.load(Ordering::SeqCst)).sum::<u64>();
                         total_n_bytes_archived += 1.0;
 
                         let formatted_bytes_archived = human_bytes(bytes_archived as f64);
-                        let formatted_total_bytes = human_bytes(total_bytes as f64);
                         let formatted_diff =
                             human_bytes(bytes_archived as f64 / total_n_bytes_archived);
                         let formatted_percentage = format!(
@@ -266,26 +364,6 @@ impl OutgoingServerTransfer {
                 }
             });
 
-            let form = reqwest::multipart::Form::new()
-                .part(
-                    "archive",
-                    reqwest::multipart::Part::stream(reqwest::Body::wrap_stream(
-                        tokio_util::io::ReaderStream::new(Box::pin(reader)),
-                    ))
-                    .file_name(format!("archive.{}", archive_format.extension()))
-                    .mime_str("application/x-tar")
-                    .unwrap(),
-                )
-                .part(
-                    "checksum",
-                    reqwest::multipart::Part::stream(reqwest::Body::wrap_stream(
-                        tokio_util::io::ReaderStream::new(Box::pin(checksum_reader)),
-                    ))
-                    .file_name("checksum")
-                    .mime_str("text/plain")
-                    .unwrap(),
-                );
-
             let client = reqwest::Client::new();
             let response = client
                 .post(url)
@@ -310,6 +388,36 @@ impl OutgoingServerTransfer {
             }
 
             Self::log(&server, "Finished streaming archive to destination.");
+
+            for backup in backups {
+                match backup_list.iter().find(|b| b.uuid == backup) {
+                    Some(backup) => {
+                        if delete_backups {
+                            if let Err(err) = backup.delete(&server).await {
+                                tracing::error!(
+                                    server = %server.uuid,
+                                    "failed to delete backup {}: {}",
+                                    backup.uuid,
+                                    err
+                                );
+                            } else {
+                                tracing::info!(
+                                    server = %server.uuid,
+                                    "deleted backup {} after transfer",
+                                    backup.uuid
+                                );
+                            }
+                        }
+                    }
+                    None => {
+                        tracing::warn!(
+                            server = %server.uuid,
+                            "requested backup {} does not exist",
+                            backup
+                        );
+                    }
+                }
+            }
 
             server.transferring.store(false, Ordering::SeqCst);
             server

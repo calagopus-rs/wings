@@ -16,6 +16,10 @@ mod post {
         archive_format: crate::server::transfer::ArchiveFormat,
         #[serde(deserialize_with = "crate::deserialize::deserialize_optional")]
         compression_level: Option<crate::server::filesystem::archive::CompressionLevel>,
+        #[serde(deserialize_with = "crate::deserialize::deserialize_defaultable")]
+        backups: Vec<uuid::Uuid>,
+        #[serde(deserialize_with = "crate::deserialize::deserialize_defaultable")]
+        delete_backups: bool,
     }
 
     #[derive(ToSchema, Serialize)]
@@ -53,7 +57,16 @@ mod post {
                 .unwrap_or(state.config.system.backups.compression_level),
         );
 
-        if transfer.start(&state.docker, data.url, data.token).is_ok() {
+        if transfer
+            .start(
+                &state.docker,
+                data.url,
+                data.token,
+                data.backups,
+                data.delete_backups,
+            )
+            .is_ok()
+        {
             server.outgoing_transfer.write().await.replace(transfer);
         }
 
