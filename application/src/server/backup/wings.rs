@@ -138,6 +138,10 @@ pub async fn create_backup(
                     };
 
                     if let Ok(relative) = entry.path().strip_prefix(&server.filesystem.base_path) {
+                        if relative.components().count() == 0 {
+                            continue;
+                        }
+
                         if metadata.is_dir() {
                             let mut header = tar::Header::new_gnu();
                             header.set_size(0);
