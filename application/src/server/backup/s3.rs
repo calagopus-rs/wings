@@ -123,17 +123,29 @@ pub async fn create_backup(
                 .build()
                 .flatten()
             {
-                let path = entry.path().canonicalize()?;
                 let metadata = match entry.metadata() {
                     Ok(metadata) => metadata,
                     Err(_) => continue,
                 };
 
-                if let Ok(relative) = path.strip_prefix(&server.filesystem.base_path) {
+                if let Ok(relative) = entry.path().strip_prefix(&server.filesystem.base_path) {
                     if metadata.is_dir() {
-                        tar.append_dir(relative, &path)?;
+                        let mut header = tar::Header::new_gnu();
+                        header.set_size(0);
+                        header.set_mode(metadata.permissions().mode());
+                        header.set_mtime(
+                            metadata
+                                .modified()
+                                .map(|t| {
+                                    t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default()
+                                })
+                                .unwrap_or_default()
+                                .as_secs(),
+                        );
+
+                        tar.append_data(&mut header, relative, std::io::empty())?;
                     } else if metadata.is_file() {
-                        let file = match filesystem.open(&path) {
+                        let file = match filesystem.open(relative) {
                             Ok(file) => file,
                             Err(_) => continue,
                         };
@@ -148,7 +160,7 @@ pub async fn create_backup(
                                     t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default()
                                 })
                                 .unwrap_or_default()
-                                .as_secs() as u64,
+                                .as_secs(),
                         );
 
                         tar.append_data(&mut header, relative, file)?;
@@ -163,7 +175,7 @@ pub async fn create_backup(
                                     t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default()
                                 })
                                 .unwrap_or_default()
-                                .as_secs() as u64,
+                                .as_secs(),
                         );
                         header.set_entry_type(tar::EntryType::Symlink);
 

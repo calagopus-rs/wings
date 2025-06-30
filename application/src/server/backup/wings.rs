@@ -132,17 +132,29 @@ pub async fn create_backup(
                     .build()
                     .flatten()
                 {
-                    let path = entry.path().canonicalize()?;
                     let metadata = match entry.metadata() {
                         Ok(metadata) => metadata,
                         Err(_) => continue,
                     };
 
-                    if let Ok(relative) = path.strip_prefix(&server.filesystem.base_path) {
+                    if let Ok(relative) = entry.path().strip_prefix(&server.filesystem.base_path) {
                         if metadata.is_dir() {
-                            tar.append_dir(relative, &path)?;
+                            let mut header = tar::Header::new_gnu();
+                            header.set_size(0);
+                            header.set_mode(metadata.permissions().mode());
+                            header.set_mtime(
+                                metadata
+                                    .modified()
+                                    .map(|t| {
+                                        t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default()
+                                    })
+                                    .unwrap_or_default()
+                                    .as_secs(),
+                            );
+
+                            tar.append_data(&mut header, relative, std::io::empty())?;
                         } else if metadata.is_file() {
-                            let file = match filesystem.open(&path) {
+                            let file = match filesystem.open(relative) {
                                 Ok(file) => file,
                                 Err(_) => continue,
                             };
@@ -157,7 +169,7 @@ pub async fn create_backup(
                                         t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default()
                                     })
                                     .unwrap_or_default()
-                                    .as_secs() as u64,
+                                    .as_secs(),
                             );
 
                             tar.append_data(&mut header, relative, file)?;
@@ -172,7 +184,7 @@ pub async fn create_backup(
                                         t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default()
                                     })
                                     .unwrap_or_default()
-                                    .as_secs() as u64,
+                                    .as_secs(),
                             );
                             header.set_entry_type(tar::EntryType::Symlink);
 
@@ -197,13 +209,12 @@ pub async fn create_backup(
                     .build()
                     .flatten()
                 {
-                    let path = entry.path().canonicalize()?;
                     let metadata = match entry.metadata() {
                         Ok(metadata) => metadata,
                         Err(_) => continue,
                     };
 
-                    if let Ok(relative) = path.strip_prefix(&server.filesystem.base_path) {
+                    if let Ok(relative) = entry.path().strip_prefix(&server.filesystem.base_path) {
                         let mut options: zip::write::FileOptions<'_, ()> =
                             zip::write::FileOptions::default()
                                 .compression_level(Some(
@@ -227,12 +238,12 @@ pub async fn create_backup(
                         }
 
                         if metadata.is_dir() {
-                            zip.add_directory(relative.to_string_lossy(), options).ok();
+                            zip.add_directory(relative.to_string_lossy(), options)?;
                         } else if metadata.is_file() {
                             zip.start_file(relative.to_string_lossy(), options)?;
-                            let mut file = filesystem.open(&relative)?;
+                            let mut file = filesystem.open(relative)?;
                             std::io::copy(&mut file, &mut zip)?;
-                        } else if let Ok(link_target) = filesystem.read_link_contents(&relative) {
+                        } else if let Ok(link_target) = filesystem.read_link_contents(relative) {
                             zip.add_symlink(
                                 relative.to_string_lossy(),
                                 link_target.to_string_lossy(),
@@ -284,7 +295,7 @@ pub async fn restore_backup(
         crate::config::SystemBackupsWingsArchiveFormat::Tar
         | crate::config::SystemBackupsWingsArchiveFormat::TarGz
         | crate::config::SystemBackupsWingsArchiveFormat::TarZstd => {
-            let reader: Box<dyn tokio::io::AsyncRead + Send> = match file_format {
+            let reader: Box<dyn tokio::io::AsyncRead + Send + Unpin> = match file_format {
                 crate::config::SystemBackupsWingsArchiveFormat::Tar => Box::new(file),
                 crate::config::SystemBackupsWingsArchiveFormat::TarGz => Box::new(
                     async_compression::tokio::bufread::GzipDecoder::new(BufReader::new(file)),
@@ -294,7 +305,7 @@ pub async fn restore_backup(
                 ),
                 _ => unreachable!(),
             };
-            let mut archive = tokio_tar::Archive::new(Box::into_pin(reader));
+            let mut archive = tokio_tar::Archive::new(reader);
 
             let mut entries = archive.entries()?;
             while let Some(entry) = entries.next().await {

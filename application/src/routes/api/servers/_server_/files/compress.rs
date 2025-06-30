@@ -145,7 +145,24 @@ mod post {
                             }
 
                             if metadata.is_dir() {
-                                archive.append_dir(display_path, entry.path()).ok();
+                                let mut header = tar::Header::new_gnu();
+                                header.set_size(0);
+                                header.set_mode(metadata.permissions().mode());
+                                header.set_mtime(
+                                    metadata
+                                        .modified()
+                                        .map(|t| {
+                                            t.into_std()
+                                                .duration_since(std::time::UNIX_EPOCH)
+                                                .unwrap_or_default()
+                                        })
+                                        .unwrap_or_default()
+                                        .as_secs() as u64,
+                                );
+
+                                archive
+                                    .append_data(&mut header, display_path, std::io::empty())
+                                    .ok();
                             } else if metadata.is_file() {
                                 let file = match filesystem.open(&path) {
                                     Ok(file) => file,
@@ -171,9 +188,9 @@ mod post {
                             } else if let Ok(link_target) = filesystem.read_link_contents(&source) {
                                 let mut header = tar::Header::new_gnu();
                                 header.set_size(0);
-                                header.set_mode(source_metadata.permissions().mode());
+                                header.set_mode(metadata.permissions().mode());
                                 header.set_mtime(
-                                    source_metadata
+                                    metadata
                                         .modified()
                                         .map(|t| {
                                             t.into_std()
@@ -209,7 +226,7 @@ mod post {
                         archive
                             .append_data(&mut header, relative, filesystem.open(&source).unwrap())
                             .unwrap();
-                    } else if let Ok(link_target) = filesystem.read_link(&source) {
+                    } else if let Ok(link_target) = filesystem.read_link_contents(&source) {
                         let mut header = tar::Header::new_gnu();
                         header.set_size(0);
                         header.set_mode(source_metadata.permissions().mode());

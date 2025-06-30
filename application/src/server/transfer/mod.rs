@@ -220,7 +220,7 @@ impl OutgoingServerTransfer {
                                     .modified()
                                     .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default())
                                     .unwrap_or_default()
-                                    .as_secs() as u64,
+                                    .as_secs(),
                             );
 
                             tar.append_data(&mut header, path, reader).ok();
@@ -233,7 +233,7 @@ impl OutgoingServerTransfer {
                                     .modified()
                                     .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default())
                                     .unwrap_or_default()
-                                    .as_secs() as u64,
+                                    .as_secs(),
                             );
                             header.set_entry_type(tar::EntryType::Symlink);
 
