@@ -4,19 +4,19 @@ use axum::{
     http::{HeaderMap, StatusCode},
 };
 use human_bytes::human_bytes;
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt},
     process::Command,
     sync::RwLock,
 };
 
-static CACHED_BACKUPS: RwLock<Option<Vec<(uuid::Uuid, PathBuf)>>> = RwLock::const_new(None);
+static CACHED_BACKUPS: RwLock<Option<HashMap<uuid::Uuid, PathBuf>>> = RwLock::const_new(None);
 
 async fn get_backup_list(server: &crate::server::Server) -> Vec<uuid::Uuid> {
     let cached_backups = CACHED_BACKUPS.read().await;
     if let Some(backups) = cached_backups.as_ref() {
-        return backups.iter().map(|(uuid, _)| *uuid).collect();
+        return backups.keys().copied().collect();
     }
 
     drop(cached_backups);
@@ -28,7 +28,7 @@ async fn get_backup_list(server: &crate::server::Server) -> Vec<uuid::Uuid> {
 
         async move {
             loop {
-                let mut backups = Vec::new();
+                let mut backups = HashMap::new();
 
                 let output = match Command::new("restic")
                     .envs(&server.config.system.backups.restic.environment)
@@ -77,7 +77,7 @@ async fn get_backup_list(server: &crate::server::Server) -> Vec<uuid::Uuid> {
                                             paths.as_array().and_then(|arr| arr.first())
                                         {
                                             if let Some(path_str) = path.as_str() {
-                                                backups.push((uuid, PathBuf::from(path_str)));
+                                                backups.insert(uuid, PathBuf::from(path_str));
                                             }
                                         }
                                     }
@@ -113,7 +113,7 @@ pub async fn get_backup_base_path(
 
     let cached_backups = CACHED_BACKUPS.read().await;
     if let Some(cached_backups) = cached_backups.as_ref() {
-        if let Some((_, path)) = cached_backups.iter().find(|(id, _)| *id == uuid) {
+        if let Some(path) = cached_backups.get(&uuid) {
             return Some(path.clone());
         }
     }
@@ -189,7 +189,7 @@ pub async fn create_backup(
             .await
             .as_mut()
             .unwrap()
-            .push((uuid, server.filesystem.base_path.clone()));
+            .insert(uuid, server.filesystem.base_path.clone());
     }
 
     Ok(RawServerBackup {

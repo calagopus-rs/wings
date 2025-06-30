@@ -121,5 +121,6 @@ docker:
 - add [`ddup-bak`](https://github.com/0x7d8/ddup-bak) backup driver
 - add [`btrfs`](https://github.com/kdave/btrfs-progs) backup driver
 - add [`zfs`](https://github.com/openzfs/zfs) backup driver
+- add [`restic`](https://github.com/restic/restic) backup driver
 - add ability to create `zip` archives on `wings` backup driver
 - add ability to browse backups (for some drivers)
