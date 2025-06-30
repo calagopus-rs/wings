@@ -6,7 +6,11 @@ use axum::{
 use ddup_bak::archive::entries::Entry;
 use ignore::WalkBuilder;
 use sha1::Digest;
-use std::{io::Write, path::Path, sync::Arc};
+use std::{
+    io::Write,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use tokio::{io::AsyncReadExt, sync::RwLock};
 
 static REPOSITORY: RwLock<Option<Arc<ddup_bak::repository::Repository>>> = RwLock::const_new(None);
@@ -18,20 +22,26 @@ pub async fn get_repository(
         return Arc::clone(repository);
     }
 
-    let path = Path::new(&server.config.system.backup_directory);
+    let path = PathBuf::from(&server.config.system.backup_directory);
     if path.join(".ddup-bak").exists() {
-        let repository =
-            Arc::new(ddup_bak::repository::Repository::open(path, None, None).unwrap());
+        let repository = Arc::new(
+            tokio::task::spawn_blocking(move || {
+                ddup_bak::repository::Repository::open(&path, None, None).unwrap()
+            })
+            .await
+            .unwrap(),
+        );
         *REPOSITORY.write().await = Some(Arc::clone(&repository));
 
         repository
     } else {
-        let repository = Arc::new(ddup_bak::repository::Repository::new(
-            path,
-            1024 * 1024,
-            0,
-            None,
-        ));
+        let repository = Arc::new(
+            tokio::task::spawn_blocking(move || {
+                ddup_bak::repository::Repository::new(&path, 1024 * 1024, 0, None)
+            })
+            .await
+            .unwrap(),
+        );
         repository.save().unwrap();
         *REPOSITORY.write().await = Some(Arc::clone(&repository));
 

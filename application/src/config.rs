@@ -436,6 +436,7 @@ nestify::nest! {
                     pub repository: String,
                     #[serde(default = "system_backup_restic_password_file")]
                     pub password_file: String,
+
                     #[serde(default = "system_backup_restic_retry_lock_seconds")]
                     pub retry_lock_seconds: u64,
                     #[serde(default)]
@@ -572,7 +573,7 @@ nestify::nest! {
 
         pub remote: String,
         #[serde(default)]
-        pub remote_query: #[derive(Clone, Deserialize, Serialize, DefaultFromSerde)] #[serde(default)] pub struct RemoteQuery {
+        pub remote_query: #[derive(Clone, Copy, Deserialize, Serialize, DefaultFromSerde)] #[serde(default)] pub struct RemoteQuery {
             #[serde(default = "remote_query_timeout")]
             pub timeout: u64,
             #[serde(default = "remote_query_boot_servers_per_page")]

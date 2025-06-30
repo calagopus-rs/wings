@@ -42,7 +42,7 @@ impl Client {
             .unwrap();
 
         Self {
-            config: config.remote_query.clone(),
+            config: config.remote_query,
             client,
             url: format!("{}/api/remote", config.remote.trim_end_matches('/')),
         }
