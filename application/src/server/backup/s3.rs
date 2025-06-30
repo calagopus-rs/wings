@@ -306,82 +306,80 @@ pub async fn restore_backup(
         tokio_util::io::StreamReader::new(Box::pin(response.map_err(std::io::Error::other)));
     let reader = BufReader::with_capacity(1024 * 1024, reader);
 
-    tokio::spawn(async move {
-        let mut archive =
-            tokio_tar::Archive::new(async_compression::tokio::bufread::GzipDecoder::new(reader));
+    let mut archive =
+        tokio_tar::Archive::new(async_compression::tokio::bufread::GzipDecoder::new(reader));
 
-        let mut entries = archive.entries()?;
-        while let Some(entry) = entries.next().await {
-            let mut entry = entry?;
-            let path = entry.path()?;
+    let mut entries = archive.entries()?;
+    while let Some(entry) = entries.next().await {
+        let mut entry = entry?;
+        let path = entry.path()?;
 
-            if path.is_absolute() {
-                continue;
-            }
-
-            if server.filesystem.is_ignored_sync(
-                &path,
-                entry.header().entry_type() == tokio_tar::EntryType::Directory,
-            ) {
-                continue;
-            }
-
-            let header = entry.header();
-            match header.entry_type() {
-                tokio_tar::EntryType::Directory => {
-                    server.filesystem.create_dir_all(path.as_ref()).await?;
-                    server
-                        .filesystem
-                        .set_permissions(
-                            path.as_ref(),
-                            cap_std::fs::Permissions::from_std(Permissions::from_mode(
-                                header.mode().unwrap_or(0o755),
-                            )),
-                        )
-                        .await?;
-                }
-                tokio_tar::EntryType::Regular => {
-                    server
-                        .log_daemon(format!("(restoring): {}", path.display()))
-                        .await;
-
-                    server
-                        .filesystem
-                        .create_dir_all(path.parent().unwrap())
-                        .await?;
-
-                    let mut writer = crate::server::filesystem::writer::AsyncFileSystemWriter::new(
-                        server.clone(),
-                        path.to_path_buf(),
-                        Some(Permissions::from_mode(header.mode().unwrap_or(0o644))),
-                        header
-                            .mtime()
-                            .map(|t| std::time::UNIX_EPOCH + std::time::Duration::from_secs(t))
-                            .ok(),
-                    )
-                    .await?;
-
-                    tokio::io::copy(&mut entry, &mut writer).await?;
-                    writer.flush().await?;
-                }
-                tokio_tar::EntryType::Symlink => {
-                    let link = entry.link_name().unwrap_or_default().unwrap_or_default();
-
-                    server
-                        .filesystem
-                        .symlink(link, path)
-                        .await
-                        .unwrap_or_else(|err| {
-                            tracing::debug!("failed to create symlink from archive: {:#?}", err);
-                        });
-                }
-                _ => {}
-            }
+        if path.is_absolute() {
+            continue;
         }
 
-        Ok::<(), anyhow::Error>(())
-    })
-    .await??;
+        if server
+            .filesystem
+            .is_ignored(
+                &path,
+                entry.header().entry_type() == tokio_tar::EntryType::Directory,
+            )
+            .await
+        {
+            continue;
+        }
+
+        let header = entry.header();
+        match header.entry_type() {
+            tokio_tar::EntryType::Directory => {
+                server.filesystem.create_dir_all(path.as_ref()).await?;
+                server
+                    .filesystem
+                    .set_permissions(
+                        path.as_ref(),
+                        cap_std::fs::Permissions::from_std(Permissions::from_mode(
+                            header.mode().unwrap_or(0o755),
+                        )),
+                    )
+                    .await?;
+            }
+            tokio_tar::EntryType::Regular => {
+                server
+                    .log_daemon(format!("(restoring): {}", path.display()))
+                    .await;
+
+                if let Some(parent) = path.parent() {
+                    server.filesystem.create_dir_all(parent).await?;
+                }
+
+                let mut writer = crate::server::filesystem::writer::AsyncFileSystemWriter::new(
+                    server.clone(),
+                    path.to_path_buf(),
+                    Some(Permissions::from_mode(header.mode().unwrap_or(0o644))),
+                    header
+                        .mtime()
+                        .map(|t| std::time::UNIX_EPOCH + std::time::Duration::from_secs(t))
+                        .ok(),
+                )
+                .await?;
+
+                tokio::io::copy(&mut entry, &mut writer).await?;
+                writer.flush().await?;
+            }
+            tokio_tar::EntryType::Symlink => {
+                let link = entry.link_name().unwrap_or_default().unwrap_or_default();
+
+                server
+                    .filesystem
+                    .symlink(link, path)
+                    .await
+                    .unwrap_or_else(|err| {
+                        tracing::debug!("failed to create symlink from archive: {:#?}", err);
+                    });
+            }
+            _ => {}
+        }
+    }
 
     Ok(())
 }
