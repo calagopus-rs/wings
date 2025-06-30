@@ -98,7 +98,8 @@ pub async fn create_backup(
     overrides: ignore::overrides::Override,
 ) -> Result<RawServerBackup, anyhow::Error> {
     let file_name = get_file_name(&server, uuid);
-    let writer = std::io::BufWriter::new(std::fs::File::create(&file_name)?);
+    let writer = tokio::fs::File::create(&file_name).await?.into_std().await;
+    let filesystem = server.filesystem.base_dir().await?;
 
     let compression_level = server.config.system.backups.compression_level;
     tokio::task::spawn_blocking({
@@ -123,13 +124,50 @@ pub async fn create_backup(
                 .flatten()
             {
                 let path = entry.path().canonicalize()?;
-                let metadata = entry.metadata()?;
+                let metadata = match entry.metadata() {
+                    Ok(metadata) => metadata,
+                    Err(_) => continue,
+                };
 
                 if let Ok(relative) = path.strip_prefix(&server.filesystem.base_path) {
                     if metadata.is_dir() {
-                        tar.append_dir(relative, &path).ok();
-                    } else {
-                        tar.append_path_with_name(&path, relative).ok();
+                        tar.append_dir(relative, &path)?;
+                    } else if metadata.is_file() {
+                        let file = match filesystem.open(&path) {
+                            Ok(file) => file,
+                            Err(_) => continue,
+                        };
+
+                        let mut header = tar::Header::new_gnu();
+                        header.set_size(metadata.len());
+                        header.set_mode(metadata.permissions().mode());
+                        header.set_mtime(
+                            metadata
+                                .modified()
+                                .map(|t| {
+                                    t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default()
+                                })
+                                .unwrap_or_default()
+                                .as_secs() as u64,
+                        );
+
+                        tar.append_data(&mut header, relative, file)?;
+                    } else if let Ok(link_target) = filesystem.read_link_contents(relative) {
+                        let mut header = tar::Header::new_gnu();
+                        header.set_size(0);
+                        header.set_mode(metadata.permissions().mode());
+                        header.set_mtime(
+                            metadata
+                                .modified()
+                                .map(|t| {
+                                    t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default()
+                                })
+                                .unwrap_or_default()
+                                .as_secs() as u64,
+                        );
+                        header.set_entry_type(tar::EntryType::Symlink);
+
+                        tar.append_link(&mut header, relative, link_target)?;
                     }
                 }
             }

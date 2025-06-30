@@ -168,7 +168,7 @@ mod post {
                                 );
 
                                 archive.append_data(&mut header, display_path, file).ok();
-                            } else if let Ok(link_target) = filesystem.read_link(&source) {
+                            } else if let Ok(link_target) = filesystem.read_link_contents(&source) {
                                 let mut header = tar::Header::new_gnu();
                                 header.set_size(0);
                                 header.set_mode(source_metadata.permissions().mode());

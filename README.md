@@ -93,7 +93,6 @@ docker:
 
 - `GET /openapi.json` endpoint for getting a full OpenAPI documentation of the wings api
 - `GET /api/stats` api endpoint for seeing node usage
-- `GET /api/extensions` api endpoint for listing running extensions
 - `GET /api/servers/{server}/version` api endpoint for getting a version hash for a server
 - `GET /api/servers/{server}/files/fingerprints` api endpoint for getting fingerprints for many files at once
 - `POST /api/servers/{server}/files/search` api endpoint for searching for file names/content
@@ -106,6 +105,7 @@ docker:
 - add support for opening individual compressed file (e.g. `.log.gz`) in `GET /api/servers/{server}/files/contents`
 - add (real) folder size support on `GET /api/servers/{server}/files/list-directory`
 - add multithreading support to `POST /api/servers/{server}/files/decompress`
+- allow transferring backups in server transfers
 
 ### sftp
 
