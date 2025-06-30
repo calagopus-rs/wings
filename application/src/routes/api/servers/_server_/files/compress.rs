@@ -89,12 +89,7 @@ mod post {
                 ));
 
                 for file in data.files {
-                    let source = match filesystem
-                        .canonicalize(server.filesystem.relative_path(&root.join(file)))
-                    {
-                        Ok(path) => path,
-                        Err(_) => continue,
-                    };
+                    let source = server.filesystem.relative_path(&root.join(file));
 
                     let relative = match source.strip_prefix(&root) {
                         Ok(path) => path,
@@ -185,7 +180,7 @@ mod post {
                                 );
 
                                 archive.append_data(&mut header, display_path, file).ok();
-                            } else if let Ok(link_target) = filesystem.read_link_contents(&source) {
+                            } else if let Ok(link_target) = filesystem.read_link_contents(path) {
                                 let mut header = tar::Header::new_gnu();
                                 header.set_size(0);
                                 header.set_mode(metadata.permissions().mode());
