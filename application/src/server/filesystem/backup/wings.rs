@@ -140,19 +140,19 @@ pub async fn list(
                 }
 
                 matched_entries += 1;
-                if let Some(per_page) = per_page {
-                    if matched_entries <= (page - 1) * per_page {
-                        continue;
-                    }
+                if let Some(per_page) = per_page
+                    && matched_entries <= (page - 1) * per_page
+                {
+                    continue;
                 }
 
                 let entry = zip_entry_to_directory_entry(&name, &sizes, entry);
                 entries.push(entry);
 
-                if let Some(per_page) = per_page {
-                    if entries.len() >= per_page {
-                        break;
-                    }
+                if let Some(per_page) = per_page
+                    && entries.len() >= per_page
+                {
+                    break;
                 }
             }
 

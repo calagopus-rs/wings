@@ -43,9 +43,9 @@ fn ddup_bak_entry_to_directory_entry(
         Err(_) => None,
     };
 
-    let mime = if matches!(entry, ddup_bak::archive::entries::Entry::Directory(_)) {
+    let mime = if entry.is_directory() {
         "inode/directory"
-    } else if matches!(entry, ddup_bak::archive::entries::Entry::Symlink(_)) {
+    } else if entry.is_symlink() {
         "inode/symlink"
     } else if let Some(buffer) = buffer {
         if let Some(mime) = infer::get(buffer) {
@@ -98,9 +98,9 @@ fn ddup_bak_entry_to_directory_entry(
         mode: mode_str,
         mode_bits: format!("{:o}", entry.mode().bits() & 0o777),
         size,
-        directory: matches!(entry, ddup_bak::archive::entries::Entry::Directory(_)),
-        file: matches!(entry, ddup_bak::archive::entries::Entry::File(_)),
-        symlink: matches!(entry, ddup_bak::archive::entries::Entry::Symlink(_)),
+        directory: entry.is_directory(),
+        file: entry.is_file(),
+        symlink: entry.is_symlink(),
         mime,
     }
 }
@@ -120,21 +120,23 @@ pub async fn list(
             let entry = match archive.find_archive_entry(&path) {
                 Some(entry) => entry,
                 None => {
-                    let mut entries = Vec::with_capacity(
+                    let mut entries = Vec::new();
+                    entries.reserve_exact(
                         archive
                             .entries()
                             .len()
                             .min(per_page.unwrap_or(archive.entries().len())),
                     );
+
                     let mut matched_entries = 0;
                     for entry in archive.into_entries() {
                         let path = path.join(entry.name());
 
                         matched_entries += 1;
-                        if let Some(per_page) = per_page {
-                            if matched_entries < (page - 1) * per_page {
-                                continue;
-                            }
+                        if let Some(per_page) = per_page
+                            && matched_entries < (page - 1) * per_page
+                        {
+                            continue;
                         }
 
                         entries.push(ddup_bak_entry_to_directory_entry(
@@ -143,10 +145,10 @@ pub async fn list(
                             &entry,
                         ));
 
-                        if let Some(per_page) = per_page {
-                            if entries.len() >= per_page {
-                                break;
-                            }
+                        if let Some(per_page) = per_page
+                            && entries.len() >= per_page
+                        {
+                            break;
                         }
                     }
 
@@ -156,26 +158,28 @@ pub async fn list(
 
             match entry {
                 ddup_bak::archive::entries::Entry::Directory(dir) => {
-                    let mut entries = Vec::with_capacity(
+                    let mut entries = Vec::new();
+                    entries.reserve_exact(
                         dir.entries.len().min(per_page.unwrap_or(dir.entries.len())),
                     );
+
                     let mut matched_entries = 0;
                     for entry in &dir.entries {
                         let path = path.join(&dir.name).join(entry.name());
 
                         matched_entries += 1;
-                        if let Some(per_page) = per_page {
-                            if matched_entries <= (page - 1) * per_page {
-                                continue;
-                            }
+                        if let Some(per_page) = per_page
+                            && matched_entries <= (page - 1) * per_page
+                        {
+                            continue;
                         }
 
                         entries.push(ddup_bak_entry_to_directory_entry(&path, &repository, entry));
 
-                        if let Some(per_page) = per_page {
-                            if entries.len() >= per_page {
-                                break;
-                            }
+                        if let Some(per_page) = per_page
+                            && entries.len() >= per_page
+                        {
+                            break;
                         }
                     }
 

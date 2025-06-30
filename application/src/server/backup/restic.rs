@@ -68,29 +68,20 @@ async fn get_backup_list(server: &crate::server::Server) -> Vec<uuid::Uuid> {
                     };
 
                 for snapshot in snapshots {
-                    if let Some(tags) = snapshot.get("tags") {
-                        if let Some(tag) = tags.as_array().and_then(|arr| arr.first()) {
-                            if let Some(uuid_str) = tag.as_str() {
-                                if let Ok(uuid) = uuid::Uuid::parse_str(uuid_str) {
-                                    if let Some(paths) = snapshot.get("paths") {
-                                        if let Some(path) =
-                                            paths.as_array().and_then(|arr| arr.first())
-                                        {
-                                            if let Some(path_str) = path.as_str() {
-                                                backups.insert(uuid, PathBuf::from(path_str));
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                    if let Some(tags) = snapshot.get("tags")
+                        && let Some(tag) = tags.as_array().and_then(|arr| arr.first())
+                        && let Some(uuid_str) = tag.as_str()
+                        && let Ok(uuid) = uuid::Uuid::parse_str(uuid_str)
+                        && let Some(paths) = snapshot.get("paths")
+                        && let Some(path) = paths.as_array().and_then(|arr| arr.first())
+                        && let Some(path_str) = path.as_str()
+                    {
+                        backups.insert(uuid, PathBuf::from(path_str));
                     }
                 }
 
                 if let Some(sender) = backups_sender.take() {
-                    sender
-                        .send(backups.iter().map(|(uuid, _)| *uuid).collect())
-                        .unwrap_or(());
+                    sender.send(backups.keys().copied().collect()).unwrap_or(());
                 }
                 CACHED_BACKUPS.write().await.replace(backups);
 
@@ -105,20 +96,20 @@ async fn get_backup_list(server: &crate::server::Server) -> Vec<uuid::Uuid> {
 pub async fn get_backup_base_path(
     server: &crate::server::Server,
     uuid: uuid::Uuid,
-) -> Option<PathBuf> {
+) -> Result<PathBuf, anyhow::Error> {
     let backups = get_backup_list(server).await;
     if !backups.contains(&uuid) {
-        return None;
+        return Err(anyhow::anyhow!("Backup with UUID {} not found", uuid));
     }
 
     let cached_backups = CACHED_BACKUPS.read().await;
-    if let Some(cached_backups) = cached_backups.as_ref() {
-        if let Some(path) = cached_backups.get(&uuid) {
-            return Some(path.clone());
-        }
+    if let Some(cached_backups) = cached_backups.as_ref()
+        && let Some(path) = cached_backups.get(&uuid)
+    {
+        return Ok(path.clone());
     }
 
-    None
+    Err(anyhow::anyhow!("Backup with UUID {} not found", uuid))
 }
 
 pub async fn create_backup(
@@ -167,19 +158,19 @@ pub async fn create_backup(
     let mut snapshot_id = None;
     let mut total_bytes_processed = 0;
     for line in String::from_utf8_lossy(&output.stdout).lines() {
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
-            if let Some("summary") = json.get("message_type").and_then(|v| v.as_str()) {
-                snapshot_id = json
-                    .get("snapshot_id")
-                    .and_then(|v| v.as_str())
-                    .map(String::from);
-                total_bytes_processed = json
-                    .get("total_bytes_processed")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0);
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(line)
+            && json.get("message_type").and_then(|v| v.as_str()) == Some("summary")
+        {
+            snapshot_id = json
+                .get("snapshot_id")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            total_bytes_processed = json
+                .get("total_bytes_processed")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
 
-                break;
-            }
+            break;
         }
     }
 
@@ -205,13 +196,7 @@ pub async fn restore_backup(
     server: crate::server::Server,
     uuid: uuid::Uuid,
 ) -> Result<(), anyhow::Error> {
-    let base_path = get_backup_base_path(&server, uuid).await.ok_or_else(|| {
-        anyhow::anyhow!(
-            "Backup with UUID {} not found for server {}",
-            uuid,
-            server.uuid
-        )
-    })?;
+    let base_path = get_backup_base_path(&server, uuid).await?;
 
     let child = Command::new("restic")
         .envs(&server.config.system.backups.restic.environment)
@@ -233,31 +218,31 @@ pub async fn restore_backup(
     let mut line_reader = tokio::io::BufReader::new(child.stdout.unwrap()).lines();
 
     while let Ok(Some(line)) = line_reader.next_line().await {
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&line) {
-            if let Some("status") = json.get("message_type").and_then(|v| v.as_str()) {
-                let total_bytes = json
-                    .get("total_bytes")
-                    .and_then(|v| v.as_f64())
-                    .unwrap_or(0.0);
-                let bytes_restored = json
-                    .get("bytes_restored")
-                    .and_then(|v| v.as_f64())
-                    .unwrap_or(0.0);
-                let percent_done = json
-                    .get("percent_done")
-                    .and_then(|v| v.as_f64())
-                    .unwrap_or(0.0);
-                let percent_done = (percent_done * 10000.0).round() / 100.0;
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&line)
+            && json.get("message_type").and_then(|v| v.as_str()) == Some("status")
+        {
+            let total_bytes = json
+                .get("total_bytes")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            let bytes_restored = json
+                .get("bytes_restored")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            let percent_done = json
+                .get("percent_done")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            let percent_done = (percent_done * 10000.0).round() / 100.0;
 
-                server
-                    .log_daemon(format!(
-                        "(restoring): {} of {} ({}%)",
-                        human_bytes(bytes_restored),
-                        human_bytes(total_bytes),
-                        percent_done
-                    ))
-                    .await;
-            }
+            server
+                .log_daemon(format!(
+                    "(restoring): {} of {} ({}%)",
+                    human_bytes(bytes_restored),
+                    human_bytes(total_bytes),
+                    percent_done
+                ))
+                .await;
         }
     }
 
@@ -268,13 +253,7 @@ pub async fn download_backup(
     server: &crate::server::Server,
     uuid: uuid::Uuid,
 ) -> Result<(StatusCode, HeaderMap, Body), anyhow::Error> {
-    let base_path = get_backup_base_path(server, uuid).await.ok_or_else(|| {
-        anyhow::anyhow!(
-            "Backup with UUID {} not found for server {}",
-            uuid,
-            server.uuid
-        )
-    })?;
+    let base_path = get_backup_base_path(server, uuid).await?;
 
     let (reader, writer) = tokio::io::duplex(65536);
 

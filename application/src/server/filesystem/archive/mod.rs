@@ -38,7 +38,7 @@ pub enum CompressionLevel {
 
 impl CompressionLevel {
     #[inline]
-    pub fn flate2_compression_level(&self) -> flate2::Compression {
+    pub fn flate2_compression_level(self) -> flate2::Compression {
         match self {
             CompressionLevel::BestSpeed => flate2::Compression::new(1),
             CompressionLevel::GoodSpeed => flate2::Compression::new(3),
@@ -48,7 +48,7 @@ impl CompressionLevel {
     }
 
     #[inline]
-    pub fn zstd_compression_level(&self) -> i32 {
+    pub fn zstd_compression_level(self) -> i32 {
         match self {
             CompressionLevel::BestSpeed => 1,
             CompressionLevel::GoodSpeed => 7,
@@ -72,35 +72,33 @@ pub fn zip_entry_get_modified_time(
     entry: &zip::read::ZipFile<impl std::io::Read>,
 ) -> Option<std::time::SystemTime> {
     for field in entry.extra_data_fields() {
-        if let zip::extra_fields::ExtraField::ExtendedTimestamp(ext) = field {
-            if let Some(mod_time) = ext.mod_time() {
-                return Some(
-                    std::time::UNIX_EPOCH + std::time::Duration::from_secs(mod_time as u64),
-                );
-            }
+        if let zip::extra_fields::ExtraField::ExtendedTimestamp(ext) = field
+            && let Some(mod_time) = ext.mod_time()
+        {
+            return Some(std::time::UNIX_EPOCH + std::time::Duration::from_secs(mod_time as u64));
         }
     }
 
-    if let Some(time) = entry.last_modified() {
-        if time.is_valid() {
-            let chrono_date = chrono::NaiveDate::from_ymd_opt(
-                time.year() as i32,
-                time.month() as u32,
-                time.day() as u32,
-            )?;
-            let chrono_time = chrono::NaiveTime::from_hms_opt(
-                time.hour() as u32,
-                time.minute() as u32,
-                time.second() as u32,
-            )?;
+    if let Some(time) = entry.last_modified()
+        && time.is_valid()
+    {
+        let chrono_date = chrono::NaiveDate::from_ymd_opt(
+            time.year() as i32,
+            time.month() as u32,
+            time.day() as u32,
+        )?;
+        let chrono_time = chrono::NaiveTime::from_hms_opt(
+            time.hour() as u32,
+            time.minute() as u32,
+            time.second() as u32,
+        )?;
 
-            return Some(
-                std::time::UNIX_EPOCH
-                    + std::time::Duration::from_secs(
-                        chrono_date.and_time(chrono_time).and_utc().timestamp() as u64,
-                    ),
-            );
-        }
+        return Some(
+            std::time::UNIX_EPOCH
+                + std::time::Duration::from_secs(
+                    chrono_date.and_time(chrono_time).and_utc().timestamp() as u64,
+                ),
+        );
     }
 
     None
@@ -242,9 +240,9 @@ impl Archive {
         }
     }
 
-    pub async fn reader(&mut self) -> Result<Box<dyn AsyncRead + Send + Unpin>, anyhow::Error> {
+    pub async fn reader(mut self) -> Result<Box<dyn AsyncRead + Send + Unpin>, anyhow::Error> {
         self.file.seek(SeekFrom::Start(0)).await?;
-        let file = BufReader::new(self.file.try_clone().await?);
+        let file = BufReader::new(self.file);
 
         Ok(match self.compression {
             CompressionType::None => Box::new(file),
@@ -266,12 +264,12 @@ impl Archive {
         })
     }
 
-    pub async fn extract(mut self, destination: PathBuf) -> Result<(), anyhow::Error> {
+    pub async fn extract(self, destination: PathBuf) -> Result<(), anyhow::Error> {
         match self.archive {
             ArchiveType::None => {
                 let file_name = match self.path.file_stem() {
                     Some(stem) => destination.join(stem),
-                    None => destination,
+                    None => return Err(anyhow::anyhow!("Invalid file name")),
                 };
 
                 let metadata = self.file.metadata().await?;
@@ -288,11 +286,13 @@ impl Archive {
                 writer.flush().await?;
             }
             ArchiveType::Tar => {
+                let server = self.server.clone();
+
                 let mut archive = tokio_tar::Archive::new(self.reader().await?);
                 let mut entries = archive.entries()?;
 
                 while let Some(Ok(mut entry)) = entries.next().await {
-                    let path = entry.path().unwrap();
+                    let path = entry.path()?;
 
                     if path.is_absolute() {
                         continue;
@@ -301,8 +301,7 @@ impl Archive {
                     let destination_path = destination.join(path.as_ref());
                     let header = entry.header();
 
-                    if self
-                        .server
+                    if server
                         .filesystem
                         .is_ignored(&destination_path, header.entry_type().is_dir())
                         .await
@@ -312,12 +311,9 @@ impl Archive {
 
                     match header.entry_type() {
                         tokio_tar::EntryType::Directory => {
-                            self.server
-                                .filesystem
-                                .create_dir_all(&destination_path)
-                                .await?;
+                            server.filesystem.create_dir_all(&destination_path).await?;
                             if let Ok(permissions) = header.mode().map(Permissions::from_mode) {
-                                self.server
+                                server
                                     .filesystem
                                     .set_permissions(
                                         &destination_path,
@@ -328,11 +324,11 @@ impl Archive {
                         }
                         tokio_tar::EntryType::Regular => {
                             if let Some(parent) = destination_path.parent() {
-                                self.server.filesystem.create_dir_all(parent).await?;
+                                server.filesystem.create_dir_all(parent).await?;
                             }
 
                             let mut writer = super::writer::AsyncFileSystemWriter::new(
-                                self.server.clone(),
+                                server.clone(),
                                 destination_path,
                                 header.mode().map(Permissions::from_mode).ok(),
                                 header
@@ -350,7 +346,7 @@ impl Archive {
                         tokio_tar::EntryType::Symlink => {
                             let link = entry.link_name().unwrap_or_default().unwrap_or_default();
 
-                            self.server
+                            server
                                 .filesystem
                                 .symlink(link.as_ref(), destination_path)
                                 .await

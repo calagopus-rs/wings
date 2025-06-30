@@ -39,10 +39,10 @@ pub async fn list(
         }
 
         matched_entries += 1;
-        if let Some(per_page) = per_page {
-            if matched_entries <= (page - 1) * per_page {
-                continue;
-            }
+        if let Some(per_page) = per_page
+            && matched_entries <= (page - 1) * per_page
+        {
+            continue;
         }
 
         let mut entry = server.filesystem.to_api_entry_tokio(path, metadata).await;
@@ -52,10 +52,10 @@ pub async fn list(
 
         entries.push(entry);
 
-        if let Some(per_page) = per_page {
-            if entries.len() >= per_page {
-                break;
-            }
+        if let Some(per_page) = per_page
+            && entries.len() >= per_page
+        {
+            break;
         }
     }
 

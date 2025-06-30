@@ -64,13 +64,7 @@ async fn get_files_for_backup(
     }
     drop(files);
 
-    let base_path = get_backup_base_path(server, uuid).await.ok_or_else(|| {
-        anyhow::anyhow!(
-            "Backup with UUID {} not found for server {}",
-            uuid,
-            server.uuid
-        )
-    })?;
+    let base_path = get_backup_base_path(server, uuid).await?;
 
     let child = Command::new("restic")
         .envs(&server.config.system.backups.restic.environment)
@@ -207,19 +201,19 @@ pub async fn list(
         }
 
         matched_entries += 1;
-        if let Some(per_page) = per_page {
-            if matched_entries <= (page - 1) * per_page {
-                continue;
-            }
+        if let Some(per_page) = per_page
+            && matched_entries <= (page - 1) * per_page
+        {
+            continue;
         }
 
         let directory_entry = restic_entry_to_directory_entry(name, &files, entry);
         entries.push(directory_entry);
 
-        if let Some(per_page) = per_page {
-            if entries.len() >= per_page {
-                break;
-            }
+        if let Some(per_page) = per_page
+            && entries.len() >= per_page
+        {
+            break;
         }
     }
 
@@ -232,19 +226,12 @@ pub async fn reader(
     path: PathBuf,
 ) -> Result<(Box<dyn tokio::io::AsyncRead + Send>, u64), anyhow::Error> {
     let files = get_files_for_backup(server, uuid).await?;
-    let base_path = get_backup_base_path(server, uuid).await.ok_or_else(|| {
-        anyhow::anyhow!(
-            "Backup with UUID {} not found for server {}",
-            uuid,
-            server.uuid
-        )
-    })?;
+    let base_path = get_backup_base_path(server, uuid).await?;
 
     let entry = files
         .iter()
         .find(|e| e.path == path)
         .ok_or_else(|| anyhow::anyhow!("Path not found in archive: {}", path.display()))?;
-
     if !matches!(entry.r#type, ResticEntryType::File) {
         return Err(anyhow::anyhow!("Expected a file entry"));
     }
@@ -276,19 +263,12 @@ pub async fn directory_reader(
     path: PathBuf,
 ) -> Result<tokio::io::DuplexStream, anyhow::Error> {
     let files = get_files_for_backup(server, uuid).await?;
-    let base_path = get_backup_base_path(server, uuid).await.ok_or_else(|| {
-        anyhow::anyhow!(
-            "Backup with UUID {} not found for server {}",
-            uuid,
-            server.uuid
-        )
-    })?;
+    let base_path = get_backup_base_path(server, uuid).await?;
 
     let entry = files
         .iter()
         .find(|e| e.path == path)
         .ok_or_else(|| anyhow::anyhow!("Path not found in archive: {}", path.display()))?;
-
     if !matches!(entry.r#type, ResticEntryType::Dir) {
         return Err(anyhow::anyhow!("Expected a directory entry"));
     }
