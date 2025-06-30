@@ -64,6 +64,17 @@ system:
       # none, deflate, gzip, brotli
       compression_format: deflate
 
+    # settings for the restic backup driver
+    restic:
+      # the repository to use for restic backups (must already be initialized)
+      repository: /var/lib/pterodactyl/backups/restic
+      # the password file to use for authenticating against the repository
+      password-file: /var/lib/pterodactyl/backups/restic_password
+      # how long to wait for a repository lock if locked in seconds
+      retry_lock_seconds: 60
+      # the restic cli environment for each command (useful for s3 credentials, etc)
+      environment: {}
+
     # settings for the btrfs backup driver
     btrfs:
       # how many threads to use when restoring a btrfs backup (snapshot)
