@@ -4,10 +4,10 @@ WORKDIR /build
 USER root
 
 # Install needed binaries and tools
-RUN apk add --no-cache bash coreutils curl btrfs-progs xfsprogs-extra zfs
+RUN apk add --no-cache bash coreutils curl btrfs-progs xfsprogs-extra zfs restic
 
 # Environment and helper
-ENV TO_GATHER="df,curl,btrfs,xfs_quota,zfs,uname"
+ENV TO_GATHER="df,curl,btrfs,xfs_quota,zfs,uname,restic"
 ENV OUTPUT_DIR="/build/gathered"
 COPY .docker/helpers/gather.sh /usr/local/bin/gather
 RUN chmod +x /usr/local/bin/gather && /usr/local/bin/gather
