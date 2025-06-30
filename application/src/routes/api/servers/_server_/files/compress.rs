@@ -108,6 +108,25 @@ mod post {
                     }
 
                     if source_metadata.is_dir() {
+                        let mut header = tar::Header::new_gnu();
+                        header.set_size(0);
+                        header.set_mode(source_metadata.permissions().mode());
+                        header.set_mtime(
+                            source_metadata
+                                .modified()
+                                .map(|t| {
+                                    t.into_std()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap_or_default()
+                                })
+                                .unwrap_or_default()
+                                .as_secs() as u64,
+                        );
+
+                        archive
+                            .append_data(&mut header, relative, std::io::empty())
+                            .ok();
+
                         let (mut walker, strip_path) = server.filesystem.walk_dir(&source).unwrap();
 
                         for entry in walker
