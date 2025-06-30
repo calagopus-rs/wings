@@ -10,6 +10,7 @@ use utoipa::ToSchema;
 
 mod btrfs;
 pub mod ddup_bak;
+pub mod restic;
 mod s3;
 pub mod wings;
 mod zfs;
@@ -23,11 +24,19 @@ pub enum BackupAdapter {
     DdupBak,
     Btrfs,
     Zfs,
+    Restic,
 }
 
 impl BackupAdapter {
     pub fn variants() -> &'static [Self] {
-        &[Self::Wings, Self::S3, Self::DdupBak, Self::Btrfs, Self::Zfs]
+        &[
+            Self::Wings,
+            Self::S3,
+            Self::DdupBak,
+            Self::Btrfs,
+            Self::Zfs,
+            Self::Restic,
+        ]
     }
 }
 
@@ -52,6 +61,7 @@ impl InternalBackup {
 
         let mut override_builder = OverrideBuilder::new(&server.filesystem.base_path);
         let mut override_raw = String::new();
+        let mut ignore_raw = String::new();
 
         for line in ignore.lines() {
             if line.trim().is_empty() {
@@ -59,12 +69,15 @@ impl InternalBackup {
             }
 
             if let Some(line) = line.trim().strip_prefix('!') {
-                override_builder.add(line).ok();
-                override_raw.push_str(line);
-            } else {
-                override_builder.add(&format!("!{}", line.trim())).ok();
+                if override_builder.add(line).is_ok() {
+                    override_raw.push_str(line);
+                    ignore_raw.push('!');
+                    ignore_raw.push_str(line);
+                }
+            } else if override_builder.add(&format!("!{}", line.trim())).is_ok() {
                 override_raw.push('!');
                 override_raw.push_str(line.trim());
+                ignore_raw.push_str(line.trim());
             }
 
             override_raw.push('\n');
@@ -113,6 +126,7 @@ impl InternalBackup {
                 )
                 .await
             }
+            BackupAdapter::Restic => restic::create_backup(server.clone(), uuid, ignore_raw).await,
         } {
             Ok(backup) => backup,
             Err(e) => {
@@ -169,6 +183,7 @@ impl InternalBackup {
                 BackupAdapter::DdupBak => ddup_bak::list_backups(server).await,
                 BackupAdapter::Btrfs => btrfs::list_backups(server).await,
                 BackupAdapter::Zfs => zfs::list_backups(server).await,
+                BackupAdapter::Restic => restic::list_backups(server).await,
             });
         }
 
@@ -198,6 +213,7 @@ impl InternalBackup {
                 BackupAdapter::DdupBak => ddup_bak::list_backups(server).await,
                 BackupAdapter::Btrfs => btrfs::list_backups(server).await,
                 BackupAdapter::Zfs => zfs::list_backups(server).await,
+                BackupAdapter::Restic => restic::list_backups(server).await,
             } {
                 Ok(uuids) => {
                     if uuids.contains(&uuid) {
@@ -256,6 +272,7 @@ impl InternalBackup {
             BackupAdapter::DdupBak => ddup_bak::restore_backup(server.clone(), self.uuid).await,
             BackupAdapter::Btrfs => btrfs::restore_backup(server.clone(), self.uuid).await,
             BackupAdapter::Zfs => zfs::restore_backup(server.clone(), self.uuid).await,
+            BackupAdapter::Restic => restic::restore_backup(server.clone(), self.uuid).await,
         } {
             Ok(_) => {
                 server
@@ -323,6 +340,7 @@ impl InternalBackup {
             BackupAdapter::DdupBak => ddup_bak::download_backup(server, self.uuid).await,
             BackupAdapter::Btrfs => btrfs::download_backup(server, self.uuid).await,
             BackupAdapter::Zfs => zfs::download_backup(server, self.uuid).await,
+            BackupAdapter::Restic => restic::download_backup(server, self.uuid).await,
         }
     }
 
@@ -340,6 +358,7 @@ impl InternalBackup {
             BackupAdapter::DdupBak => ddup_bak::delete_backup(server, self.uuid).await,
             BackupAdapter::Btrfs => btrfs::delete_backup(server, self.uuid).await,
             BackupAdapter::Zfs => zfs::delete_backup(server, self.uuid).await,
+            BackupAdapter::Restic => restic::delete_backup(server, self.uuid).await,
         }
     }
 }

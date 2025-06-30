@@ -89,23 +89,14 @@ pub async fn list(
     path: PathBuf,
     per_page: Option<usize>,
     page: usize,
-) -> std::io::Result<Vec<DirectoryEntry>> {
-    let (file_format, file_name) = crate::server::backup::wings::get_first_file_name(server, uuid)
-        .await
-        .map_err(|_| {
-            std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "No backup files found for this backup",
-            )
-        })?;
+) -> Result<Vec<DirectoryEntry>, anyhow::Error> {
+    let (file_format, file_name) =
+        crate::server::backup::wings::get_first_file_name(server, uuid).await?;
     if !matches!(
         file_format,
         crate::config::SystemBackupsWingsArchiveFormat::Zip
     ) {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            "This backup does not use the ZIP format",
-        ));
+        return Err(anyhow::anyhow!("This backup does not use the ZIP format"));
     }
 
     let entries =
@@ -176,43 +167,31 @@ pub async fn reader(
     server: &crate::server::Server,
     uuid: uuid::Uuid,
     path: PathBuf,
-) -> std::io::Result<(Box<dyn tokio::io::AsyncRead + Send>, u64)> {
-    let (file_format, file_name) = crate::server::backup::wings::get_first_file_name(server, uuid)
-        .await
-        .map_err(|_| {
-            std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "No backup files found for this backup",
-            )
-        })?;
+) -> Result<(Box<dyn tokio::io::AsyncRead + Send>, u64), anyhow::Error> {
+    let (file_format, file_name) =
+        crate::server::backup::wings::get_first_file_name(server, uuid).await?;
     if !matches!(
         file_format,
         crate::config::SystemBackupsWingsArchiveFormat::Zip
     ) {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            "This backup does not use the ZIP format",
-        ));
+        return Err(anyhow::anyhow!("This backup does not use the ZIP format"));
     }
 
     tokio::task::spawn_blocking(
-        move || -> std::io::Result<(Box<dyn tokio::io::AsyncRead + Send>, u64)> {
+        move || -> Result<(Box<dyn tokio::io::AsyncRead + Send>, u64), anyhow::Error> {
             let mut archive = zip::ZipArchive::new(std::fs::File::open(file_name)?)?;
             let entry = match archive.by_name(&path.to_string_lossy()) {
                 Ok(entry) => entry,
                 Err(_) => {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        format!("Path not found in archive: {}", path.display()),
+                    return Err(anyhow::anyhow!(
+                        "Path not found in archive: {}",
+                        path.display()
                     ));
                 }
             };
 
             if !entry.is_file() {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "Expected a file entry",
-                ));
+                return Err(anyhow::anyhow!("Expected a file entry"));
             }
 
             let size = entry.size();
@@ -253,30 +232,23 @@ pub async fn directory_reader(
     server: &crate::server::Server,
     uuid: uuid::Uuid,
     path: PathBuf,
-) -> std::io::Result<tokio::io::DuplexStream> {
-    let (file_format, file_name) = crate::server::backup::wings::get_first_file_name(server, uuid)
-        .await
-        .map_err(|_| {
-            std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "No backup files found for this backup",
-            )
-        })?;
+) -> Result<tokio::io::DuplexStream, anyhow::Error> {
+    let (file_format, file_name) =
+        crate::server::backup::wings::get_first_file_name(server, uuid).await?;
     if !matches!(
         file_format,
         crate::config::SystemBackupsWingsArchiveFormat::Zip
     ) {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            "This backup does not use the ZIP format",
-        ));
+        return Err(anyhow::anyhow!("This backup does not use the ZIP format"));
     }
 
     let (writer, reader) = tokio::io::duplex(65536);
+    let compression_level = server.config.system.backups.compression_level;
 
-    tokio::task::spawn_blocking(move || -> std::io::Result<()> {
+    tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
         let writer = tokio_util::io::SyncIoBridge::new(writer);
-        let writer = flate2::write::GzEncoder::new(writer, flate2::Compression::default());
+        let writer =
+            flate2::write::GzEncoder::new(writer, compression_level.flate2_compression_level());
 
         let mut tar = tar::Builder::new(writer);
         tar.mode(tar::HeaderMode::Complete);

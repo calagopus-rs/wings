@@ -386,7 +386,8 @@ pub async fn delete_backup(
         repository.save()?;
 
         Ok(())
-    });
+    })
+    .await??;
 
     Ok(())
 }

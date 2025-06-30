@@ -16,14 +16,11 @@ pub async fn list(
     path: PathBuf,
     per_page: Option<usize>,
     page: usize,
-) -> std::io::Result<Vec<DirectoryEntry>> {
+) -> Result<Vec<DirectoryEntry>, anyhow::Error> {
     let full_path = tokio::fs::canonicalize(get_base_path(server, uuid).join(path)).await?;
 
     if !full_path.starts_with(get_base_path(server, uuid)) {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::PermissionDenied,
-            "Access to this path is denied",
-        ));
+        return Err(anyhow::anyhow!("Access to this path is denied"));
     }
 
     let mut entries = Vec::new();
@@ -69,14 +66,11 @@ pub async fn reader(
     server: &crate::server::Server,
     uuid: uuid::Uuid,
     path: PathBuf,
-) -> std::io::Result<(Box<dyn tokio::io::AsyncRead + Send>, u64)> {
+) -> Result<(Box<dyn tokio::io::AsyncRead + Send>, u64), anyhow::Error> {
     let full_path = tokio::fs::canonicalize(get_base_path(server, uuid).join(path)).await?;
 
     if !full_path.starts_with(get_base_path(server, uuid)) {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::PermissionDenied,
-            "Access to this path is denied",
-        ));
+        return Err(anyhow::anyhow!("Access to this path is denied"));
     }
 
     let file = tokio::fs::File::open(full_path).await?;
@@ -89,14 +83,11 @@ pub async fn directory_reader(
     server: &crate::server::Server,
     uuid: uuid::Uuid,
     path: PathBuf,
-) -> std::io::Result<tokio::io::DuplexStream> {
+) -> Result<tokio::io::DuplexStream, anyhow::Error> {
     let full_path = tokio::fs::canonicalize(get_base_path(server, uuid).join(path)).await?;
 
     if !full_path.starts_with(get_base_path(server, uuid)) {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::PermissionDenied,
-            "Access to this path is denied",
-        ));
+        return Err(anyhow::anyhow!("Access to this path is denied"));
     }
 
     let (reader, writer) = tokio::io::duplex(65535);
@@ -104,7 +95,15 @@ pub async fn directory_reader(
     let server = server.clone();
     tokio::task::spawn_blocking(move || {
         let writer = tokio_util::io::SyncIoBridge::new(writer);
-        let writer = flate2::write::GzEncoder::new(writer, flate2::Compression::default());
+        let writer = flate2::write::GzEncoder::new(
+            writer,
+            server
+                .config
+                .system
+                .backups
+                .compression_level
+                .flate2_compression_level(),
+        );
 
         let mut tar = tar::Builder::new(writer);
         tar.mode(tar::HeaderMode::Complete);

@@ -133,6 +133,16 @@ fn system_backup_ddup_bak_create_threads() -> usize {
     4
 }
 
+fn system_backup_restic_repository() -> String {
+    "/var/lib/pterodactyl/backups/restic".to_string()
+}
+fn system_backup_restic_password_file() -> String {
+    "/var/lib/pterodactyl/backups/restic_password".to_string()
+}
+fn system_backup_restic_retry_lock_seconds() -> u64 {
+    60
+}
+
 fn system_backup_btrfs_restore_threads() -> usize {
     4
 }
@@ -419,6 +429,17 @@ nestify::nest! {
                         Gzip,
                         Brotli
                     },
+                },
+                #[serde(default)]
+                pub restic: #[derive(Deserialize, Serialize, DefaultFromSerde)] #[serde(default)] pub struct SystemBackupsRestic {
+                    #[serde(default = "system_backup_restic_repository")]
+                    pub repository: String,
+                    #[serde(default = "system_backup_restic_password_file")]
+                    pub password_file: String,
+                    #[serde(default = "system_backup_restic_retry_lock_seconds")]
+                    pub retry_lock_seconds: u64,
+                    #[serde(default)]
+                    pub environment: BTreeMap<String, String>,
                 },
                 #[serde(default)]
                 pub btrfs: #[derive(Deserialize, Serialize, DefaultFromSerde)] #[serde(default)] pub struct SystemBackupsBtrfs {

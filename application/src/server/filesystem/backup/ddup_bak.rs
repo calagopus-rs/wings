@@ -111,11 +111,11 @@ pub async fn list(
     path: PathBuf,
     per_page: Option<usize>,
     page: usize,
-) -> std::io::Result<Vec<DirectoryEntry>> {
+) -> Result<Vec<DirectoryEntry>, anyhow::Error> {
     let repository = get_repository(server).await;
 
     let entries =
-        tokio::task::spawn_blocking(move || -> Result<Vec<DirectoryEntry>, std::io::Error> {
+        tokio::task::spawn_blocking(move || -> Result<Vec<DirectoryEntry>, anyhow::Error> {
             let archive = repository.get_archive(&uuid.to_string())?;
             let entry = match archive.find_archive_entry(&path) {
                 Some(entry) => entry,
@@ -181,10 +181,7 @@ pub async fn list(
 
                     Ok(entries)
                 }
-                _ => Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "Expected a directory entry",
-                )),
+                _ => Err(anyhow::anyhow!("Expected a directory entry")),
             }
         })
         .await??;
@@ -196,18 +193,18 @@ pub async fn reader(
     server: &crate::server::Server,
     uuid: uuid::Uuid,
     path: PathBuf,
-) -> std::io::Result<(Box<dyn tokio::io::AsyncRead + Send>, u64)> {
+) -> Result<(Box<dyn tokio::io::AsyncRead + Send>, u64), anyhow::Error> {
     let repository = get_repository(server).await;
 
     tokio::task::spawn_blocking(
-        move || -> std::io::Result<(Box<dyn tokio::io::AsyncRead + Send>, u64)> {
+        move || -> Result<(Box<dyn tokio::io::AsyncRead + Send>, u64), anyhow::Error> {
             let archive = repository.get_archive(&uuid.to_string())?;
             let entry = match archive.find_archive_entry(&path) {
                 Some(entry) => entry,
                 None => {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        format!("Path not found in archive: {}", path.display()),
+                    return Err(anyhow::anyhow!(
+                        "Path not found in archive: {}",
+                        path.display()
                     ));
                 }
             };
@@ -215,10 +212,7 @@ pub async fn reader(
             let size = match entry {
                 ddup_bak::archive::entries::Entry::File(file) => file.size_real,
                 _ => {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "Expected a file entry",
-                    ));
+                    return Err(anyhow::anyhow!("Expected a file entry"));
                 }
             };
 
@@ -258,15 +252,16 @@ pub async fn directory_reader(
     server: &crate::server::Server,
     uuid: uuid::Uuid,
     path: PathBuf,
-) -> std::io::Result<tokio::io::DuplexStream> {
+) -> Result<tokio::io::DuplexStream, anyhow::Error> {
     let repository = get_repository(server).await;
 
     let (writer, reader) = tokio::io::duplex(65536);
+    let compression_level = server.config.system.backups.compression_level;
 
     tokio::task::spawn_blocking(move || {
         let writer = tokio_util::io::SyncIoBridge::new(writer);
-        let writer = flate2::write::GzEncoder::new(writer, flate2::Compression::default());
-
+        let writer =
+            flate2::write::GzEncoder::new(writer, compression_level.flate2_compression_level());
         let mut tar = tar::Builder::new(writer);
         tar.mode(tar::HeaderMode::Complete);
 
@@ -279,10 +274,7 @@ pub async fn directory_reader(
                     ddup_bak::archive::entries::Entry::Directory(dir) => dir,
                     _ => {
                         *exit_early = true;
-                        return Err(std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            "Expected a directory entry",
-                        ));
+                        return Err(anyhow::anyhow!("Expected a directory entry"));
                     }
                 };
 
