@@ -339,5 +339,12 @@ pub async fn delete_backup(
 pub async fn list_backups(
     server: &crate::server::Server,
 ) -> Result<Vec<uuid::Uuid>, anyhow::Error> {
+    if !tokio::fs::metadata(&server.config.system.backups.restic.password_file)
+        .await
+        .is_ok()
+    {
+        return Ok(Vec::new());
+    }
+
     Ok(get_backup_list(server).await)
 }
