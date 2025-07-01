@@ -33,9 +33,9 @@ mod post {
         server: GetServer,
         axum::Json(data): axum::Json<Payload>,
     ) -> (StatusCode, axum::Json<serde_json::Value>) {
-        if crate::server::backup::InternalBackup::find(&server, data.uuid)
+        if crate::server::backup::InternalBackup::list_for_adapter(&server, data.adapter)
             .await
-            .is_some()
+            .is_ok_and(|backups| backups.contains(&data.uuid))
         {
             return (
                 StatusCode::CONFLICT,

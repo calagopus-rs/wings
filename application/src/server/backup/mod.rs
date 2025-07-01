@@ -177,14 +177,7 @@ impl InternalBackup {
         let variants = BackupAdapter::variants();
         let mut results = Vec::with_capacity(variants.len());
         for adapter in variants.iter().copied() {
-            results.push(match adapter {
-                BackupAdapter::Wings => wings::list_backups(server).await,
-                BackupAdapter::S3 => Ok(Vec::new()),
-                BackupAdapter::DdupBak => ddup_bak::list_backups(server).await,
-                BackupAdapter::Btrfs => btrfs::list_backups(server).await,
-                BackupAdapter::Zfs => zfs::list_backups(server).await,
-                BackupAdapter::Restic => restic::list_backups(server).await,
-            });
+            results.push(Self::list_for_adapter(server, adapter).await);
         }
 
         let mut backups = Vec::new();
@@ -203,6 +196,20 @@ impl InternalBackup {
         }
 
         backups
+    }
+
+    pub async fn list_for_adapter(
+        server: &crate::server::Server,
+        adapter: BackupAdapter,
+    ) -> Result<Vec<uuid::Uuid>, anyhow::Error> {
+        match adapter {
+            BackupAdapter::Wings => wings::list_backups(server).await,
+            BackupAdapter::S3 => Ok(Vec::new()),
+            BackupAdapter::DdupBak => ddup_bak::list_backups(server).await,
+            BackupAdapter::Btrfs => btrfs::list_backups(server).await,
+            BackupAdapter::Zfs => zfs::list_backups(server).await,
+            BackupAdapter::Restic => restic::list_backups(server).await,
+        }
     }
 
     pub async fn find(server: &crate::server::Server, uuid: uuid::Uuid) -> Option<Self> {
