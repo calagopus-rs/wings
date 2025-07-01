@@ -455,6 +455,16 @@ async fn main() {
         }
     });
 
+    tokio::spawn(async move {
+        let mut signal =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup()).unwrap();
+
+        loop {
+            signal.recv().await;
+            tracing::info!("received SIGHUP, ignoring");
+        }
+    });
+
     let address = SocketAddr::from((
         state.config.api.host.parse::<std::net::IpAddr>().unwrap(),
         state.config.api.port,
