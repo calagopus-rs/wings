@@ -15,6 +15,16 @@ wings version
 
 ```yml
 api:
+  # cidrs to block on the remote download pull endpoint
+  remote_download_blocked_cidrs:
+  - '127.0.0.0/8'
+  - '10.0.0.0/8'
+  - '172.16.0.0/12'
+  - '192.168.0.0/16'
+  - '169.254.0.0/16'
+  - ::1
+  - fe80::/10
+  - fc00::/7
   # how many entries can be listed on a single page on the /list-directory API call, 0 means unlimited
   directory_entry_limit: 10000
   # send server logs of an offline server when connecting to ws

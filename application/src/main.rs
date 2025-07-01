@@ -425,13 +425,7 @@ async fn main() {
             };
 
             let address = SocketAddr::from((
-                state
-                    .config
-                    .system
-                    .sftp
-                    .bind_address
-                    .parse::<std::net::IpAddr>()
-                    .unwrap(),
+                state.config.system.sftp.bind_address,
                 state.config.system.sftp.bind_port,
             ));
 
@@ -465,10 +459,7 @@ async fn main() {
         }
     });
 
-    let address = SocketAddr::from((
-        state.config.api.host.parse::<std::net::IpAddr>().unwrap(),
-        state.config.api.port,
-    ));
+    let address = SocketAddr::from((state.config.api.host, state.config.api.port));
 
     if config.api.ssl.enabled {
         tracing::info!("loading ssl certs");

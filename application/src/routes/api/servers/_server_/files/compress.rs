@@ -64,19 +64,19 @@ mod post {
             );
         }
 
-        tokio::task::spawn_blocking({
+        match tokio::task::spawn_blocking({
             let filesystem = server.filesystem.base_dir().await.unwrap();
             let file_name = file_name.clone();
             let server = server.0.clone();
+            let root = root.clone();
 
-            move || {
+            move || -> Result<(), anyhow::Error> {
                 let writer = crate::server::filesystem::writer::FileSystemWriter::new(
                     server.clone(),
                     file_name,
                     None,
                     None,
-                )
-                .unwrap();
+                )?;
 
                 let mut archive = tar::Builder::new(flate2::write::GzEncoder::new(
                     writer,
@@ -127,7 +127,7 @@ mod post {
                             .append_data(&mut header, relative, std::io::empty())
                             .ok();
 
-                        let (mut walker, strip_path) = server.filesystem.walk_dir(&source).unwrap();
+                        let (mut walker, strip_path) = server.filesystem.walk_dir(&source)?;
 
                         for entry in walker
                             .git_ignore(false)
@@ -216,9 +216,7 @@ mod post {
                                 );
                                 header.set_entry_type(tar::EntryType::Symlink);
 
-                                archive
-                                    .append_link(&mut header, relative, link_target)
-                                    .unwrap();
+                                archive.append_link(&mut header, relative, link_target)?;
                             }
                         }
                     } else if source_metadata.is_file() {
@@ -237,9 +235,7 @@ mod post {
                                 .as_secs() as u64,
                         );
 
-                        archive
-                            .append_data(&mut header, relative, filesystem.open(&source).unwrap())
-                            .unwrap();
+                        archive.append_data(&mut header, relative, filesystem.open(&source)?)?;
                     } else if let Ok(link_target) = filesystem.read_link_contents(&source) {
                         let mut header = tar::Header::new_gnu();
                         header.set_size(0);
@@ -257,19 +253,49 @@ mod post {
                         );
                         header.set_entry_type(tar::EntryType::Symlink);
 
-                        archive
-                            .append_link(&mut header, relative, link_target)
-                            .unwrap();
+                        archive.append_link(&mut header, relative, link_target)?;
                     }
                 }
 
-                archive.finish().unwrap();
-                let mut inner = archive.into_inner().unwrap();
-                inner.flush().unwrap();
+                archive.finish()?;
+                let mut inner = archive.into_inner()?;
+                inner.flush()?;
+
+                Ok(())
             }
         })
         .await
-        .unwrap();
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                tracing::error!(
+                    server = %server.uuid,
+                    root = %root.display(),
+                    "failed to compress files: {:#?}",
+                    err,
+                );
+
+                return (
+                    StatusCode::EXPECTATION_FAILED,
+                    axum::Json(
+                        ApiError::new(&format!("failed to compress files: {err}")).to_json(),
+                    ),
+                );
+            }
+            Err(err) => {
+                tracing::error!(
+                    server = %server.uuid,
+                    root = %root.display(),
+                    "failed to compress files: {:#?}",
+                    err,
+                );
+
+                return (
+                    StatusCode::EXPECTATION_FAILED,
+                    axum::Json(ApiError::new("failed to compress files").to_json()),
+                );
+            }
+        }
 
         let metadata = server
             .filesystem

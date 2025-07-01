@@ -180,8 +180,8 @@ pub async fn diagnostics(matches: &ArgMatches, config: Option<&Arc<crate::config
     if !include_endpoints {
         output = output
             .replace(&config.remote, "{redacted}")
-            .replace(&config.api.host, "{redacted}")
-            .replace(&config.system.sftp.bind_address, "{redacted}");
+            .replace(&config.api.host.to_string(), "{redacted}")
+            .replace(&config.system.sftp.bind_address.to_string(), "{redacted}");
 
         if !config.api.ssl.cert.is_empty() {
             output = output.replace(&config.api.ssl.cert, "{redacted}");
@@ -210,11 +210,7 @@ pub async fn diagnostics(matches: &ArgMatches, config: Option<&Arc<crate::config
         .post("https://api.pastes.dev/post")
         .header(
             "User-Agent",
-            format!(
-                "wings-rs diagnostics/v{} (id:{})",
-                crate::VERSION,
-                config.token_id
-            ),
+            format!("wings-rs diagnostics/v{}", crate::VERSION),
         )
         .header("Content-Type", "text/plain")
         .header("Accept", "application/json")

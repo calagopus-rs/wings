@@ -13,7 +13,8 @@ mod post {
             app_name: Option<String>,
 
             api: Option<#[derive(ToSchema, Deserialize)] pub struct ApiPayload {
-                host: Option<String>,
+                #[schema(value_type = Option<String>)]
+                host: Option<std::net::IpAddr>,
                 port: Option<u16>,
 
                 ssl: Option<#[derive(ToSchema, Deserialize)] pub struct ApiSslPayload {
@@ -27,7 +28,8 @@ mod post {
 
             system: Option<#[derive(ToSchema, Deserialize)] pub struct SystemPayload {
                 sftp: Option<#[derive(ToSchema, Deserialize)] pub struct SystemSftpPayload {
-                    bind_address: Option<String>,
+                    #[schema(value_type = Option<String>)]
+                    bind_address: Option<std::net::IpAddr>,
                     bind_port: Option<u16>,
                 }>,
             }>,

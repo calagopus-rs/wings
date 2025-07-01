@@ -9,6 +9,7 @@ use std::{
     io::BufRead,
     ops::{Deref, DerefMut},
     os::unix::fs::PermissionsExt,
+    str::FromStr,
     sync::Arc,
 };
 use tracing_appender::non_blocking::WorkerGuard;
@@ -17,11 +18,23 @@ use tracing_subscriber::fmt::writer::MakeWriterExt;
 fn app_name() -> String {
     "Pterodactyl".to_string()
 }
-fn api_host() -> String {
-    "0.0.0.0".to_string()
+fn api_host() -> std::net::IpAddr {
+    std::net::IpAddr::from([0, 0, 0, 0])
 }
 fn api_port() -> u16 {
     8080
+}
+fn api_remote_download_blocked_cidrs() -> Vec<cidr::IpCidr> {
+    Vec::from([
+        cidr::IpCidr::from_str("127.0.0.0/8").unwrap(),
+        cidr::IpCidr::from_str("10.0.0.0/8").unwrap(),
+        cidr::IpCidr::from_str("172.16.0.0/12").unwrap(),
+        cidr::IpCidr::from_str("192.168.0.0/16").unwrap(),
+        cidr::IpCidr::from_str("169.254.0.0/16").unwrap(),
+        cidr::IpCidr::from_str("::1/128").unwrap(),
+        cidr::IpCidr::from_str("fe80::/10").unwrap(),
+        cidr::IpCidr::from_str("fc00::/7").unwrap(),
+    ])
 }
 fn api_directory_entry_limit() -> usize {
     10000
@@ -92,8 +105,8 @@ fn system_websocket_log_count() -> usize {
     150
 }
 
-fn system_sftp_bind_address() -> String {
-    "0.0.0.0".to_string()
+fn system_sftp_bind_address() -> std::net::IpAddr {
+    std::net::IpAddr::from([0, 0, 0, 0])
 }
 fn system_sftp_bind_port() -> u16 {
     2022
@@ -258,7 +271,7 @@ nestify::nest! {
         #[serde(default)]
         pub api: #[derive(Deserialize, Serialize, DefaultFromSerde)] #[serde(default)] pub struct Api {
             #[serde(default = "api_host")]
-            pub host: String,
+            pub host: std::net::IpAddr,
             #[serde(default = "api_port")]
             pub port: u16,
 
@@ -274,6 +287,8 @@ nestify::nest! {
 
             #[serde(default)]
             pub disable_remote_download: bool,
+            #[serde(default = "api_remote_download_blocked_cidrs")]
+            pub remote_download_blocked_cidrs: Vec<cidr::IpCidr>,
             #[serde(default)]
             pub disable_directory_size: bool,
             #[serde(default = "api_directory_entry_limit")]
@@ -360,7 +375,7 @@ nestify::nest! {
             #[serde(default)]
             pub sftp: #[derive(Deserialize, Serialize, DefaultFromSerde)] #[serde(default)] pub struct SystemSftp {
                 #[serde(default = "system_sftp_bind_address")]
-                pub bind_address: String,
+                pub bind_address: std::net::IpAddr,
                 #[serde(default = "system_sftp_bind_port")]
                 pub bind_port: u16,
 

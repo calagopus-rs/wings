@@ -95,7 +95,9 @@ mod post {
 
                 return (
                     StatusCode::EXPECTATION_FAILED,
-                    axum::Json(ApiError::new("failed to decompress archive").to_json()),
+                    axum::Json(
+                        ApiError::new(&format!("failed to decompress archive: {err}")).to_json(),
+                    ),
                 );
             }
             Err(err) => {

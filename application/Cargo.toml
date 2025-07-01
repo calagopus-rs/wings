@@ -1,6 +1,6 @@
 [package]
 name = "wings-rs"
-version = "0.13.0"
+version = "0.13.1"
 edition = "2024"
 
 [dependencies]
@@ -58,3 +58,5 @@ sysinfo = "0.35.2"
 crc32fast = "1.4.2"
 cap-std = "3.4.4"
 rustix = "1.0.7"
+cidr = { version = "0.3.1", features = ["serde"] }
+hickory-resolver = "0.25.2"

@@ -123,7 +123,7 @@ mod post {
 
         server.filesystem.create_dir_all(&path).await.unwrap();
         let download = Arc::new(RwLock::new(
-            crate::server::filesystem::pull::Download::new(
+            match crate::server::filesystem::pull::Download::new(
                 server.0.clone(),
                 &path,
                 data.file_name,
@@ -131,7 +131,18 @@ mod post {
                 data.use_header,
             )
             .await
-            .unwrap(),
+            {
+                Ok(download) => download,
+                Err(err) => {
+                    tracing::error!("Failed to create download: {}", err);
+                    return (
+                        StatusCode::EXPECTATION_FAILED,
+                        axum::Json(
+                            ApiError::new(&format!("failed to create download: {err}")).to_json(),
+                        ),
+                    );
+                }
+            },
         ));
 
         let identifier = download.read().await.identifier;

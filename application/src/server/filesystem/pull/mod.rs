@@ -3,19 +3,39 @@ use rand::Rng;
 use std::{
     path::{Path, PathBuf},
     sync::{
-        Arc, LazyLock,
+        Arc,
         atomic::{AtomicU64, Ordering},
     },
 };
-use tokio::io::AsyncWriteExt;
+use tokio::{io::AsyncWriteExt, sync::RwLock};
 
-static DOWNLOAD_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
-    reqwest::Client::builder()
+mod resolver;
+
+static DOWNLOAD_CLIENT: RwLock<Option<Arc<reqwest::Client>>> = RwLock::const_new(None);
+
+async fn get_download_client(
+    config: &Arc<crate::config::Config>,
+) -> Result<Arc<reqwest::Client>, anyhow::Error> {
+    let client = DOWNLOAD_CLIENT.read().await;
+    if let Some(client) = client.as_ref() {
+        return Ok(Arc::clone(client));
+    }
+
+    drop(client);
+    let mut write_lock = DOWNLOAD_CLIENT.write().await;
+
+    let new_client = reqwest::Client::builder()
         .user_agent("Pterodactyl Panel (https://pterodactyl.io)")
         .timeout(std::time::Duration::from_secs(30))
+        .dns_resolver(Arc::new(resolver::DnsResolver::new(config)))
         .build()
-        .unwrap()
-});
+        .context("failed to build download client")?;
+
+    let new_client = Arc::new(new_client);
+    *write_lock = Some(Arc::clone(&new_client));
+
+    Ok(new_client)
+}
 
 pub struct Download {
     pub identifier: uuid::Uuid,
@@ -36,7 +56,8 @@ impl Download {
         url: String,
         use_header: bool,
     ) -> Result<Self, anyhow::Error> {
-        let response = DOWNLOAD_CLIENT
+        let response = get_download_client(&server.config)
+            .await?
             .get(&url)
             .send()
             .await
@@ -45,7 +66,7 @@ impl Download {
 
         if !response.status().is_success() {
             return Err(anyhow::anyhow!(
-                "Failed to download file: code {}",
+                "failed to download file: code {}",
                 response.status()
             ));
         }
