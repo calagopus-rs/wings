@@ -26,7 +26,7 @@ async fn get_client(server: &crate::server::Server) -> Arc<reqwest::Client> {
 
     let client = Arc::new(
         reqwest::ClientBuilder::new()
-            .timeout(std::time::Duration::from_secs(15))
+            .timeout(std::time::Duration::from_secs(2 * 60 * 60))
             .danger_accept_invalid_certs(server.config.ignore_certificate_errors)
             .build()
             .unwrap(),
