@@ -239,7 +239,7 @@ pub async fn create_backup(
                 .await
                 .put(&url)
                 .header("Content-Length", part_size)
-                .header("Content-Type", "application/x-gzip")
+                .header("Content-Type", "application/gzip")
                 .body(reqwest::Body::wrap_stream(
                     tokio_util::io::ReaderStream::new(Box::pin(
                         BoundedReader::new(&mut file, offset, part_size).await,
@@ -258,14 +258,22 @@ pub async fn create_backup(
                             .to_string();
 
                         break;
+                    } else {
+                        tracing::error!(
+                            backup = %uuid,
+                            server = %server.uuid,
+                            "failed to upload s3 backup part {}: status code {}",
+                            i + 1,
+                            response.status()
+                        );
                     }
                 }
                 Err(err) => {
                     tracing::error!(
-                        "failed to upload s3 backup part {} for backup {} for {}: {}",
+                        backup = %uuid,
+                        server = %server.uuid,
+                        "failed to upload s3 backup part {}: {:#?}",
                         i + 1,
-                        uuid,
-                        server.uuid,
                         err
                     );
 
@@ -282,7 +290,7 @@ pub async fn create_backup(
     }
 
     if remaining_size > 0 {
-        return Err(anyhow::anyhow!("Failed to upload all parts"));
+        return Err(anyhow::anyhow!("failed to upload all parts"));
     }
 
     tokio::fs::remove_file(&file_name).await?;
