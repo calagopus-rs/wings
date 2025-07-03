@@ -125,9 +125,7 @@ mod post {
                     if source_metadata.is_dir() {
                         header.set_entry_type(tar::EntryType::Directory);
 
-                        archive
-                            .append_data(&mut header, relative, std::io::empty())
-                            .ok();
+                        archive.append_data(&mut header, relative, std::io::empty())?;
 
                         let (mut walker, strip_path) = server.filesystem.walk_dir(&source)?;
 
@@ -209,7 +207,6 @@ mod post {
                     }
                 }
 
-                archive.finish()?;
                 let mut inner = archive.into_inner()?;
                 inner.flush()?;
 

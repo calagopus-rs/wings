@@ -1,6 +1,6 @@
 [package]
 name = "wings-rs"
-version = "0.13.3"
+version = "0.13.4"
 edition = "2024"
 
 [dependencies]
@@ -31,7 +31,7 @@ tokio-util = { workspace = true }
 uuid = { workspace = true }
 rand = { workspace = true }
 tar = "0.4.44"
-tokio-tar = "0.3.1"
+astral-tokio-tar = "0.5.2"
 zip = { version = "3.0.0", default-features = false, features = ["bzip2", "deflate", "sha1", "time", "zstd", "lzma-rs"] }
 sevenz-rust2 = { version = "0.14.1", features = ["deflate", "brotli", "zstd", "bzip2", "lz4"] }
 flate2 = "1.1.1"

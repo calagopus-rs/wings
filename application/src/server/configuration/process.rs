@@ -61,9 +61,19 @@ impl ServerConfigurationFile {
                                 "disk" => return Some(config.build.disk_space.to_string()),
                                 "default" if parts.len() >= 4 => match parts[3] {
                                     "port" => {
-                                        return Some(config.allocations.default.port.to_string());
+                                        return config
+                                            .allocations
+                                            .default
+                                            .as_ref()
+                                            .map(|d| d.port.to_string());
                                     }
-                                    "ip" => return Some(config.allocations.default.ip.to_string()),
+                                    "ip" => {
+                                        return config
+                                            .allocations
+                                            .default
+                                            .as_ref()
+                                            .map(|d| d.ip.to_string());
+                                    }
                                     _ => {
                                         tracing::error!(
                                             server = %server.uuid,

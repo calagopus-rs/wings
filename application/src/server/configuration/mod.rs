@@ -50,10 +50,10 @@ nestify::nest! {
             pub force_outgoing_ip: bool,
 
             #[schema(inline)]
-            pub default: #[derive(ToSchema, Deserialize, Serialize)] pub struct ServerConfigurationAllocationsDefault {
+            pub default: Option<#[derive(ToSchema, Deserialize, Serialize)] pub struct ServerConfigurationAllocationsDefault {
                 pub ip: String,
                 pub port: u16,
-            },
+            }>,
 
             pub mappings: HashMap<String, Vec<u16>>,
         },
@@ -279,14 +279,16 @@ impl ServerConfiguration {
             "SERVER_MEMORY".to_string(),
             serde_json::Value::from(self.build.memory_limit),
         );
-        environment.insert(
-            "SERVER_IP".to_string(),
-            serde_json::Value::from(self.allocations.default.ip.clone()),
-        );
-        environment.insert(
-            "SERVER_PORT".to_string(),
-            serde_json::Value::from(self.allocations.default.port),
-        );
+        if let Some(default) = &self.allocations.default {
+            environment.insert(
+                "SERVER_IP".to_string(),
+                serde_json::Value::from(default.ip.clone()),
+            );
+            environment.insert(
+                "SERVER_PORT".to_string(),
+                serde_json::Value::from(default.port),
+            );
+        }
 
         environment
             .into_iter()
@@ -313,15 +315,10 @@ impl ServerConfiguration {
         labels.insert("Service".to_string(), "Pterodactyl".to_string());
         labels.insert("ContainerType".to_string(), "server_process".to_string());
 
-        let network_mode = if self.allocations.force_outgoing_ip {
-            let network_name = format!(
-                "ip-{}",
-                self.allocations
-                    .default
-                    .ip
-                    .replace('.', "-")
-                    .replace(':', "--")
-            );
+        let network_mode = if self.allocations.force_outgoing_ip
+            && let Some(default) = &self.allocations.default
+        {
+            let network_name = format!("ip-{}", default.ip.replace('.', "-").replace(':', "--"));
 
             if client
                 .inspect_network::<String>(&network_name, None)
@@ -339,7 +336,7 @@ impl ServerConfiguration {
                         options: HashMap::from([
                             ("encryption", "false"),
                             ("com.docker.network.bridge.default_bridge", "false"),
-                            ("com.docker.network.host_ipv4", &self.allocations.default.ip),
+                            ("com.docker.network.host_ipv4", &default.ip),
                         ]),
                         ..Default::default()
                     })

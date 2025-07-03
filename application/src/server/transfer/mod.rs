@@ -190,7 +190,7 @@ impl OutgoingServerTransfer {
 
                         if server
                             .filesystem
-                            .is_ignored_sync(entry.path(), metadata.is_dir())
+                            .is_ignored_sync(path, metadata.is_dir())
                         {
                             continue;
                         }
@@ -213,9 +213,7 @@ impl OutgoingServerTransfer {
                         if metadata.is_dir() {
                             header.set_entry_type(tar::EntryType::Directory);
 
-                            tar
-                                .append_data(&mut header, path, std::io::empty())
-                                .ok();
+                            tar.append_data(&mut header, path, std::io::empty())?;
                             bytes_archived.fetch_add(
                                 metadata.len(),
                                 Ordering::SeqCst,
@@ -234,13 +232,11 @@ impl OutgoingServerTransfer {
                             header.set_size(metadata.len());
                             header.set_entry_type(tar::EntryType::Regular);
 
-                            tar.append_data(&mut header, path, reader).ok();
+                            tar.append_data(&mut header, path, reader)?;
                         } else if let Ok(link_target) = filesystem.read_link_contents(path) {
                             header.set_entry_type(tar::EntryType::Symlink);
 
-                            tar
-                                .append_link(&mut header, path, link_target)
-                                .unwrap();
+                            tar.append_link(&mut header, path, link_target)?;
                             bytes_archived.fetch_add(
                                 metadata.len(),
                                 Ordering::SeqCst,
