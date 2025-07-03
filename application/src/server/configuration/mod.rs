@@ -55,6 +55,7 @@ nestify::nest! {
                 pub port: u16,
             }>,
 
+            #[serde(default, deserialize_with = "crate::deserialize::deserialize_defaultable")]
             pub mappings: HashMap<String, Vec<u16>>,
         },
         #[schema(inline)]
