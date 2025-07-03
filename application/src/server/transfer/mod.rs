@@ -259,19 +259,21 @@ impl OutgoingServerTransfer {
 
                 let mut buffer = [0; 8192];
                 loop {
-                    let bytes_read = checksummed_reader.read(&mut buffer).await.unwrap();
+                    let bytes_read = checksummed_reader.read(&mut buffer).await?;
                     if bytes_read == 0 {
                         break;
                     }
 
                     hasher.update(&buffer[..bytes_read]);
-                    writer.write_all(&buffer[..bytes_read]).await.unwrap();
+                    writer.write_all(&buffer[..bytes_read]).await?;
                 }
 
                 checksum_writer
                     .write_all(format!("{:x}", hasher.finalize()).as_bytes())
                     .await
-                    .unwrap();
+                    ?;
+
+                Ok::<_, anyhow::Error>(())
             });
 
             let mut form = reqwest::multipart::Form::new()
@@ -419,13 +421,35 @@ impl OutgoingServerTransfer {
 
             Self::log(&server, "Streaming archive to destination...");
 
-            let (archive, _, _) = tokio::join!(archive_task, checksum_task, response);
+            let (archive, checksum, _) = tokio::join!(archive_task, checksum_task, response);
             progress_task.abort();
 
             if let Ok(Err(err)) = archive {
                 tracing::error!(
                     server = %server.uuid,
                     "failed to create transfer archive: {}",
+                    err
+                );
+
+                Self::transfer_failure(&server).await;
+                return;
+            }
+
+            if let Err(err) = archive {
+                tracing::error!(
+                    server = %server.uuid,
+                    "failed to create transfer archive (join error): {}",
+                    err
+                );
+
+                Self::transfer_failure(&server).await;
+                return;
+            }
+
+            if let Err(err) = checksum {
+                tracing::error!(
+                    server = %server.uuid,
+                    "failed to create transfer checksum: {}",
                     err
                 );
 
