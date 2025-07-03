@@ -31,6 +31,14 @@ mod get {
             "directory" = String, Query,
             description = "The directory to list files from",
         ),
+        (
+            "per_page" = usize, Query,
+            description = "The number of entries to return per page",
+        ),
+        (
+            "page" = usize, Query,
+            description = "The page number to return",
+        ),
     ))]
     pub async fn route(
         state: GetState,

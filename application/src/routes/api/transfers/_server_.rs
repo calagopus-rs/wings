@@ -42,10 +42,12 @@ mod delete {
             }
         };
 
-        server.incoming_transfer.write().await.take();
         server
             .transferring
             .store(false, std::sync::atomic::Ordering::SeqCst);
+        if let Some(handle) = server.incoming_transfer.write().await.take() {
+            handle.abort();
+        }
 
         (
             StatusCode::OK,

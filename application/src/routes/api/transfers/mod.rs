@@ -110,106 +110,97 @@ mod post {
             .transferring
             .store(true, std::sync::atomic::Ordering::SeqCst);
 
-        server
-            .clone()
-            .incoming_transfer
-            .write()
-            .await
-            .replace(tokio::spawn(async move {
+        let handle: tokio::task::JoinHandle<Result<(), anyhow::Error>> = tokio::spawn({
+            let server = server.clone();
+
+            async move {
                 while let Ok(Some(field)) = multipart.next_field().await {
                     if let Some("archive") = field.name() {
                         let file_name = field.file_name().unwrap_or("archive.tar.gz").to_string();
-                        let reader = tokio_util::io::StreamReader::new(
-                            field.into_stream().map_err(|err| {
+                        let reader =
+                            tokio_util::io::StreamReader::new(field.into_stream().map_err(|err| {
                                 std::io::Error::other(format!(
                                     "failed to read multipart field: {err}"
                                 ))
-                            }),
-                        );
+                            }));
                         let reader: Box<dyn tokio::io::AsyncRead + Send> =
-                            match ArchiveFormat::from_str(&file_name).unwrap_or(ArchiveFormat::TarGz) {
+                            match ArchiveFormat::from_str(&file_name)
+                                .unwrap_or(ArchiveFormat::TarGz)
+                            {
                                 ArchiveFormat::Tar => Box::new(reader),
-                                ArchiveFormat::TarGz => {
-                                    Box::new(async_compression::tokio::bufread::GzipDecoder::new(
-                                        reader,
-                                    ))
-                                }
-                                ArchiveFormat::TarZstd => {
-                                    Box::new(async_compression::tokio::bufread::ZstdDecoder::new(
-                                        reader,
-                                    ))
-                                }
+                                ArchiveFormat::TarGz => Box::new(
+                                    async_compression::tokio::bufread::GzipDecoder::new(reader),
+                                ),
+                                ArchiveFormat::TarZstd => Box::new(
+                                    async_compression::tokio::bufread::ZstdDecoder::new(reader),
+                                ),
                             };
 
                         let mut archive = tokio_tar::Archive::new(Box::into_pin(reader));
-                        let mut entries = archive.entries().unwrap();
+                        let mut entries = archive.entries()?;
 
                         while let Some(Ok(mut entry)) = entries.next().await {
-                            let path = entry.path().unwrap();
+                            let path = entry.path()?;
 
                             if path.is_absolute() {
                                 continue;
                             }
 
+                            let destination_path = path.as_ref();
                             let header = entry.header();
+
                             match header.entry_type() {
                                 tokio_tar::EntryType::Directory => {
-                                    server.filesystem.create_dir_all(path.as_ref()).await.unwrap();
+                                    server.filesystem.create_dir_all(&destination_path).await?;
+                                    if let Ok(permissions) =
+                                        header.mode().map(Permissions::from_mode)
+                                    {
+                                        server
+                                            .filesystem
+                                            .set_permissions(
+                                                &destination_path,
+                                                cap_std::fs::Permissions::from_std(permissions),
+                                            )
+                                            .await?;
+                                    }
                                 }
                                 tokio_tar::EntryType::Regular => {
-                                    server.filesystem.create_dir_all(path.parent().unwrap()).await.unwrap();
+                                    if let Some(parent) = destination_path.parent() {
+                                        server.filesystem.create_dir_all(parent).await?;
+                                    }
 
                                     let mut writer =
-                                        crate::server::filesystem::writer::AsyncFileSystemWriter::new(
-                                            server.clone(),
-                                            path.to_path_buf(),
-                                            header.mode().map(Permissions::from_mode).ok(),
-                                            header
-                                                .mtime()
-                                                .map(|t| {
-                                                    std::time::UNIX_EPOCH
-                                                        + std::time::Duration::from_secs(t)
-                                                })
-                                                .ok(),
-                                        )
-                                        .await
-                                        .unwrap()
-                                        .ignorant();
+                                    crate::server::filesystem::writer::AsyncFileSystemWriter::new(
+                                        server.clone(),
+                                        destination_path.to_path_buf(),
+                                        header.mode().map(Permissions::from_mode).ok(),
+                                        header
+                                            .mtime()
+                                            .map(|t| {
+                                                std::time::UNIX_EPOCH
+                                                    + std::time::Duration::from_secs(t)
+                                            })
+                                            .ok(),
+                                    )
+                                    .await?;
 
-                                    if let Err(err) = tokio::io::copy(&mut entry, &mut writer).await {
-                                        tracing::error!(
-                                            "failed to copy file from transfer archive: {:#?}",
-                                            err
-                                        );
-                                    }
-                                    if let Err(err) = writer.flush().await {
-                                        tracing::error!(
-                                            "failed to flush file from transfer archive: {:#?}",
-                                            err
-                                        );
-                                    }
+                                    tokio::io::copy(&mut entry, &mut writer).await?;
+                                    writer.flush().await?;
                                 }
                                 tokio_tar::EntryType::Symlink => {
-                                    let link = match entry.link_name() {
-                                        Ok(link) => link.unwrap_or_default(),
-                                        Err(err) => {
-                                            tracing::error!(
-                                                "failed to read symlink from transfer archive: {:#?}",
+                                    let link =
+                                        entry.link_name().unwrap_or_default().unwrap_or_default();
+
+                                    server
+                                        .filesystem
+                                        .symlink(link.as_ref(), destination_path)
+                                        .await
+                                        .unwrap_or_else(|err| {
+                                            tracing::debug!(
+                                                "failed to create symlink from archive: {:#?}",
                                                 err
                                             );
-                                            continue;
-                                        }
-                                    };
-
-                                    if let Err(err) = server.filesystem.symlink(
-                                        link.as_ref(),
-                                        path.as_ref(),
-                                    ).await {
-                                        tracing::error!(
-                                            "failed to create symlink from transfer archive: {:#?}",
-                                            err
-                                        );
-                                    }
+                                        });
                                 }
                                 _ => {}
                             }
@@ -223,14 +214,17 @@ mod post {
                         let file_name = match field.file_name() {
                             Some(name) => name.to_string(),
                             None => {
-                                tracing::warn!("backup field without file name found in transfer archive");
+                                tracing::warn!(
+                                    "backup field without file name found in transfer archive"
+                                );
                                 continue;
                             }
                         };
 
                         match field.content_type() {
                             Some("backup/wings") => {
-                                let file_name = Path::new(&state.config.system.backup_directory).join(file_name);
+                                let file_name = Path::new(&state.config.system.backup_directory)
+                                    .join(file_name);
                                 let mut reader = tokio_util::io::StreamReader::new(
                                     field.into_stream().map_err(|err| {
                                         std::io::Error::other(format!(
@@ -273,7 +267,7 @@ mod post {
                                     "backup file {} transferred successfully",
                                     file_name.display()
                                 );
-                            },
+                            }
                             _ => {
                                 tracing::warn!(
                                     "invalid content type for backup field: {}",
@@ -285,7 +279,11 @@ mod post {
                     }
                 }
 
-                state.config.client.set_server_transfer(subject, true).await.unwrap();
+                state
+                    .config
+                    .client
+                    .set_server_transfer(subject, true)
+                    .await?;
                 server
                     .transferring
                     .store(false, std::sync::atomic::Ordering::SeqCst);
@@ -296,7 +294,28 @@ mod post {
                         &["completed".to_string()],
                     ))
                     .ok();
-            }));
+
+                Ok(())
+            }
+        });
+
+        server
+            .incoming_transfer
+            .write()
+            .await
+            .replace(handle.abort_handle());
+        if let Err(err) = handle.await {
+            tracing::error!(
+                server = %server.uuid,
+                "failed to complete server transfer: {:#?}",
+                err
+            );
+
+            return (
+                StatusCode::EXPECTATION_FAILED,
+                axum::Json(ApiError::new("failed to complete server transfer").to_json()),
+            );
+        }
 
         (
             StatusCode::OK,

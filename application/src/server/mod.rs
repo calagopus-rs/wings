@@ -10,7 +10,10 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
 };
-use tokio::sync::{Mutex, RwLock};
+use tokio::{
+    sync::{Mutex, RwLock},
+    task::AbortHandle,
+};
 
 pub mod activity;
 pub mod backup;
@@ -42,7 +45,7 @@ pub struct InnerServer {
 
     pub state: state::ServerStateLock,
     pub outgoing_transfer: RwLock<Option<transfer::OutgoingServerTransfer>>,
-    pub incoming_transfer: RwLock<Option<tokio::task::JoinHandle<()>>>,
+    pub incoming_transfer: RwLock<Option<AbortHandle>>,
     pub installation_script: RwLock<Option<(bool, installation::InstallationScript)>>,
 
     suspended: AtomicBool,
