@@ -19,8 +19,8 @@ mod get {
 
     #[utoipa::path(get, path = "/", responses(
         (status = OK, body = Vec<crate::models::DirectoryEntry>),
-        (status = NOT_FOUND, body = inline(ApiError)),
-        (status = EXPECTATION_FAILED, body = inline(ApiError)),
+        (status = NOT_FOUND, body = ApiError),
+        (status = EXPECTATION_FAILED, body = ApiError),
     ), params(
         (
             "server" = uuid::Uuid,

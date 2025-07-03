@@ -17,7 +17,7 @@ mod get {
 
     #[utoipa::path(get, path = "/api/servers/{server}/files/random", responses(
         (status = OK, body = wings_rs::models::DirectoryEntry),
-        (status = EXPECTATION_FAILED, body = inline(ApiError)),
+        (status = EXPECTATION_FAILED, body = ApiError),
     ), params(
         (
             "server" = uuid::Uuid,
