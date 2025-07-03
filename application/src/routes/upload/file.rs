@@ -54,7 +54,7 @@ mod post {
             "directory" = String, Query,
             description = "The directory to upload the file to",
         ),
-    ))]
+    ), request_body = String)]
     pub async fn route(
         state: GetState,
         headers: HeaderMap,

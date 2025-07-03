@@ -20,7 +20,7 @@ fn zip_entry_to_directory_entry(
         entry.size()
     };
 
-    let mut buffer = [0; 128];
+    let mut buffer = [0; 64];
     let buffer = if entry.read(&mut buffer).is_err() {
         None
     } else {
@@ -34,7 +34,7 @@ fn zip_entry_to_directory_entry(
     } else if let Some(buffer) = buffer {
         if let Some(mime) = infer::get(buffer) {
             mime.mime_type()
-        } else if std::str::from_utf8(buffer).is_ok() {
+        } else if crate::is_valid_utf8_slice(buffer) {
             "text/plain"
         } else {
             "application/octet-stream"

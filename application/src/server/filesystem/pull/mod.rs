@@ -59,16 +59,13 @@ impl Download {
     ) -> Result<Self, anyhow::Error> {
         let url = reqwest::Url::parse(&url).context("failed to parse download URL")?;
 
-        match std::net::IpAddr::from_str(url.host_str().unwrap_or("")) {
-            Ok(ip) => {
-                for cidr in server.config.api.remote_download_blocked_cidrs.iter() {
-                    if cidr.contains(&ip) {
-                        tracing::warn!("blocking internal IP address in pull: {}", ip);
-                        return Err(anyhow::anyhow!("IP address {} is blocked", ip));
-                    }
+        if let Ok(ip) = std::net::IpAddr::from_str(url.host_str().unwrap_or("")) {
+            for cidr in server.config.api.remote_download_blocked_cidrs.iter() {
+                if cidr.contains(&ip) {
+                    tracing::warn!("blocking internal IP address in pull: {}", ip);
+                    return Err(anyhow::anyhow!("IP address {} is blocked", ip));
                 }
             }
-            Err(_) => {}
         }
 
         let response = get_download_client(&server.config)

@@ -886,7 +886,7 @@ impl Filesystem {
         } else if let Some(buffer) = buffer {
             if let Some(mime) = infer::get(buffer) {
                 mime.mime_type()
-            } else if std::str::from_utf8(buffer).is_ok() {
+            } else if crate::is_valid_utf8_slice(buffer) {
                 "text/plain"
             } else {
                 "application/octet-stream"
@@ -978,7 +978,7 @@ impl Filesystem {
                 None
             };
 
-        let mut buffer = [0; 128];
+        let mut buffer = [0; 64];
         let buffer = if metadata.is_file()
             || (symlink_destination.is_some()
                 && symlink_destination_metadata
@@ -1030,7 +1030,7 @@ impl Filesystem {
                 None
             };
 
-        let mut buffer = [0; 128];
+        let mut buffer = [0; 64];
         let buffer = if metadata.is_file()
             || (symlink_destination.is_some()
                 && symlink_destination_metadata

@@ -31,7 +31,7 @@ fn ddup_bak_entry_to_directory_entry(
         ddup_bak::archive::entries::Entry::Symlink(link) => link.target.len() as u64,
     };
 
-    let mut buffer = [0; 128];
+    let mut buffer = [0; 64];
     let buffer = match repository.entry_reader(entry.clone()) {
         Ok(mut reader) => {
             if reader.read(&mut buffer).is_err() {
@@ -50,7 +50,7 @@ fn ddup_bak_entry_to_directory_entry(
     } else if let Some(buffer) = buffer {
         if let Some(mime) = infer::get(buffer) {
             mime.mime_type()
-        } else if std::str::from_utf8(buffer).is_ok() {
+        } else if crate::is_valid_utf8_slice(buffer) {
             "text/plain"
         } else {
             "application/octet-stream"

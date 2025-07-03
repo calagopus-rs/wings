@@ -40,9 +40,13 @@ mod get {
 
     #[derive(ToSchema, Serialize)]
     pub struct Response {
+        #[schema(inline)]
         cpu: CpuStats,
+        #[schema(inline)]
         network: NetworkStats,
+        #[schema(inline)]
         memory: MemoryStats,
+        #[schema(inline)]
         disk: DiskStats,
     }
 
