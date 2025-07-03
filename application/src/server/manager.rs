@@ -230,9 +230,9 @@ impl Manager {
     pub async fn delete_server(&self, server: &Server) {
         let mut servers = self.servers.write().await;
 
-        if let Some(pos) = servers.iter().position(|s| Arc::ptr_eq(s, server)) {
+        if let Some(pos) = servers.iter().position(|s| s.uuid == server.uuid) {
             let server = servers.remove(pos);
-            server.suspended.store(true, Ordering::Relaxed);
+            server.suspended.store(true, Ordering::SeqCst);
 
             tokio::spawn({
                 let client = Arc::clone(&self.client);
