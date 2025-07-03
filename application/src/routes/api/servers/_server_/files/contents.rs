@@ -19,11 +19,13 @@ mod get {
         #[schema(default = "false")]
         #[serde(default)]
         download: bool,
+        max_size: Option<u64>,
     }
 
     #[utoipa::path(get, path = "/", responses(
         (status = OK, body = String),
         (status = NOT_FOUND, body = ApiError),
+        (status = PAYLOAD_TOO_LARGE, body = ApiError),
         (status = EXPECTATION_FAILED, body = ApiError),
     ), params(
         (
@@ -39,6 +41,10 @@ mod get {
             "download" = bool, Query,
             description = "Whether to add 'download headers' to the file",
         ),
+        (
+            "max_size" = Option<u64>, Query,
+            description = "The maximum size of the file to return. If the file is larger than this, an error will be returned.",
+        ),
     ))]
     pub async fn route(
         server: GetServer,
@@ -53,6 +59,24 @@ mod get {
             match crate::server::filesystem::backup::reader(backup, &server, &path).await {
                 Ok((reader, size)) => {
                     let mut headers = HeaderMap::new();
+
+                    if let Some(max_size) = data.max_size
+                        && size > max_size
+                    {
+                        return (
+                            StatusCode::PAYLOAD_TOO_LARGE,
+                            HeaderMap::from_iter([(
+                                "Content-Type".parse().unwrap(),
+                                "application/json".parse().unwrap(),
+                            )]),
+                            Body::from(
+                                serde_json::to_string(&ApiError::new(
+                                    "file size exceeds maximum allowed size",
+                                ))
+                                .unwrap(),
+                            ),
+                        );
+                    }
 
                     headers.insert("Content-Length", size.into());
                     if data.download {
@@ -101,9 +125,26 @@ mod get {
             }
         }
 
-        let metadata = server.filesystem.metadata(&path).await;
-        if let Ok(metadata) = metadata {
-            if !metadata.is_file() || server.filesystem.is_ignored(&path, metadata.is_dir()).await {
+        let metadata = match server.filesystem.metadata(&path).await {
+            Ok(metadata) => {
+                if !metadata.is_file()
+                    || server.filesystem.is_ignored(&path, metadata.is_dir()).await
+                {
+                    return (
+                        StatusCode::NOT_FOUND,
+                        HeaderMap::from_iter([(
+                            "Content-Type".parse().unwrap(),
+                            "application/json".parse().unwrap(),
+                        )]),
+                        Body::from(
+                            serde_json::to_string(&ApiError::new("file not found")).unwrap(),
+                        ),
+                    );
+                }
+
+                metadata
+            }
+            Err(_) => {
                 return (
                     StatusCode::NOT_FOUND,
                     HeaderMap::from_iter([(
@@ -113,6 +154,22 @@ mod get {
                     Body::from(serde_json::to_string(&ApiError::new("file not found")).unwrap()),
                 );
             }
+        };
+
+        if let Some(max_size) = data.max_size
+            && metadata.len() > max_size
+        {
+            return (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                HeaderMap::from_iter([(
+                    "Content-Type".parse().unwrap(),
+                    "application/json".parse().unwrap(),
+                )]),
+                Body::from(
+                    serde_json::to_string(&ApiError::new("file size exceeds maximum allowed size"))
+                        .unwrap(),
+                ),
+            );
         }
 
         let mut file =

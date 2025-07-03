@@ -107,21 +107,23 @@ mod post {
                         continue;
                     }
 
+                    let mut header = tar::Header::new_gnu();
+                    header.set_size(0);
+                    header.set_mode(source_metadata.permissions().mode());
+                    header.set_mtime(
+                        source_metadata
+                            .modified()
+                            .map(|t| {
+                                t.into_std()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default()
+                            })
+                            .unwrap_or_default()
+                            .as_secs() as u64,
+                    );
+
                     if source_metadata.is_dir() {
-                        let mut header = tar::Header::new_gnu();
-                        header.set_size(0);
-                        header.set_mode(source_metadata.permissions().mode());
-                        header.set_mtime(
-                            source_metadata
-                                .modified()
-                                .map(|t| {
-                                    t.into_std()
-                                        .duration_since(std::time::UNIX_EPOCH)
-                                        .unwrap_or_default()
-                                })
-                                .unwrap_or_default()
-                                .as_secs() as u64,
-                        );
+                        header.set_entry_type(tar::EntryType::Directory);
 
                         archive
                             .append_data(&mut header, relative, std::io::empty())
@@ -158,21 +160,23 @@ mod post {
                                 continue;
                             }
 
+                            let mut header = tar::Header::new_gnu();
+                            header.set_size(0);
+                            header.set_mode(metadata.permissions().mode());
+                            header.set_mtime(
+                                metadata
+                                    .modified()
+                                    .map(|t| {
+                                        t.into_std()
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .unwrap_or_default()
+                                    })
+                                    .unwrap_or_default()
+                                    .as_secs() as u64,
+                            );
+
                             if metadata.is_dir() {
-                                let mut header = tar::Header::new_gnu();
-                                header.set_size(0);
-                                header.set_mode(metadata.permissions().mode());
-                                header.set_mtime(
-                                    metadata
-                                        .modified()
-                                        .map(|t| {
-                                            t.into_std()
-                                                .duration_since(std::time::UNIX_EPOCH)
-                                                .unwrap_or_default()
-                                        })
-                                        .unwrap_or_default()
-                                        .as_secs() as u64,
-                                );
+                                header.set_entry_type(tar::EntryType::Directory);
 
                                 archive
                                     .append_data(&mut header, display_path, std::io::empty())
@@ -183,74 +187,22 @@ mod post {
                                     Err(_) => continue,
                                 };
 
-                                let mut header = tar::Header::new_gnu();
                                 header.set_size(metadata.len());
-                                header.set_mode(metadata.permissions().mode());
-                                header.set_mtime(
-                                    metadata
-                                        .modified()
-                                        .map(|t| {
-                                            t.into_std()
-                                                .duration_since(std::time::UNIX_EPOCH)
-                                                .unwrap_or_default()
-                                        })
-                                        .unwrap_or_default()
-                                        .as_secs() as u64,
-                                );
+                                header.set_entry_type(tar::EntryType::Regular);
 
                                 archive.append_data(&mut header, display_path, file).ok();
                             } else if let Ok(link_target) = filesystem.read_link_contents(path) {
-                                let mut header = tar::Header::new_gnu();
-                                header.set_size(0);
-                                header.set_mode(metadata.permissions().mode());
-                                header.set_mtime(
-                                    metadata
-                                        .modified()
-                                        .map(|t| {
-                                            t.into_std()
-                                                .duration_since(std::time::UNIX_EPOCH)
-                                                .unwrap_or_default()
-                                        })
-                                        .unwrap_or_default()
-                                        .as_secs() as u64,
-                                );
                                 header.set_entry_type(tar::EntryType::Symlink);
 
                                 archive.append_link(&mut header, relative, link_target)?;
                             }
                         }
                     } else if source_metadata.is_file() {
-                        let mut header = tar::Header::new_gnu();
                         header.set_size(source_metadata.len());
-                        header.set_mode(source_metadata.permissions().mode());
-                        header.set_mtime(
-                            source_metadata
-                                .modified()
-                                .map(|t| {
-                                    t.into_std()
-                                        .duration_since(std::time::UNIX_EPOCH)
-                                        .unwrap_or_default()
-                                })
-                                .unwrap_or_default()
-                                .as_secs() as u64,
-                        );
+                        header.set_entry_type(tar::EntryType::Regular);
 
                         archive.append_data(&mut header, relative, filesystem.open(&source)?)?;
                     } else if let Ok(link_target) = filesystem.read_link_contents(&source) {
-                        let mut header = tar::Header::new_gnu();
-                        header.set_size(0);
-                        header.set_mode(source_metadata.permissions().mode());
-                        header.set_mtime(
-                            source_metadata
-                                .modified()
-                                .map(|t| {
-                                    t.into_std()
-                                        .duration_since(std::time::UNIX_EPOCH)
-                                        .unwrap_or_default()
-                                })
-                                .unwrap_or_default()
-                                .as_secs() as u64,
-                        );
                         header.set_entry_type(tar::EntryType::Symlink);
 
                         archive.append_link(&mut header, relative, link_target)?;

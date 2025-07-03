@@ -1,14 +1,12 @@
 use crate::server::filesystem::archive::CompressionLevel;
+use cap_std::fs::PermissionsExt;
 use human_bytes::human_bytes;
 use ignore::WalkBuilder;
 use serde::Deserialize;
 use sha2::Digest;
-use std::{
-    os::unix::fs::PermissionsExt,
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use utoipa::ToSchema;
@@ -152,6 +150,8 @@ impl OutgoingServerTransfer {
                 let server = Arc::clone(&server);
 
                 move || -> Result<(), anyhow::Error> {
+                    let filesystem = server.filesystem.sync_base_dir()?;
+
                     let writer = tokio_util::io::SyncIoBridge::new(checksummed_writer);
                     let writer: Box<dyn std::io::Write> = match archive_format {
                         ArchiveFormat::Tar => Box::new(writer),
@@ -183,7 +183,7 @@ impl OutgoingServerTransfer {
                             .strip_prefix(&server.filesystem.base_path)
                             .unwrap_or(entry.path());
 
-                        let metadata = match entry.metadata() {
+                        let metadata = match filesystem.symlink_metadata(path) {
                             Ok(metadata) => metadata,
                             Err(_) => continue,
                         };
@@ -195,14 +195,33 @@ impl OutgoingServerTransfer {
                             continue;
                         }
 
+                        let mut header = tar::Header::new_gnu();
+                        header.set_size(0);
+                        header.set_mode(metadata.permissions().mode());
+                        header.set_mtime(
+                            metadata
+                                .modified()
+                                .map(|t| {
+                                    t.into_std()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap_or_default()
+                                })
+                                .unwrap_or_default()
+                                .as_secs(),
+                        );
+
                         if metadata.is_dir() {
-                            tar.append_dir(path, entry.path()).ok();
+                            header.set_entry_type(tar::EntryType::Directory);
+
+                            tar
+                                .append_data(&mut header, path, std::io::empty())
+                                .ok();
                             bytes_archived.fetch_add(
                                 metadata.len(),
                                 Ordering::SeqCst,
                             );
                         } else if metadata.is_file() {
-                            let file = match std::fs::File::open(entry.path()) {
+                            let file = match filesystem.open(path) {
                                 Ok(file) => file,
                                 Err(_) => continue,
                             };
@@ -212,29 +231,11 @@ impl OutgoingServerTransfer {
                                 Arc::clone(&bytes_archived),
                             );
 
-                            let mut header = tar::Header::new_gnu();
                             header.set_size(metadata.len());
-                            header.set_mode(metadata.permissions().mode());
-                            header.set_mtime(
-                                metadata
-                                    .modified()
-                                    .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default())
-                                    .unwrap_or_default()
-                                    .as_secs(),
-                            );
+                            header.set_entry_type(tar::EntryType::Regular);
 
                             tar.append_data(&mut header, path, reader).ok();
-                        } else if let Ok(link_target) = std::fs::read_link(entry.path()) {
-                            let mut header = tar::Header::new_gnu();
-                            header.set_size(0);
-                            header.set_mode(metadata.permissions().mode());
-                            header.set_mtime(
-                                metadata
-                                    .modified()
-                                    .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default())
-                                    .unwrap_or_default()
-                                    .as_secs(),
-                            );
+                        } else if let Ok(link_target) = filesystem.read_link_contents(path) {
                             header.set_entry_type(tar::EntryType::Symlink);
 
                             tar
