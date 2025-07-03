@@ -112,7 +112,11 @@ mod delete {
         server
             .transferring
             .store(false, std::sync::atomic::Ordering::SeqCst);
-        server.outgoing_transfer.write().await.take();
+        if let Some(transfer) = server.outgoing_transfer.write().await.take() {
+            if let Some(handle) = transfer.task.as_ref() {
+                handle.abort();
+            }
+        }
 
         (
             StatusCode::OK,

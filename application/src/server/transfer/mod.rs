@@ -57,7 +57,7 @@ pub struct OutgoingServerTransfer {
     server: super::Server,
     archive_format: ArchiveFormat,
     compression_level: CompressionLevel,
-    task: Option<tokio::task::JoinHandle<()>>,
+    pub task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl OutgoingServerTransfer {

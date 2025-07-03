@@ -304,7 +304,7 @@ mod post {
             .write()
             .await
             .replace(handle.abort_handle());
-        if let Err(err) = handle.await {
+        if let Ok(Err(err)) = handle.await {
             tracing::error!(
                 server = %server.uuid,
                 "failed to complete server transfer: {:#?}",
