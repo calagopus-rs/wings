@@ -212,7 +212,8 @@ pub async fn create_backup(
                                 .compression_level(Some(
                                     compression_level.flate2_compression_level().level() as i64,
                                 ))
-                                .unix_permissions(metadata.permissions().mode());
+                                .unix_permissions(metadata.permissions().mode())
+                                .large_file(metadata.len() >= u32::MAX as u64);
 
                         if let Ok(mtime) = metadata.modified() {
                             let mtime: chrono::DateTime<chrono::Local> =
