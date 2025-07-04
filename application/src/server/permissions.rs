@@ -3,6 +3,7 @@ use serde::{
     de::{SeqAccess, Visitor},
 };
 use std::{
+    collections::HashSet,
     marker::PhantomData,
     ops::{Deref, DerefMut},
 };
@@ -59,7 +60,7 @@ impl Permission {
 }
 
 #[derive(Debug, Default, Clone, Serialize)]
-pub struct Permissions(Vec<Permission>);
+pub struct Permissions(HashSet<Permission>);
 
 impl Permissions {
     #[inline]
@@ -75,7 +76,7 @@ impl Permissions {
 }
 
 impl Deref for Permissions {
-    type Target = Vec<Permission>;
+    type Target = HashSet<Permission>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -106,11 +107,11 @@ impl<'de> Deserialize<'de> for Permissions {
             where
                 A: SeqAccess<'de>,
             {
-                let mut permissions = Vec::new();
+                let mut permissions = HashSet::new();
 
                 while let Ok(Some(result)) = seq.next_element::<serde_json::Value>() {
                     if let Ok(permission) = serde_json::from_value::<Permission>(result) {
-                        permissions.push(permission);
+                        permissions.insert(permission);
                     }
                 }
 
