@@ -267,8 +267,7 @@ impl OutgoingServerTransfer {
 
                 checksum_writer
                     .write_all(format!("{:x}", hasher.finalize()).as_bytes())
-                    .await
-                    ?;
+                    .await?;
 
                 Ok::<_, anyhow::Error>(())
             });

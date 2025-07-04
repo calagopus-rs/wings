@@ -37,6 +37,7 @@ pub struct DirectoryEntry {
 #[derive(ToSchema, Serialize)]
 pub struct Download {
     pub identifier: uuid::Uuid,
+    pub destination: String,
 
     pub progress: u64,
     pub total: u64,

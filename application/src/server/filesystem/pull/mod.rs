@@ -158,6 +158,7 @@ impl Download {
 
         crate::models::Download {
             identifier: self.identifier,
+            destination: self.destination.to_string_lossy().to_string(),
             progress,
             total: self.total,
         }

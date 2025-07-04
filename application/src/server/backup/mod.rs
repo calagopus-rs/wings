@@ -177,12 +177,16 @@ impl InternalBackup {
         let variants = BackupAdapter::variants();
         let mut results = Vec::with_capacity(variants.len());
         for adapter in variants.iter().copied() {
-            results.push(Self::list_for_adapter(server, adapter).await);
+            results.push(Self::list_for_adapter(server, adapter));
         }
 
         let mut backups = Vec::new();
 
-        for (adapter, result) in variants.iter().copied().zip(results) {
+        for (adapter, result) in variants
+            .iter()
+            .copied()
+            .zip(futures_util::future::join_all(results).await)
+        {
             match result {
                 Ok(uuids) => {
                     for uuid in uuids {
