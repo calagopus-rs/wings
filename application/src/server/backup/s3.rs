@@ -1,4 +1,4 @@
-use crate::remote::backups::RawServerBackup;
+use crate::{remote::backups::RawServerBackup, server::transfer::counting_reader::CountingReader};
 use futures::{StreamExt, TryStreamExt};
 use ignore::WalkBuilder;
 use sha1::Digest;
@@ -8,7 +8,10 @@ use std::{
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     pin::Pin,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     task::{Context, Poll},
 };
 use tokio::{
@@ -95,6 +98,7 @@ fn get_file_name(server: &crate::server::Server, uuid: uuid::Uuid) -> PathBuf {
 pub async fn create_backup(
     server: crate::server::Server,
     uuid: uuid::Uuid,
+    progress: Arc<AtomicU64>,
     overrides: ignore::overrides::Override,
 ) -> Result<RawServerBackup, anyhow::Error> {
     let file_name = get_file_name(&server, uuid);
@@ -133,56 +137,38 @@ pub async fn create_backup(
                         continue;
                     }
 
-                    if metadata.is_dir() {
-                        let mut header = tar::Header::new_gnu();
-                        header.set_size(0);
-                        header.set_mode(metadata.permissions().mode());
-                        header.set_mtime(
-                            metadata
-                                .modified()
-                                .map(|t| {
-                                    t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default()
-                                })
-                                .unwrap_or_default()
-                                .as_secs(),
-                        );
+                    let mut header = tar::Header::new_gnu();
+                    header.set_size(0);
+                    header.set_mode(metadata.permissions().mode());
+                    header.set_mtime(
+                        metadata
+                            .modified()
+                            .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default())
+                            .unwrap_or_default()
+                            .as_secs(),
+                    );
 
+                    if metadata.is_dir() {
+                        header.set_entry_type(tar::EntryType::Directory);
+
+                        progress.fetch_add(metadata.len(), Ordering::SeqCst);
                         tar.append_data(&mut header, relative, std::io::empty())?;
                     } else if metadata.is_file() {
                         let file = match filesystem.open(relative) {
                             Ok(file) => file,
                             Err(_) => continue,
                         };
+                        let reader =
+                            CountingReader::new_with_bytes_read(file, Arc::clone(&progress));
 
-                        let mut header = tar::Header::new_gnu();
                         header.set_size(metadata.len());
-                        header.set_mode(metadata.permissions().mode());
-                        header.set_mtime(
-                            metadata
-                                .modified()
-                                .map(|t| {
-                                    t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default()
-                                })
-                                .unwrap_or_default()
-                                .as_secs(),
-                        );
+                        header.set_entry_type(tar::EntryType::Regular);
 
-                        tar.append_data(&mut header, relative, file)?;
+                        tar.append_data(&mut header, relative, reader)?;
                     } else if let Ok(link_target) = filesystem.read_link_contents(relative) {
-                        let mut header = tar::Header::new_gnu();
-                        header.set_size(0);
-                        header.set_mode(metadata.permissions().mode());
-                        header.set_mtime(
-                            metadata
-                                .modified()
-                                .map(|t| {
-                                    t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default()
-                                })
-                                .unwrap_or_default()
-                                .as_secs(),
-                        );
                         header.set_entry_type(tar::EntryType::Symlink);
 
+                        progress.fetch_add(metadata.len(), Ordering::SeqCst);
                         tar.append_link(&mut header, relative, link_target)?;
                     }
                 }

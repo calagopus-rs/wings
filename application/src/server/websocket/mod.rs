@@ -59,6 +59,8 @@ pub enum WebsocketEvent {
     ServerInstallCompleted,
     #[serde(rename = "daemon message")]
     ServerDaemonMessage,
+    #[serde(rename = "backup progress")]
+    ServerBackupProgress,
     #[serde(rename = "backup completed")]
     ServerBackupCompleted,
     #[serde(rename = "backup restore completed")]

@@ -5,7 +5,7 @@ use axum::{
 };
 use ignore::overrides::OverrideBuilder;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::sync::{Arc, atomic::AtomicU64};
 use utoipa::ToSchema;
 
 mod btrfs;
@@ -96,17 +96,63 @@ impl InternalBackup {
             override_raw.push('\n');
         }
 
+        let progress = Arc::new(AtomicU64::new(0));
+        let total = server.filesystem.limiter_usage().await;
+
+        let progress_task = tokio::spawn({
+            let progress = Arc::clone(&progress);
+            let server = server.clone();
+
+            async move {
+                loop {
+                    let progress = progress.load(std::sync::atomic::Ordering::SeqCst);
+
+                    server
+                        .websocket
+                        .send(crate::server::websocket::WebsocketMessage::new(
+                            crate::server::websocket::WebsocketEvent::ServerBackupProgress,
+                            &[
+                                server.uuid.to_string(),
+                                serde_json::to_string(&crate::models::Progress { progress, total })
+                                    .unwrap(),
+                            ],
+                        ))
+                        .ok();
+
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                }
+            }
+        });
+
         let internal_backup = Self { adapter, uuid };
 
         let backup = match match adapter {
             BackupAdapter::Wings => {
-                wings::create_backup(server.clone(), uuid, override_builder.build()?).await
+                wings::create_backup(
+                    server.clone(),
+                    uuid,
+                    Arc::clone(&progress),
+                    override_builder.build()?,
+                )
+                .await
             }
             BackupAdapter::S3 => {
-                s3::create_backup(server.clone(), uuid, override_builder.build()?).await
+                s3::create_backup(
+                    server.clone(),
+                    uuid,
+                    Arc::clone(&progress),
+                    override_builder.build()?,
+                )
+                .await
             }
             BackupAdapter::DdupBak => {
-                ddup_bak::create_backup(server.clone(), uuid, override_builder.build()?).await
+                ddup_bak::create_backup(
+                    server.clone(),
+                    uuid,
+                    Arc::clone(&progress),
+                    override_builder.build()?,
+                )
+                .await
             }
             BackupAdapter::Btrfs => {
                 btrfs::create_backup(
@@ -126,10 +172,18 @@ impl InternalBackup {
                 )
                 .await
             }
-            BackupAdapter::Restic => restic::create_backup(server.clone(), uuid, ignore_raw).await,
+            BackupAdapter::Restic => {
+                restic::create_backup(server.clone(), uuid, Arc::clone(&progress), ignore_raw).await
+            }
         } {
-            Ok(backup) => backup,
+            Ok(backup) => {
+                progress_task.abort();
+
+                backup
+            }
             Err(e) => {
+                progress_task.abort();
+
                 server
                     .config
                     .client

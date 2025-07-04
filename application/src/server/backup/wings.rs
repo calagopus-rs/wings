@@ -1,4 +1,4 @@
-use crate::remote::backups::RawServerBackup;
+use crate::{remote::backups::RawServerBackup, server::transfer::counting_reader::CountingReader};
 use axum::{
     body::Body,
     http::{HeaderMap, StatusCode},
@@ -12,7 +12,10 @@ use std::{
     io::Write,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
-    sync::{Arc, RwLock, atomic::AtomicUsize},
+    sync::{
+        Arc, RwLock,
+        atomic::{AtomicU64, AtomicUsize, Ordering},
+    },
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 
@@ -91,6 +94,7 @@ pub async fn get_first_file_name(
 pub async fn create_backup(
     server: crate::server::Server,
     uuid: uuid::Uuid,
+    progress: Arc<AtomicU64>,
     overrides: ignore::overrides::Override,
 ) -> Result<RawServerBackup, anyhow::Error> {
     let file_name = get_file_name(&server, uuid);
@@ -142,56 +146,40 @@ pub async fn create_backup(
                             continue;
                         }
 
-                        if metadata.is_dir() {
-                            let mut header = tar::Header::new_gnu();
-                            header.set_size(0);
-                            header.set_mode(metadata.permissions().mode());
-                            header.set_mtime(
-                                metadata
-                                    .modified()
-                                    .map(|t| {
-                                        t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default()
-                                    })
-                                    .unwrap_or_default()
-                                    .as_secs(),
-                            );
+                        let mut header = tar::Header::new_gnu();
+                        header.set_size(0);
+                        header.set_mode(metadata.permissions().mode());
+                        header.set_mtime(
+                            metadata
+                                .modified()
+                                .map(|t| {
+                                    t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default()
+                                })
+                                .unwrap_or_default()
+                                .as_secs(),
+                        );
 
+                        if metadata.is_dir() {
+                            header.set_entry_type(tar::EntryType::Directory);
+
+                            progress.fetch_add(metadata.len(), Ordering::SeqCst);
                             tar.append_data(&mut header, relative, std::io::empty())?;
                         } else if metadata.is_file() {
                             let file = match filesystem.open(relative) {
                                 Ok(file) => file,
                                 Err(_) => continue,
                             };
+                            let reader =
+                                CountingReader::new_with_bytes_read(file, Arc::clone(&progress));
 
-                            let mut header = tar::Header::new_gnu();
                             header.set_size(metadata.len());
-                            header.set_mode(metadata.permissions().mode());
-                            header.set_mtime(
-                                metadata
-                                    .modified()
-                                    .map(|t| {
-                                        t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default()
-                                    })
-                                    .unwrap_or_default()
-                                    .as_secs(),
-                            );
+                            header.set_entry_type(tar::EntryType::Regular);
 
-                            tar.append_data(&mut header, relative, file)?;
+                            tar.append_data(&mut header, relative, reader)?;
                         } else if let Ok(link_target) = filesystem.read_link_contents(relative) {
-                            let mut header = tar::Header::new_gnu();
-                            header.set_size(0);
-                            header.set_mode(metadata.permissions().mode());
-                            header.set_mtime(
-                                metadata
-                                    .modified()
-                                    .map(|t| {
-                                        t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default()
-                                    })
-                                    .unwrap_or_default()
-                                    .as_secs(),
-                            );
                             header.set_entry_type(tar::EntryType::Symlink);
 
+                            progress.fetch_add(metadata.len(), Ordering::SeqCst);
                             tar.append_link(&mut header, relative, link_target)?;
                         }
                     }
@@ -242,12 +230,20 @@ pub async fn create_backup(
                         }
 
                         if metadata.is_dir() {
+                            progress.fetch_add(metadata.len(), Ordering::SeqCst);
                             zip.add_directory(relative.to_string_lossy(), options)?;
                         } else if metadata.is_file() {
+                            let file = match filesystem.open(relative) {
+                                Ok(file) => file,
+                                Err(_) => continue,
+                            };
+                            let mut reader =
+                                CountingReader::new_with_bytes_read(file, Arc::clone(&progress));
+
                             zip.start_file(relative.to_string_lossy(), options)?;
-                            let mut file = filesystem.open(relative)?;
-                            std::io::copy(&mut file, &mut zip)?;
+                            std::io::copy(&mut reader, &mut zip)?;
                         } else if let Ok(link_target) = filesystem.read_link_contents(relative) {
+                            progress.fetch_add(metadata.len(), Ordering::SeqCst);
                             zip.add_symlink(
                                 relative.to_string_lossy(),
                                 link_target.to_string_lossy(),

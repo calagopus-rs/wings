@@ -9,7 +9,10 @@ use sha1::Digest;
 use std::{
     io::Write,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 use tokio::{io::AsyncReadExt, sync::RwLock};
 
@@ -52,6 +55,7 @@ pub async fn get_repository(
 pub async fn create_backup(
     server: crate::server::Server,
     uuid: uuid::Uuid,
+    progress: Arc<AtomicU64>,
     overrides: ignore::overrides::Override,
 ) -> Result<RawServerBackup, anyhow::Error> {
     let repository = get_repository(&server).await;
@@ -74,18 +78,22 @@ pub async fn create_backup(
             Some({
                 let compression_format = server.config.system.backups.ddup_bak.compression_format;
 
-                Arc::new(move |_, _| match compression_format {
-                    crate::config::SystemBackupsDdupBakCompressionFormat::None => {
-                        ddup_bak::archive::CompressionFormat::None
-                    }
-                    crate::config::SystemBackupsDdupBakCompressionFormat::Deflate => {
-                        ddup_bak::archive::CompressionFormat::Deflate
-                    }
-                    crate::config::SystemBackupsDdupBakCompressionFormat::Gzip => {
-                        ddup_bak::archive::CompressionFormat::Gzip
-                    }
-                    crate::config::SystemBackupsDdupBakCompressionFormat::Brotli => {
-                        ddup_bak::archive::CompressionFormat::Brotli
+                Arc::new(move |_, metadata| {
+                    progress.fetch_add(metadata.len(), Ordering::SeqCst);
+
+                    match compression_format {
+                        crate::config::SystemBackupsDdupBakCompressionFormat::None => {
+                            ddup_bak::archive::CompressionFormat::None
+                        }
+                        crate::config::SystemBackupsDdupBakCompressionFormat::Deflate => {
+                            ddup_bak::archive::CompressionFormat::Deflate
+                        }
+                        crate::config::SystemBackupsDdupBakCompressionFormat::Gzip => {
+                            ddup_bak::archive::CompressionFormat::Gzip
+                        }
+                        crate::config::SystemBackupsDdupBakCompressionFormat::Brotli => {
+                            ddup_bak::archive::CompressionFormat::Brotli
+                        }
                     }
                 })
             }),

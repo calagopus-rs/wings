@@ -42,3 +42,9 @@ pub struct Download {
     pub progress: u64,
     pub total: u64,
 }
+
+#[derive(ToSchema, Serialize)]
+pub struct Progress {
+    pub progress: u64,
+    pub total: u64,
+}

@@ -4,7 +4,14 @@ use axum::{
     http::{HeaderMap, StatusCode},
 };
 use human_bytes::human_bytes;
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt},
     process::Command,
@@ -115,6 +122,7 @@ pub async fn get_backup_base_path(
 pub async fn create_backup(
     server: crate::server::Server,
     uuid: uuid::Uuid,
+    progress: Arc<AtomicU64>,
     ignore_raw: String,
 ) -> Result<RawServerBackup, anyhow::Error> {
     let mut excluded_paths = Vec::new();
@@ -125,7 +133,7 @@ pub async fn create_backup(
 
     let backups = get_backup_list(&server).await;
 
-    let output = Command::new("restic")
+    let mut child = Command::new("restic")
         .envs(&server.config.system.backups.restic.environment)
         .arg("--json")
         .arg("--repo")
@@ -144,8 +152,36 @@ pub async fn create_backup(
         .arg(uuid.to_string())
         .arg("--group-by")
         .arg("tags")
-        .output()
-        .await?;
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()?;
+
+    let mut line_reader = tokio::io::BufReader::new(child.stdout.take().unwrap()).lines();
+
+    let mut snapshot_id = None;
+    let mut total_bytes_processed = 0;
+
+    while let Ok(Some(line)) = line_reader.next_line().await {
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&line) {
+            if json.get("message_type").and_then(|v| v.as_str()) == Some("status") {
+                let bytes_done = json.get("bytes_done").and_then(|v| v.as_u64()).unwrap_or(0);
+
+                progress.store(bytes_done, Ordering::SeqCst);
+            } else if json.get("message_type").and_then(|v| v.as_str()) == Some("summary") {
+                let total_bytes = json
+                    .get("total_bytes_processed")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                snapshot_id = json
+                    .get("snapshot_id")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+                total_bytes_processed = total_bytes;
+            }
+        }
+    }
+
+    let output = child.wait_with_output().await?;
 
     if !output.status.success() {
         return Err(anyhow::anyhow!(
@@ -153,25 +189,6 @@ pub async fn create_backup(
             server.filesystem.base_path.display(),
             String::from_utf8_lossy(&output.stderr)
         ));
-    }
-
-    let mut snapshot_id = None;
-    let mut total_bytes_processed = 0;
-    for line in String::from_utf8_lossy(&output.stdout).lines() {
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(line)
-            && json.get("message_type").and_then(|v| v.as_str()) == Some("summary")
-        {
-            snapshot_id = json
-                .get("snapshot_id")
-                .and_then(|v| v.as_str())
-                .map(String::from);
-            total_bytes_processed = json
-                .get("total_bytes_processed")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
-
-            break;
-        }
     }
 
     if !backups.contains(&uuid) {
