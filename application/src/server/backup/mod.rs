@@ -112,7 +112,7 @@ impl InternalBackup {
                         .send(crate::server::websocket::WebsocketMessage::new(
                             crate::server::websocket::WebsocketEvent::ServerBackupProgress,
                             &[
-                                server.uuid.to_string(),
+                                uuid.to_string(),
                                 serde_json::to_string(&crate::models::Progress { progress, total })
                                     .unwrap(),
                             ],
