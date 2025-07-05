@@ -67,3 +67,13 @@ pub async fn send_activity(
 
     Ok(())
 }
+
+pub async fn reset_state(client: &Client) -> Result<(), reqwest::Error> {
+    client
+        .client
+        .post(format!("{}/servers/reset", client.url))
+        .send()
+        .await?;
+
+    Ok(())
+}

@@ -5,7 +5,10 @@ use axum::{
 };
 use ignore::overrides::OverrideBuilder;
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, atomic::AtomicU64};
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 use utoipa::ToSchema;
 
 mod btrfs;
@@ -105,7 +108,7 @@ impl InternalBackup {
 
             async move {
                 loop {
-                    let progress = progress.load(std::sync::atomic::Ordering::SeqCst);
+                    let progress = progress.load(Ordering::SeqCst);
 
                     server
                         .websocket

@@ -279,8 +279,14 @@ async fn main() {
         .unwrap();
 
     tracing::info!("loading extensions");
-
     let extension_manager = Arc::new(wings_rs::extensions::manager::Manager::new(extensions_path));
+
+    config
+        .client
+        .reset_state()
+        .await
+        .context("failed to reset remote state")
+        .unwrap();
 
     tracing::info!("creating server manager");
     let server_manager = wings_rs::server::manager::Manager::new(

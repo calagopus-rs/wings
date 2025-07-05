@@ -65,6 +65,12 @@ impl Client {
         super::send_activity(self, activity).await
     }
 
+    #[tracing::instrument(skip(self))]
+    pub async fn reset_state(&self) -> Result<(), reqwest::Error> {
+        tracing::info!("resetting remote state");
+        super::reset_state(self).await
+    }
+
     pub async fn servers(&self) -> Result<Vec<super::servers::RawServer>, reqwest::Error> {
         tracing::info!("fetching all servers from remote");
 
