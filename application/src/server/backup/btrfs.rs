@@ -1,4 +1,4 @@
-use crate::remote::backups::RawServerBackup;
+use crate::{remote::backups::RawServerBackup, server::transfer::counting_reader::CountingReader};
 use axum::{
     body::Body,
     http::{HeaderMap, StatusCode},
@@ -7,6 +7,10 @@ use ignore::{WalkBuilder, WalkState, overrides::OverrideBuilder};
 use std::{
     io::Write,
     path::{Path, PathBuf},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 use tokio::process::Command;
 
@@ -140,6 +144,8 @@ pub async fn create_backup(
 pub async fn restore_backup(
     server: crate::server::Server,
     uuid: uuid::Uuid,
+    progress: Arc<AtomicU64>,
+    total: Arc<AtomicU64>,
 ) -> Result<(), anyhow::Error> {
     let subvolume_path = get_subvolume_path(&server, uuid);
     let ignored_path = get_ignored(&server, uuid);
@@ -163,11 +169,55 @@ pub async fn restore_backup(
             .hidden(false)
             .threads(server.config.system.backups.btrfs.restore_threads)
             .build_parallel()
+            .run({
+                let server = server.clone();
+
+                move || {
+                    let total = Arc::clone(&total);
+                    let server = server.clone();
+
+                    Box::new(move |entry| {
+                        let entry = match entry {
+                            Ok(entry) => entry,
+                            Err(_) => return WalkState::Continue,
+                        };
+                        let metadata = match entry.metadata() {
+                            Ok(metadata) => metadata,
+                            Err(_) => return WalkState::Continue,
+                        };
+
+                        if server
+                            .filesystem
+                            .is_ignored_sync(entry.path(), metadata.is_dir())
+                        {
+                            return WalkState::Continue;
+                        }
+
+                        if metadata.is_file() {
+                            total.fetch_add(metadata.len(), Ordering::SeqCst);
+                        }
+
+                        WalkState::Continue
+                    })
+                }
+            });
+
+        WalkBuilder::new(&subvolume_path)
+            .overrides(override_builder.build()?)
+            .add_custom_ignore_filename(".pteroignore")
+            .git_ignore(false)
+            .ignore(false)
+            .git_exclude(false)
+            .follow_links(false)
+            .hidden(false)
+            .threads(server.config.system.backups.btrfs.restore_threads)
+            .build_parallel()
             .run(move || {
                 let server = server.clone();
                 let runtime = runtime.clone();
                 let subvolume_path = subvolume_path.clone();
                 let filesystem = server.filesystem.sync_base_dir().unwrap();
+                let progress = Arc::clone(&progress);
 
                 Box::new(move |entry| {
                     let entry = match entry {
@@ -192,9 +242,11 @@ pub async fn restore_backup(
                             server.log_daemon(format!("(restoring): {}", path.display())),
                         );
 
-                        filesystem
-                            .create_dir_all(destination_path.parent().unwrap())
-                            .ok();
+                        if let Some(parent) = destination_path.parent() {
+                            filesystem.create_dir_all(parent).ok();
+                        }
+
+                        let file = std::fs::File::open(path).unwrap();
 
                         let mut writer = crate::server::filesystem::writer::FileSystemWriter::new(
                             server.clone(),
@@ -203,9 +255,10 @@ pub async fn restore_backup(
                             metadata.modified().ok(),
                         )
                         .unwrap();
+                        let mut reader =
+                            CountingReader::new_with_bytes_read(file, Arc::clone(&progress));
 
-                        let mut file = std::fs::File::open(path).unwrap();
-                        std::io::copy(&mut file, &mut writer).unwrap();
+                        std::io::copy(&mut reader, &mut writer).unwrap();
                         writer.flush().unwrap();
                     } else if metadata.is_dir() {
                         filesystem.create_dir_all(destination_path).ok();

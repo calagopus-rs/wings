@@ -100,15 +100,17 @@ impl InternalBackup {
         }
 
         let progress = Arc::new(AtomicU64::new(0));
-        let total = server.filesystem.limiter_usage().await;
+        let total = Arc::new(AtomicU64::new(server.filesystem.limiter_usage().await));
 
         let progress_task = tokio::spawn({
             let progress = Arc::clone(&progress);
+            let total = Arc::clone(&total);
             let server = server.clone();
 
             async move {
                 loop {
                     let progress = progress.load(Ordering::SeqCst);
+                    let total = total.load(Ordering::SeqCst);
 
                     server
                         .websocket
@@ -131,31 +133,15 @@ impl InternalBackup {
 
         let backup = match match adapter {
             BackupAdapter::Wings => {
-                wings::create_backup(
-                    server.clone(),
-                    uuid,
-                    Arc::clone(&progress),
-                    override_builder.build()?,
-                )
-                .await
+                wings::create_backup(server.clone(), uuid, progress, override_builder.build()?)
+                    .await
             }
             BackupAdapter::S3 => {
-                s3::create_backup(
-                    server.clone(),
-                    uuid,
-                    Arc::clone(&progress),
-                    override_builder.build()?,
-                )
-                .await
+                s3::create_backup(server.clone(), uuid, progress, override_builder.build()?).await
             }
             BackupAdapter::DdupBak => {
-                ddup_bak::create_backup(
-                    server.clone(),
-                    uuid,
-                    Arc::clone(&progress),
-                    override_builder.build()?,
-                )
-                .await
+                ddup_bak::create_backup(server.clone(), uuid, progress, override_builder.build()?)
+                    .await
             }
             BackupAdapter::Btrfs => {
                 btrfs::create_backup(
@@ -176,7 +162,7 @@ impl InternalBackup {
                 .await
             }
             BackupAdapter::Restic => {
-                restic::create_backup(server.clone(), uuid, Arc::clone(&progress), ignore_raw).await
+                restic::create_backup(server.clone(), uuid, progress, total, ignore_raw).await
             }
         } {
             Ok(backup) => {
@@ -334,15 +320,59 @@ impl InternalBackup {
             server.filesystem.truncate_root().await;
         }
 
+        let progress = Arc::new(AtomicU64::new(0));
+        let total = Arc::new(AtomicU64::new(1));
+
+        let progress_task = tokio::spawn({
+            let progress = Arc::clone(&progress);
+            let total = Arc::clone(&total);
+            let server = server.clone();
+
+            async move {
+                loop {
+                    let progress_value = progress.load(std::sync::atomic::Ordering::SeqCst);
+                    let total_value = total.load(std::sync::atomic::Ordering::SeqCst);
+
+                    server
+                        .websocket
+                        .send(crate::server::websocket::WebsocketMessage::new(
+                            crate::server::websocket::WebsocketEvent::ServerBackupRestoreProgress,
+                            &[serde_json::to_string(&crate::models::Progress {
+                                progress: progress_value,
+                                total: total_value,
+                            })
+                            .unwrap()],
+                        ))
+                        .ok();
+
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                }
+            }
+        });
+
         match match self.adapter {
-            BackupAdapter::Wings => wings::restore_backup(server.clone(), self.uuid).await,
-            BackupAdapter::S3 => s3::restore_backup(server.clone(), download_url).await,
-            BackupAdapter::DdupBak => ddup_bak::restore_backup(server.clone(), self.uuid).await,
-            BackupAdapter::Btrfs => btrfs::restore_backup(server.clone(), self.uuid).await,
-            BackupAdapter::Zfs => zfs::restore_backup(server.clone(), self.uuid).await,
-            BackupAdapter::Restic => restic::restore_backup(server.clone(), self.uuid).await,
+            BackupAdapter::Wings => {
+                wings::restore_backup(server.clone(), self.uuid, progress, total).await
+            }
+            BackupAdapter::S3 => {
+                s3::restore_backup(server.clone(), download_url, progress, total).await
+            }
+            BackupAdapter::DdupBak => {
+                ddup_bak::restore_backup(server.clone(), self.uuid, progress, total).await
+            }
+            BackupAdapter::Btrfs => {
+                btrfs::restore_backup(server.clone(), self.uuid, progress, total).await
+            }
+            BackupAdapter::Zfs => {
+                zfs::restore_backup(server.clone(), self.uuid, progress, total).await
+            }
+            BackupAdapter::Restic => {
+                restic::restore_backup(server.clone(), self.uuid, progress, total).await
+            }
         } {
             Ok(_) => {
+                progress_task.abort();
+
                 server
                     .restoring
                     .store(false, std::sync::atomic::Ordering::SeqCst);
@@ -377,6 +407,8 @@ impl InternalBackup {
                 Ok(())
             }
             Err(e) => {
+                progress_task.abort();
+
                 server
                     .restoring
                     .store(false, std::sync::atomic::Ordering::SeqCst);

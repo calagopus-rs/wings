@@ -1,4 +1,7 @@
-use crate::{remote::backups::RawServerBackup, server::transfer::counting_reader::CountingReader};
+use crate::{
+    remote::backups::RawServerBackup,
+    server::transfer::counting_reader::{AsyncCountingReader, CountingReader},
+};
 use futures::{StreamExt, TryStreamExt};
 use ignore::WalkBuilder;
 use sha1::Digest;
@@ -293,15 +296,22 @@ pub async fn create_backup(
 pub async fn restore_backup(
     server: crate::server::Server,
     download_url: Option<String>,
+    progress: Arc<AtomicU64>,
+    total: Arc<AtomicU64>,
 ) -> Result<(), anyhow::Error> {
     let response = get_client(&server)
         .await
         .get(download_url.unwrap())
         .send()
-        .await?
-        .bytes_stream();
-    let reader =
-        tokio_util::io::StreamReader::new(Box::pin(response.map_err(std::io::Error::other)));
+        .await?;
+    if let Some(content_length) = response.content_length() {
+        total.store(content_length, Ordering::SeqCst);
+    }
+
+    let reader = tokio_util::io::StreamReader::new(Box::pin(
+        response.bytes_stream().map_err(std::io::Error::other),
+    ));
+    let reader = AsyncCountingReader::new_with_bytes_read(reader, progress);
     let reader = BufReader::with_capacity(1024 * 1024, reader);
 
     let mut archive =

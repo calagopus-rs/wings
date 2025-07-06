@@ -1,4 +1,7 @@
-use crate::{remote::backups::RawServerBackup, server::transfer::counting_reader::CountingReader};
+use crate::{
+    remote::backups::RawServerBackup,
+    server::transfer::counting_reader::{AsyncCountingReader, CountingReader},
+};
 use axum::{
     body::Body,
     http::{HeaderMap, StatusCode},
@@ -288,6 +291,8 @@ pub async fn create_backup(
 pub async fn restore_backup(
     server: crate::server::Server,
     uuid: uuid::Uuid,
+    progress: Arc<AtomicU64>,
+    total: Arc<AtomicU64>,
 ) -> Result<(), anyhow::Error> {
     let (file_format, file_name) = get_first_file_name(&server, uuid).await?;
     let file = tokio::fs::File::open(&file_name).await?;
@@ -296,6 +301,9 @@ pub async fn restore_backup(
         crate::config::SystemBackupsWingsArchiveFormat::Tar
         | crate::config::SystemBackupsWingsArchiveFormat::TarGz
         | crate::config::SystemBackupsWingsArchiveFormat::TarZstd => {
+            total.store(file.metadata().await?.len(), Ordering::SeqCst);
+            let file = AsyncCountingReader::new_with_bytes_read(file, progress);
+
             let reader: Box<dyn tokio::io::AsyncRead + Send + Unpin> = match file_format {
                 crate::config::SystemBackupsWingsArchiveFormat::Tar => Box::new(file),
                 crate::config::SystemBackupsWingsArchiveFormat::TarGz => Box::new(
@@ -392,8 +400,18 @@ pub async fn restore_backup(
             let runtime = tokio::runtime::Handle::current();
 
             tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
-                let archive = zip::ZipArchive::new(crate::server::filesystem::archive::multi_reader::MultiReader::new(file)?)?;
+                let mut archive = zip::ZipArchive::new(crate::server::filesystem::archive::multi_reader::MultiReader::new(file)?)?;
                 let entry_index = Arc::new(AtomicUsize::new(0));
+
+                for i in 0..archive.len() {
+                    let entry = archive.by_index(i)?;
+
+                    if entry.enclosed_name().is_none() {
+                        continue;
+                    }
+
+                    total.fetch_add(entry.size(), Ordering::SeqCst);
+                }
 
                 let pool = rayon::ThreadPoolBuilder::new()
                     .num_threads(server.config.system.backups.wings.restore_threads)
@@ -407,6 +425,7 @@ pub async fn restore_backup(
                     scope.spawn_broadcast(move |_, _| {
                         let mut archive = archive.clone();
                         let runtime = runtime.clone();
+                        let progress = Arc::clone(&progress);
                         let entry_index = Arc::clone(&entry_index);
                         let filesystem = Arc::clone(&filesystem);
                         let error_clone2 = Arc::clone(&error_clone);
@@ -424,7 +443,7 @@ pub async fn restore_backup(
                                     return Ok(());
                                 }
 
-                                let mut entry = archive.by_index(i)?;
+                                let entry = archive.by_index(i)?;
                                 let path = match entry.enclosed_name() {
                                     Some(path) => path,
                                     None => continue,
@@ -465,8 +484,12 @@ pub async fn restore_backup(
                                         entry.unix_mode().map(Permissions::from_mode),
                                         crate::server::filesystem::archive::zip_entry_get_modified_time(&entry),
                                     )?;
+                                    let mut reader = CountingReader::new_with_bytes_read(
+                                        entry,
+                                        Arc::clone(&progress),
+                                    );
 
-                                    std::io::copy(&mut entry, &mut writer)?;
+                                    std::io::copy(&mut reader, &mut writer)?;
                                     writer.flush()?;
                                 } else if entry.is_symlink() && (1..=2048).contains(&entry.size()) {
                                     let link = std::io::read_to_string(entry).unwrap_or_default();

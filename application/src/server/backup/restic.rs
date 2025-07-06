@@ -123,6 +123,7 @@ pub async fn create_backup(
     server: crate::server::Server,
     uuid: uuid::Uuid,
     progress: Arc<AtomicU64>,
+    total: Arc<AtomicU64>,
     ignore_raw: String,
 ) -> Result<RawServerBackup, anyhow::Error> {
     let mut excluded_paths = Vec::new();
@@ -165,8 +166,13 @@ pub async fn create_backup(
         if let Ok(json) = serde_json::from_str::<serde_json::Value>(&line) {
             if json.get("message_type").and_then(|v| v.as_str()) == Some("status") {
                 let bytes_done = json.get("bytes_done").and_then(|v| v.as_u64()).unwrap_or(0);
+                let total_bytes = json
+                    .get("total_bytes")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
 
                 progress.store(bytes_done, Ordering::SeqCst);
+                total.store(total_bytes, Ordering::SeqCst);
             } else if json.get("message_type").and_then(|v| v.as_str()) == Some("summary") {
                 let total_bytes = json
                     .get("total_bytes_processed")
@@ -212,6 +218,8 @@ pub async fn create_backup(
 pub async fn restore_backup(
     server: crate::server::Server,
     uuid: uuid::Uuid,
+    progress: Arc<AtomicU64>,
+    total: Arc<AtomicU64>,
 ) -> Result<(), anyhow::Error> {
     let base_path = get_backup_base_path(&server, uuid).await?;
 
@@ -240,23 +248,26 @@ pub async fn restore_backup(
         {
             let total_bytes = json
                 .get("total_bytes")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(0.0);
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
             let bytes_restored = json
                 .get("bytes_restored")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(0.0);
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
             let percent_done = json
                 .get("percent_done")
                 .and_then(|v| v.as_f64())
                 .unwrap_or(0.0);
             let percent_done = (percent_done * 10000.0).round() / 100.0;
 
+            progress.store(bytes_restored, Ordering::SeqCst);
+            total.store(total_bytes, Ordering::SeqCst);
+
             server
                 .log_daemon(format!(
                     "(restoring): {} of {} ({}%)",
-                    human_bytes(bytes_restored),
-                    human_bytes(total_bytes),
+                    human_bytes(bytes_restored as f64),
+                    human_bytes(total_bytes as f64),
                     percent_done
                 ))
                 .await;

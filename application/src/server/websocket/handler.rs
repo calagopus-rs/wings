@@ -170,6 +170,14 @@ pub async fn handle_ws(
                                     continue;
                                 }
                             }
+                            websocket::WebsocketEvent::ServerBackupProgress => {
+                                if !socket_jwt
+                                    .permissions
+                                    .has_permission(Permission::BackupRead)
+                                {
+                                    continue;
+                                }
+                            }
                             websocket::WebsocketEvent::ServerBackupCompleted => {
                                 if !socket_jwt
                                     .permissions

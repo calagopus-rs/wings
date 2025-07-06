@@ -63,6 +63,8 @@ pub enum WebsocketEvent {
     ServerBackupProgress,
     #[serde(rename = "backup completed")]
     ServerBackupCompleted,
+    #[serde(rename = "backup restore progress")]
+    ServerBackupRestoreProgress,
     #[serde(rename = "backup restore completed")]
     ServerBackupRestoreCompleted,
     #[serde(rename = "transfer logs")]

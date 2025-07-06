@@ -1,4 +1,4 @@
-use crate::remote::backups::RawServerBackup;
+use crate::{remote::backups::RawServerBackup, server::transfer::counting_reader::CountingReader};
 use axum::{
     body::Body,
     http::{HeaderMap, StatusCode},
@@ -141,6 +141,8 @@ pub async fn create_backup(
 pub async fn restore_backup(
     server: crate::server::Server,
     uuid: uuid::Uuid,
+    progress: Arc<AtomicU64>,
+    total: Arc<AtomicU64>,
 ) -> Result<(), anyhow::Error> {
     let repository = get_repository(&server).await;
 
@@ -149,6 +151,19 @@ pub async fn restore_backup(
         let archive = repository.get_archive(&uuid.to_string())?;
         let filesystem = server.filesystem.sync_base_dir()?;
 
+        fn recursive_size(entry: &Entry) -> u64 {
+            match entry {
+                Entry::File(file) => file.size_real,
+                Entry::Directory(directory) => directory.entries.iter().map(recursive_size).sum(),
+                Entry::Symlink(_) => 0,
+            }
+        }
+
+        total.store(
+            archive.entries().iter().map(recursive_size).sum(),
+            Ordering::SeqCst,
+        );
+
         fn recursive_restore(
             runtime: &tokio::runtime::Handle,
             repository: &Arc<ddup_bak::repository::Repository>,
@@ -156,6 +171,7 @@ pub async fn restore_backup(
             entry: Entry,
             path: &Path,
             server: &crate::server::Server,
+            progress: &Arc<AtomicU64>,
         ) -> Result<(), anyhow::Error> {
             let path = path.join(entry.name());
 
@@ -182,8 +198,11 @@ pub async fn restore_backup(
                         Some(file.mode.into()),
                         Some(file.mtime),
                     )?;
+                    let reader = repository.entry_reader(Entry::File(file.clone()))?;
+                    let mut reader =
+                        CountingReader::new_with_bytes_read(reader, Arc::clone(progress));
 
-                    repository.read_entry_content(Entry::File(file), &mut writer)?;
+                    std::io::copy(&mut reader, &mut writer)?;
                     writer.flush()?;
                 }
                 Entry::Directory(directory) => {
@@ -194,7 +213,9 @@ pub async fn restore_backup(
                     )?;
 
                     for entry in directory.entries {
-                        recursive_restore(runtime, repository, filesystem, entry, &path, server)?;
+                        recursive_restore(
+                            runtime, repository, filesystem, entry, &path, server, progress,
+                        )?;
                     }
                 }
                 Entry::Symlink(symlink) => {
@@ -217,6 +238,7 @@ pub async fn restore_backup(
                 entry,
                 Path::new("."),
                 &server,
+                &progress,
             )?;
         }
 

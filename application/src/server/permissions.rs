@@ -29,18 +29,18 @@ pub enum Permission {
     AdminWebsocketInstall,
     #[serde(rename = "admin.websocket.transfer")]
     AdminWebsocketTransfer,
-    #[serde(rename = "backup.read")]
+    #[serde(rename = "backup.read", alias = "backups.read")]
     BackupRead,
 
-    #[serde(rename = "file.read")]
+    #[serde(rename = "file.read", alias = "files.read")]
     FileRead,
-    #[serde(rename = "file.read-content")]
+    #[serde(rename = "file.read-content", alias = "files.read-content")]
     FileReadContent,
-    #[serde(rename = "file.create")]
+    #[serde(rename = "file.create", alias = "files.create")]
     FileCreate,
-    #[serde(rename = "file.update")]
+    #[serde(rename = "file.update", alias = "files.update")]
     FileUpdate,
-    #[serde(rename = "file.delete")]
+    #[serde(rename = "file.delete", alias = "files.delete")]
     FileDelete,
 }
 
