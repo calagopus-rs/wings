@@ -150,62 +150,66 @@ pub async fn restore_backup(
     let subvolume_path = get_subvolume_path(&server, uuid);
     let ignored_path = get_ignored(&server, uuid);
 
+    let mut override_builder = OverrideBuilder::new(&subvolume_path);
+
+    for line in tokio::fs::read_to_string(&ignored_path)
+        .await
+        .unwrap_or_default()
+        .lines()
+    {
+        override_builder.add(line).ok();
+    }
+
+    let total_thread = tokio::task::spawn_blocking({
+        let override_builder = override_builder.clone().build()?;
+        let subvolume_path = subvolume_path.clone();
+        let server = server.clone();
+
+        move || {
+            WalkBuilder::new(&subvolume_path)
+                .overrides(override_builder)
+                .add_custom_ignore_filename(".pteroignore")
+                .git_ignore(false)
+                .ignore(false)
+                .git_exclude(false)
+                .follow_links(false)
+                .hidden(false)
+                .threads(server.config.system.backups.btrfs.restore_threads)
+                .build_parallel()
+                .run(move || {
+                    let total = Arc::clone(&total);
+                    let server = server.clone();
+
+                    Box::new(move |entry| {
+                        let entry = match entry {
+                            Ok(entry) => entry,
+                            Err(_) => return WalkState::Continue,
+                        };
+                        let metadata = match entry.metadata() {
+                            Ok(metadata) => metadata,
+                            Err(_) => return WalkState::Continue,
+                        };
+
+                        if server
+                            .filesystem
+                            .is_ignored_sync(entry.path(), metadata.is_dir())
+                        {
+                            return WalkState::Continue;
+                        }
+
+                        if metadata.is_file() {
+                            total.fetch_add(metadata.len(), Ordering::SeqCst);
+                        }
+
+                        WalkState::Continue
+                    })
+                });
+        }
+    });
+
     let server = server.clone();
     let runtime = tokio::runtime::Handle::current();
-    tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
-        let mut override_builder = OverrideBuilder::new(&subvolume_path);
-
-        for line in std::fs::read_to_string(&ignored_path)?.lines() {
-            override_builder.add(line).ok();
-        }
-
-        tokio::task::spawn_blocking({
-            let override_builder = override_builder.clone();
-            let subvolume_path = subvolume_path.clone();
-            let server = server.clone();
-
-            move || {
-                WalkBuilder::new(&subvolume_path)
-                    .overrides(override_builder.build().unwrap())
-                    .add_custom_ignore_filename(".pteroignore")
-                    .git_ignore(false)
-                    .ignore(false)
-                    .git_exclude(false)
-                    .follow_links(false)
-                    .hidden(false)
-                    .threads(server.config.system.backups.btrfs.restore_threads)
-                    .build_parallel()
-                    .run(move || {
-                        let total = Arc::clone(&total);
-                        let server = server.clone();
-
-                        Box::new(move |entry| {
-                            let entry = match entry {
-                                Ok(entry) => entry,
-                                Err(_) => return WalkState::Continue,
-                            };
-                            let metadata = match entry.metadata() {
-                                Ok(metadata) => metadata,
-                                Err(_) => return WalkState::Continue,
-                            };
-
-                            if server
-                                .filesystem
-                                .is_ignored_sync(entry.path(), metadata.is_dir())
-                            {
-                                return WalkState::Continue;
-                            }
-
-                            if metadata.is_file() {
-                                total.fetch_add(metadata.len(), Ordering::SeqCst);
-                            }
-
-                            WalkState::Continue
-                        })
-                    });
-            }
-        });
-
+    let restore_thread = tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
         WalkBuilder::new(&subvolume_path)
             .overrides(override_builder.build()?)
             .add_custom_ignore_filename(".pteroignore")
@@ -285,8 +289,9 @@ pub async fn restore_backup(
             });
 
         Ok(())
-    })
-    .await??;
+    });
+
+    let (_, _) = tokio::try_join!(total_thread, restore_thread)?;
 
     Ok(())
 }
