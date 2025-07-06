@@ -159,48 +159,52 @@ pub async fn restore_backup(
             override_builder.add(line).ok();
         }
 
-        WalkBuilder::new(&subvolume_path)
-            .overrides(override_builder.build()?)
-            .add_custom_ignore_filename(".pteroignore")
-            .git_ignore(false)
-            .ignore(false)
-            .git_exclude(false)
-            .follow_links(false)
-            .hidden(false)
-            .threads(server.config.system.backups.btrfs.restore_threads)
-            .build_parallel()
-            .run({
-                let server = server.clone();
+        tokio::task::spawn_blocking({
+            let override_builder = override_builder.clone();
+            let subvolume_path = subvolume_path.clone();
+            let server = server.clone();
 
-                move || {
-                    let total = Arc::clone(&total);
-                    let server = server.clone();
+            move || {
+                WalkBuilder::new(&subvolume_path)
+                    .overrides(override_builder.build().unwrap())
+                    .add_custom_ignore_filename(".pteroignore")
+                    .git_ignore(false)
+                    .ignore(false)
+                    .git_exclude(false)
+                    .follow_links(false)
+                    .hidden(false)
+                    .threads(server.config.system.backups.btrfs.restore_threads)
+                    .build_parallel()
+                    .run(move || {
+                        let total = Arc::clone(&total);
+                        let server = server.clone();
 
-                    Box::new(move |entry| {
-                        let entry = match entry {
-                            Ok(entry) => entry,
-                            Err(_) => return WalkState::Continue,
-                        };
-                        let metadata = match entry.metadata() {
-                            Ok(metadata) => metadata,
-                            Err(_) => return WalkState::Continue,
-                        };
+                        Box::new(move |entry| {
+                            let entry = match entry {
+                                Ok(entry) => entry,
+                                Err(_) => return WalkState::Continue,
+                            };
+                            let metadata = match entry.metadata() {
+                                Ok(metadata) => metadata,
+                                Err(_) => return WalkState::Continue,
+                            };
 
-                        if server
-                            .filesystem
-                            .is_ignored_sync(entry.path(), metadata.is_dir())
-                        {
-                            return WalkState::Continue;
-                        }
+                            if server
+                                .filesystem
+                                .is_ignored_sync(entry.path(), metadata.is_dir())
+                            {
+                                return WalkState::Continue;
+                            }
 
-                        if metadata.is_file() {
-                            total.fetch_add(metadata.len(), Ordering::SeqCst);
-                        }
+                            if metadata.is_file() {
+                                total.fetch_add(metadata.len(), Ordering::SeqCst);
+                            }
 
-                        WalkState::Continue
-                    })
-                }
-            });
+                            WalkState::Continue
+                        })
+                    });
+            }
+        });
 
         WalkBuilder::new(&subvolume_path)
             .overrides(override_builder.build()?)
