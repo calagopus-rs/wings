@@ -302,9 +302,7 @@ impl InternalBackup {
             return Err(anyhow::anyhow!("Server is in a locked state"));
         }
 
-        server
-            .restoring
-            .store(true, std::sync::atomic::Ordering::SeqCst);
+        server.restoring.store(true, Ordering::SeqCst);
         server
             .stop_with_kill_timeout(client, std::time::Duration::from_secs(30))
             .await;
@@ -330,8 +328,8 @@ impl InternalBackup {
 
             async move {
                 loop {
-                    let progress_value = progress.load(std::sync::atomic::Ordering::SeqCst);
-                    let total_value = total.load(std::sync::atomic::Ordering::SeqCst);
+                    let progress_value = progress.load(Ordering::SeqCst);
+                    let total_value = total.load(Ordering::SeqCst);
 
                     server
                         .websocket
@@ -373,9 +371,7 @@ impl InternalBackup {
             Ok(_) => {
                 progress_task.abort();
 
-                server
-                    .restoring
-                    .store(false, std::sync::atomic::Ordering::SeqCst);
+                server.restoring.store(false, Ordering::SeqCst);
                 server
                     .log_daemon(format!(
                         "Completed server restoration from {} backup.",
@@ -409,9 +405,7 @@ impl InternalBackup {
             Err(e) => {
                 progress_task.abort();
 
-                server
-                    .restoring
-                    .store(false, std::sync::atomic::Ordering::SeqCst);
+                server.restoring.store(false, Ordering::SeqCst);
                 server
                     .config
                     .client

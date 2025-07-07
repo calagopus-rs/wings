@@ -26,7 +26,32 @@ pub async fn auth(state: GetState, req: Request, next: Next) -> Result<Response<
     let r#type = parts.next().unwrap();
     let token = parts.next();
 
-    if r#type != "Bearer" || token != Some(&state.config.token) {
+    if r#type != "Bearer" {
+        return Ok(Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .header("WWW-Authenticate", "Bearer")
+            .header("Content-Type", "application/json")
+            .body(Body::from(
+                serde_json::to_string(&ApiError::new("invalid authorization token")).unwrap(),
+            ))
+            .unwrap());
+    }
+
+    let token = match token {
+        Some(t) => t,
+        None => {
+            return Ok(Response::builder()
+                .status(StatusCode::UNAUTHORIZED)
+                .header("WWW-Authenticate", "Bearer")
+                .header("Content-Type", "application/json")
+                .body(Body::from(
+                    serde_json::to_string(&ApiError::new("invalid authorization token")).unwrap(),
+                ))
+                .unwrap());
+        }
+    };
+
+    if !constant_time_eq::constant_time_eq(token.as_bytes(), state.config.token.as_bytes()) {
         return Ok(Response::builder()
             .status(StatusCode::UNAUTHORIZED)
             .header("WWW-Authenticate", "Bearer")
