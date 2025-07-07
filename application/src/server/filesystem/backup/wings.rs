@@ -34,7 +34,7 @@ fn zip_entry_to_directory_entry(
     } else if let Some(buffer) = buffer {
         if let Some(mime) = infer::get(buffer) {
             mime.mime_type()
-        } else if crate::is_valid_utf8_slice(buffer) {
+        } else if crate::is_valid_utf8_slice(buffer) || buffer.is_empty() {
             "text/plain"
         } else {
             "application/octet-stream"
