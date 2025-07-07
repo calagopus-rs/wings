@@ -32,6 +32,10 @@ mod post {
             description = "The server uuid",
             example = "123e4567-e89b-12d3-a456-426614174000",
         ),
+        (
+            "file" = String, Query,
+            description = "The file to view contents of",
+        ),
     ), request_body = String)]
     pub async fn route(
         server: GetServer,
