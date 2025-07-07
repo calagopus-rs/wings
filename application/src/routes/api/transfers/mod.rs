@@ -62,7 +62,7 @@ mod post {
             }
         };
 
-        if !payload.validate(&state.config.jwt) {
+        if !payload.validate(&state.config.jwt).await {
             return (
                 StatusCode::UNAUTHORIZED,
                 axum::Json(ApiError::new("invalid token").to_json()),

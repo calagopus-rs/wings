@@ -1,11 +1,9 @@
-use std::{
-    collections::{HashMap, HashSet},
-    sync::{Arc, RwLock},
-};
+use std::{collections::HashMap, sync::Arc};
 
 use hmac::digest::KeyInit;
 use jwt::VerifyWithKey;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use tokio::sync::RwLock;
 
 #[derive(Deserialize, Serialize)]
 pub struct BasePayload {
@@ -26,7 +24,7 @@ pub struct BasePayload {
 }
 
 impl BasePayload {
-    pub fn validate(&self, client: &JwtClient) -> bool {
+    pub async fn validate(&self, client: &JwtClient) -> bool {
         let now = chrono::Utc::now().timestamp();
 
         if let Some(exp) = self.expiration_time {
@@ -51,30 +49,59 @@ impl BasePayload {
             return false;
         }
 
-        if let Some(expiration) = client.denied_jtokens.read().unwrap().get(&self.jwt_id) {
-            if *expiration > chrono::Utc::now() {
-                return false;
-            }
+        if client
+            .denied_jtokens
+            .read()
+            .await
+            .contains_key(&self.jwt_id)
+        {
+            return false;
         }
 
         true
     }
 }
 
+type CountingMap = HashMap<String, (u8, chrono::DateTime<chrono::Utc>)>;
+
 pub struct JwtClient {
     pub key: hmac::Hmac<sha2::Sha256>,
 
     pub denied_jtokens: Arc<RwLock<HashMap<String, chrono::DateTime<chrono::Utc>>>>,
-    pub seen_jtoken_ids: Arc<RwLock<HashSet<String>>>,
+    pub seen_jtoken_ids: Arc<RwLock<CountingMap>>,
 }
 
 impl JwtClient {
     pub fn new(key: &str) -> Self {
+        let denied_jtokens = Arc::new(RwLock::new(HashMap::new()));
+        let seen_jtoken_ids = Arc::new(RwLock::new(HashMap::new()));
+
+        tokio::spawn({
+            let denied_jtokens = Arc::clone(&denied_jtokens);
+            let seen_jtoken_ids = Arc::clone(&seen_jtoken_ids);
+
+            async move {
+                loop {
+                    let mut denied = denied_jtokens.write().await;
+                    denied.retain(|_, &mut expiration| {
+                        expiration > chrono::Utc::now() - chrono::Duration::hours(1)
+                    });
+                    drop(denied);
+
+                    let mut seen = seen_jtoken_ids.write().await;
+                    seen.retain(|_, &mut (_, expiration)| {
+                        expiration > chrono::Utc::now() - chrono::Duration::hours(1)
+                    });
+                    drop(seen);
+                }
+            }
+        });
+
         Self {
             key: hmac::Hmac::new_from_slice(key.as_bytes()).unwrap(),
 
-            denied_jtokens: Arc::new(RwLock::new(HashMap::new())),
-            seen_jtoken_ids: Arc::new(RwLock::new(HashSet::new())),
+            denied_jtokens,
+            seen_jtoken_ids,
         }
     }
 
@@ -82,20 +109,33 @@ impl JwtClient {
         token.verify_with_key(&self.key)
     }
 
-    pub fn one_time_id(&self, id: &str) -> bool {
-        let seen = self.seen_jtoken_ids.read().unwrap();
-        if seen.contains(&id.to_string()) {
-            return false;
-        }
-        drop(seen);
+    pub async fn one_time_id(&self, id: &str) -> bool {
+        let seen = self.seen_jtoken_ids.read().await;
+        if let Some((count, _)) = seen.get(id) {
+            if *count >= 2 {
+                return false;
+            } else {
+                drop(seen);
 
-        self.seen_jtoken_ids.write().unwrap().insert(id.to_string());
+                let mut seen = self.seen_jtoken_ids.write().await;
+                if let Some((count, _)) = seen.get_mut(id) {
+                    *count += 1;
+                }
+            }
+        } else {
+            drop(seen);
+
+            self.seen_jtoken_ids
+                .write()
+                .await
+                .insert(id.to_string(), (1, chrono::Utc::now()));
+        }
 
         true
     }
 
-    pub fn deny(&self, id: &str) {
-        let mut denied = self.denied_jtokens.write().unwrap();
+    pub async fn deny(&self, id: &str) {
+        let mut denied = self.denied_jtokens.write().await;
         denied.insert(id.to_string(), chrono::Utc::now());
     }
 }

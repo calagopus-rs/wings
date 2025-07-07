@@ -54,7 +54,7 @@ mod get {
             }
         };
 
-        if !payload.base.validate(&state.config.jwt) {
+        if !payload.base.validate(&state.config.jwt).await {
             return (
                 StatusCode::UNAUTHORIZED,
                 HeaderMap::new(),
@@ -62,7 +62,7 @@ mod get {
             );
         }
 
-        if !state.config.jwt.one_time_id(&payload.unique_id) {
+        if !state.config.jwt.one_time_id(&payload.unique_id).await {
             return (
                 StatusCode::UNAUTHORIZED,
                 HeaderMap::new(),

@@ -219,7 +219,7 @@ pub async fn handle_ws(
                                     let socket_jwt = socket_jwt.read().await;
 
                                     if let Some(jwt) = socket_jwt.as_ref() {
-                                        if jwt.base.validate(&state.config.jwt) {
+                                        if jwt.base.validate(&state.config.jwt).await {
                                             super::send_message(
                                                 &sender,
                                                 websocket::WebsocketMessage::new(

@@ -39,7 +39,7 @@ pub async fn handle_jwt(
                         message.args.first().map_or("", |v| v.as_str()),
                     ) {
                         Ok(jwt) => {
-                            if !jwt.base.validate(&state.config.jwt)
+                            if !jwt.base.validate(&state.config.jwt).await
                                 || !jwt.permissions.has_permission(Permission::WebsocketConnect)
                                 || jwt.server_uuid != server.uuid
                             {
@@ -99,7 +99,7 @@ pub async fn handle_jwt(
                 }
                 _ => {
                     if let Some(jwt) = socket_jwt.read().await.as_ref() {
-                        if !jwt.base.validate(&state.config.jwt)
+                        if !jwt.base.validate(&state.config.jwt).await
                             || !jwt.permissions.has_permission(Permission::WebsocketConnect)
                         {
                             tracing::debug!(

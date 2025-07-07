@@ -28,7 +28,7 @@ mod post {
         axum::Json(data): axum::Json<Payload>,
     ) -> axum::Json<serde_json::Value> {
         for jti in data.jtis {
-            state.config.jwt.deny(&jti);
+            state.config.jwt.deny(&jti).await;
         }
 
         axum::Json(serde_json::to_value(Response {}).unwrap())
