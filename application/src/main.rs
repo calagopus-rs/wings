@@ -336,7 +336,7 @@ async fn main() {
         .layer(axum::middleware::from_fn(handle_request))
         .with_state(state.clone());
 
-    let (router, mut openapi) = app.split_for_parts();
+    let (mut router, mut openapi) = app.split_for_parts();
     openapi.info.version = state.version.clone();
     openapi.info.description = None;
     openapi.info.title = "Pterodactyl Wings API".to_string();
@@ -347,10 +347,12 @@ async fn main() {
         SecurityScheme::ApiKey(ApiKey::Header(ApiKeyValue::new("Authorization"))),
     );
 
-    let router = router.route(
-        "/openapi.json",
-        axum::routing::get(|| async move { axum::Json(openapi) }),
-    );
+    if !config.api.disable_openapi_docs {
+        router = router.route(
+            "/openapi.json",
+            axum::routing::get(|| async move { axum::Json(openapi) }),
+        );
+    }
 
     tracing::info!("starting api/sftp server");
 

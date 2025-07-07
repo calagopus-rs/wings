@@ -286,6 +286,8 @@ nestify::nest! {
             },
 
             #[serde(default)]
+            pub disable_openapi_docs: bool,
+            #[serde(default)]
             pub disable_remote_download: bool,
             #[serde(default = "api_remote_download_blocked_cidrs")]
             pub remote_download_blocked_cidrs: Vec<cidr::IpCidr>,

@@ -25,6 +25,8 @@ api:
   - ::1
   - fe80::/10
   - fc00::/7
+  # whether to disable the /openapi.json endpoint
+  disable_api_docs: false
   # how many entries can be listed on a single page on the /list-directory API call, 0 means unlimited
   directory_entry_limit: 10000
   # send server logs of an offline server when connecting to ws
