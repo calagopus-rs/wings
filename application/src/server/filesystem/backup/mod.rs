@@ -16,7 +16,7 @@ pub async fn list(
     path: &Path,
     per_page: Option<usize>,
     page: usize,
-) -> Result<Vec<DirectoryEntry>, anyhow::Error> {
+) -> Result<(usize, Vec<DirectoryEntry>), anyhow::Error> {
     let path = super::Filesystem::resolve_path(path);
 
     match backup.adapter {

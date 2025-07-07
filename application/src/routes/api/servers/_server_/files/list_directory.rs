@@ -12,9 +12,6 @@ mod get {
     pub struct Params {
         #[serde(default)]
         pub directory: String,
-
-        pub per_page: Option<usize>,
-        pub page: Option<usize>,
     }
 
     #[utoipa::path(get, path = "/", responses(
@@ -31,29 +28,15 @@ mod get {
             "directory" = String, Query,
             description = "The directory to list files from",
         ),
-        (
-            "per_page" = usize, Query,
-            description = "The number of entries to return per page",
-        ),
-        (
-            "page" = usize, Query,
-            description = "The page number to return",
-        ),
     ))]
+    #[deprecated(
+        note = "This endpoint is purely for pterodactyl compatibility. Use `/files/list` instead."
+    )]
     pub async fn route(
         state: GetState,
         server: GetServer,
         Query(data): Query<Params>,
     ) -> (StatusCode, axum::Json<serde_json::Value>) {
-        let per_page = match data.per_page {
-            Some(per_page) => Some(per_page),
-            None => match state.config.api.directory_entry_limit {
-                0 => None,
-                limit => Some(limit),
-            },
-        };
-        let page = data.page.unwrap_or(1);
-
         let path = match server.filesystem.canonicalize(&data.directory).await {
             Ok(path) => path,
             Err(_) => PathBuf::from(data.directory),
@@ -61,11 +44,15 @@ mod get {
 
         if let Some((backup, path)) = server.filesystem.backup_fs(&server, &path).await {
             let mut entries = match crate::server::filesystem::backup::list(
-                backup, &server, &path, per_page, page,
+                backup,
+                &server,
+                &path,
+                Some(state.config.api.directory_entry_limit),
+                1,
             )
             .await
             {
-                Ok(entries) => entries,
+                Ok((_, entries)) => entries,
                 Err(err) => {
                     tracing::error!(
                         server = %server.uuid,
@@ -115,9 +102,8 @@ mod get {
         let mut directory = server.filesystem.read_dir(&path).await.unwrap();
 
         let mut entries = Vec::new();
-        let mut matched_entries = 0;
 
-        while let Some(Ok(entry)) = directory.next_entry().await {
+        while let Some(Ok((_, entry))) = directory.next_entry().await {
             let path = path.join(entry);
             let metadata = match server.filesystem.symlink_metadata(&path).await {
                 Ok(metadata) => metadata,
@@ -128,19 +114,10 @@ mod get {
                 continue;
             }
 
-            matched_entries += 1;
-            if let Some(per_page) = per_page {
-                if matched_entries <= (page - 1) * per_page {
-                    continue;
-                }
-            }
-
             entries.push(server.filesystem.to_api_entry(path, metadata).await);
 
-            if let Some(per_page) = per_page {
-                if entries.len() >= per_page {
-                    break;
-                }
+            if entries.len() >= state.config.api.directory_entry_limit {
+                break;
             }
         }
 
@@ -161,6 +138,7 @@ mod get {
     }
 }
 
+#[allow(deprecated)]
 pub fn router(state: &State) -> OpenApiRouter<State> {
     OpenApiRouter::new()
         .routes(routes!(get::route))

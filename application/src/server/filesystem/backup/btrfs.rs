@@ -16,50 +16,72 @@ pub async fn list(
     path: PathBuf,
     per_page: Option<usize>,
     page: usize,
-) -> Result<Vec<DirectoryEntry>, anyhow::Error> {
+) -> Result<(usize, Vec<DirectoryEntry>), anyhow::Error> {
     let full_path = tokio::fs::canonicalize(get_base_path(server, uuid).join(path)).await?;
 
     if !full_path.starts_with(get_base_path(server, uuid)) {
         return Err(anyhow::anyhow!("Access to this path is denied"));
     }
 
-    let mut entries = Vec::new();
-    let mut matched_entries = 0;
+    let mut directory = tokio::fs::read_dir(&full_path).await?;
 
-    let mut directory = tokio::fs::read_dir(full_path).await?;
+    let mut directory_entries = Vec::new();
+    let mut other_entries = Vec::new();
+
     while let Ok(Some(entry)) = directory.next_entry().await {
+        let is_dir = entry.file_type().await.is_ok_and(|ft| ft.is_dir());
         let path = entry.path();
-        let metadata = match entry.metadata().await {
-            Ok(metadata) => metadata,
-            Err(_) => continue,
-        };
 
-        if server.filesystem.is_ignored(&path, metadata.is_dir()).await {
+        if server.filesystem.is_ignored(&path, is_dir).await {
             continue;
         }
 
-        matched_entries += 1;
-        if let Some(per_page) = per_page
-            && matched_entries <= (page - 1) * per_page
-        {
-            continue;
-        }
-
-        let mut entry = server.filesystem.to_api_entry_tokio(path, metadata).await;
-        if entry.directory {
-            entry.size = 0;
-        }
-
-        entries.push(entry);
-
-        if let Some(per_page) = per_page
-            && entries.len() >= per_page
-        {
-            break;
+        if is_dir {
+            directory_entries.push(entry.file_name());
+        } else {
+            other_entries.push(entry.file_name());
         }
     }
 
-    Ok(entries)
+    directory_entries.sort_unstable();
+    other_entries.sort_unstable();
+
+    let total_entries = directory_entries.len() + other_entries.len();
+    let mut entries = Vec::new();
+
+    if let Some(per_page) = per_page {
+        let start = (page - 1) * per_page;
+
+        for entry in directory_entries
+            .into_iter()
+            .chain(other_entries.into_iter())
+            .skip(start)
+            .take(per_page)
+        {
+            let path = full_path.join(&entry);
+            let metadata = match tokio::fs::symlink_metadata(&path).await {
+                Ok(metadata) => metadata,
+                Err(_) => continue,
+            };
+
+            entries.push(server.filesystem.to_api_entry_tokio(path, metadata).await);
+        }
+    } else {
+        for entry in directory_entries
+            .into_iter()
+            .chain(other_entries.into_iter())
+        {
+            let path = full_path.join(&entry);
+            let metadata = match tokio::fs::symlink_metadata(&path).await {
+                Ok(metadata) => metadata,
+                Err(_) => continue,
+            };
+
+            entries.push(server.filesystem.to_api_entry_tokio(path, metadata).await);
+        }
+    }
+
+    Ok((total_entries, entries))
 }
 
 pub async fn reader(

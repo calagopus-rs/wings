@@ -111,84 +111,144 @@ pub async fn list(
     path: PathBuf,
     per_page: Option<usize>,
     page: usize,
-) -> Result<Vec<DirectoryEntry>, anyhow::Error> {
+) -> Result<(usize, Vec<DirectoryEntry>), anyhow::Error> {
     let repository = get_repository(server).await;
 
-    let entries =
-        tokio::task::spawn_blocking(move || -> Result<Vec<DirectoryEntry>, anyhow::Error> {
+    let entries = tokio::task::spawn_blocking(
+        move || -> Result<(usize, Vec<DirectoryEntry>), anyhow::Error> {
             let archive = repository.get_archive(&uuid.to_string())?;
             let entry = match archive.find_archive_entry(&path) {
                 Some(entry) => entry,
                 None => {
-                    let mut entries = Vec::new();
-                    entries.reserve_exact(
+                    let mut directory_entries = Vec::new();
+                    directory_entries.reserve_exact(
                         archive
                             .entries()
-                            .len()
-                            .min(per_page.unwrap_or(archive.entries().len())),
+                            .iter()
+                            .filter(|e| e.is_directory())
+                            .count(),
+                    );
+                    let mut other_entries = Vec::new();
+                    other_entries.reserve_exact(
+                        archive
+                            .entries()
+                            .iter()
+                            .filter(|e| !e.is_directory())
+                            .count(),
                     );
 
-                    let mut matched_entries = 0;
-                    for entry in archive.into_entries() {
-                        let path = path.join(entry.name());
-
-                        matched_entries += 1;
-                        if let Some(per_page) = per_page
-                            && matched_entries < (page - 1) * per_page
-                        {
-                            continue;
-                        }
-
-                        entries.push(ddup_bak_entry_to_directory_entry(
-                            &path,
-                            &repository,
-                            &entry,
-                        ));
-
-                        if let Some(per_page) = per_page
-                            && entries.len() >= per_page
-                        {
-                            break;
+                    for entry in archive.entries() {
+                        if entry.is_directory() {
+                            directory_entries.push(entry);
+                        } else {
+                            other_entries.push(entry);
                         }
                     }
 
-                    return Ok(entries);
+                    directory_entries.sort_unstable_by(|a, b| a.name().cmp(b.name()));
+                    other_entries.sort_unstable_by(|a, b| a.name().cmp(b.name()));
+
+                    let total_entries = directory_entries.len() + other_entries.len();
+                    let mut entries = Vec::new();
+
+                    if let Some(per_page) = per_page {
+                        let start = (page - 1) * per_page;
+
+                        for entry in directory_entries
+                            .into_iter()
+                            .chain(other_entries.into_iter())
+                            .skip(start)
+                            .take(per_page)
+                        {
+                            let path = path.join(entry.name());
+
+                            entries.push(ddup_bak_entry_to_directory_entry(
+                                &path,
+                                &repository,
+                                entry,
+                            ));
+                        }
+                    } else {
+                        for entry in directory_entries
+                            .into_iter()
+                            .chain(other_entries.into_iter())
+                        {
+                            let path = path.join(entry.name());
+
+                            entries.push(ddup_bak_entry_to_directory_entry(
+                                &path,
+                                &repository,
+                                entry,
+                            ));
+                        }
+                    }
+
+                    return Ok((total_entries, entries));
                 }
             };
 
             match entry {
                 ddup_bak::archive::entries::Entry::Directory(dir) => {
-                    let mut entries = Vec::new();
-                    entries.reserve_exact(
-                        dir.entries.len().min(per_page.unwrap_or(dir.entries.len())),
-                    );
+                    let mut directory_entries = Vec::new();
+                    directory_entries
+                        .reserve_exact(dir.entries.iter().filter(|e| e.is_directory()).count());
+                    let mut other_entries = Vec::new();
+                    other_entries
+                        .reserve_exact(dir.entries.iter().filter(|e| !e.is_directory()).count());
 
-                    let mut matched_entries = 0;
                     for entry in &dir.entries {
-                        let path = path.join(&dir.name).join(entry.name());
-
-                        matched_entries += 1;
-                        if let Some(per_page) = per_page
-                            && matched_entries <= (page - 1) * per_page
-                        {
-                            continue;
-                        }
-
-                        entries.push(ddup_bak_entry_to_directory_entry(&path, &repository, entry));
-
-                        if let Some(per_page) = per_page
-                            && entries.len() >= per_page
-                        {
-                            break;
+                        if entry.is_directory() {
+                            directory_entries.push(entry);
+                        } else {
+                            other_entries.push(entry);
                         }
                     }
 
-                    Ok(entries)
+                    directory_entries.sort_unstable_by(|a, b| a.name().cmp(b.name()));
+                    other_entries.sort_unstable_by(|a, b| a.name().cmp(b.name()));
+
+                    let total_entries = directory_entries.len() + other_entries.len();
+                    let mut entries = Vec::new();
+
+                    if let Some(per_page) = per_page {
+                        let start = (page - 1) * per_page;
+
+                        for entry in directory_entries
+                            .into_iter()
+                            .chain(other_entries.into_iter())
+                            .skip(start)
+                            .take(per_page)
+                        {
+                            let path = path.join(&dir.name).join(entry.name());
+
+                            entries.push(ddup_bak_entry_to_directory_entry(
+                                &path,
+                                &repository,
+                                entry,
+                            ));
+                        }
+                    } else {
+                        for entry in directory_entries
+                            .into_iter()
+                            .chain(other_entries.into_iter())
+                        {
+                            let path = path.join(&dir.name).join(entry.name());
+
+                            entries.push(ddup_bak_entry_to_directory_entry(
+                                &path,
+                                &repository,
+                                entry,
+                            ));
+                        }
+                    }
+
+                    Ok((total_entries, entries))
                 }
                 _ => Err(anyhow::anyhow!("Expected a directory entry")),
             }
-        })
-        .await??;
+        },
+    )
+    .await??;
 
     Ok(entries)
 }

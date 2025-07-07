@@ -181,13 +181,13 @@ pub async fn list(
     path: PathBuf,
     per_page: Option<usize>,
     page: usize,
-) -> Result<Vec<DirectoryEntry>, anyhow::Error> {
+) -> Result<(usize, Vec<DirectoryEntry>), anyhow::Error> {
     let files = get_files_for_backup(server, uuid).await?;
 
-    let mut entries = Vec::new();
+    let mut directory_entries = Vec::new();
+    let mut other_entries = Vec::new();
 
     let path_len = path.components().count();
-    let mut matched_entries = 0;
     for entry in files.iter() {
         let name = &entry.path;
 
@@ -200,24 +200,37 @@ pub async fn list(
             continue;
         }
 
-        matched_entries += 1;
-        if let Some(per_page) = per_page
-            && matched_entries <= (page - 1) * per_page
-        {
-            continue;
-        }
-
-        let directory_entry = restic_entry_to_directory_entry(name, &files, entry);
-        entries.push(directory_entry);
-
-        if let Some(per_page) = per_page
-            && entries.len() >= per_page
-        {
-            break;
+        if matches!(entry.r#type, ResticEntryType::Dir) {
+            directory_entries.push(entry);
+        } else {
+            other_entries.push(entry);
         }
     }
 
-    Ok(entries)
+    directory_entries.sort_unstable_by(|a, b| a.path.cmp(&b.path));
+    other_entries.sort_unstable_by(|a, b| a.path.cmp(&b.path));
+
+    let total_entries = directory_entries.len() + other_entries.len();
+    let mut entries = Vec::new();
+
+    if let Some(per_page) = per_page {
+        let start = (page - 1) * per_page;
+
+        for entry in directory_entries
+            .iter()
+            .chain(other_entries.iter())
+            .skip(start)
+            .take(per_page)
+        {
+            entries.push(restic_entry_to_directory_entry(&entry.path, &files, entry));
+        }
+    } else {
+        for entry in directory_entries.iter().chain(other_entries.iter()) {
+            entries.push(restic_entry_to_directory_entry(&entry.path, &files, entry));
+        }
+    }
+
+    Ok((total_entries, entries))
 }
 
 pub async fn reader(

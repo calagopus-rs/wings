@@ -9,6 +9,7 @@ mod create_directory;
 mod decompress;
 mod delete;
 mod fingerprints;
+mod list;
 mod list_directory;
 mod pull;
 mod rename;
@@ -19,6 +20,7 @@ pub fn router(state: &State) -> OpenApiRouter<State> {
     OpenApiRouter::new()
         .nest("/contents", contents::router(state))
         .nest("/list-directory", list_directory::router(state))
+        .nest("/list", list::router(state))
         .nest("/rename", rename::router(state))
         .nest("/copy", copy::router(state))
         .nest("/write", write::router(state))

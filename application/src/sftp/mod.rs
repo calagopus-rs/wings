@@ -273,7 +273,7 @@ impl russh_sftp::server::Handler for SftpSession {
 
         loop {
             let file = match handle.dir.next_entry().await {
-                Some(Ok(file)) => file,
+                Some(Ok((_, file))) => file,
                 _ => {
                     if files.is_empty() {
                         return Err(StatusCode::Eof);

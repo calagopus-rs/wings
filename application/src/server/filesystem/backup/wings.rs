@@ -89,7 +89,7 @@ pub async fn list(
     path: PathBuf,
     per_page: Option<usize>,
     page: usize,
-) -> Result<Vec<DirectoryEntry>, anyhow::Error> {
+) -> Result<(usize, Vec<DirectoryEntry>), anyhow::Error> {
     let (file_format, file_name) =
         crate::server::backup::wings::get_first_file_name(server, uuid).await?;
     if !matches!(
@@ -99,10 +99,9 @@ pub async fn list(
         return Err(anyhow::anyhow!("This backup does not use the ZIP format"));
     }
 
-    let entries =
-        tokio::task::spawn_blocking(move || -> Result<Vec<DirectoryEntry>, std::io::Error> {
+    let entries = tokio::task::spawn_blocking(
+        move || -> Result<(usize, Vec<DirectoryEntry>), std::io::Error> {
             let mut archive = zip::ZipArchive::new(std::fs::File::open(file_name)?)?;
-            let mut entries = Vec::new();
 
             let names = archive
                 .file_names()
@@ -121,8 +120,10 @@ pub async fn list(
                 })
                 .collect::<Vec<_>>();
 
+            let mut directory_entries = Vec::new();
+            let mut other_entries = Vec::new();
+
             let path_len = path.components().count();
-            let mut matched_entries = 0;
             for i in 0..archive.len() {
                 let entry = archive.by_index(i)?;
                 let name = match entry.enclosed_name() {
@@ -139,26 +140,55 @@ pub async fn list(
                     continue;
                 }
 
-                matched_entries += 1;
-                if let Some(per_page) = per_page
-                    && matched_entries <= (page - 1) * per_page
-                {
-                    continue;
-                }
-
-                let entry = zip_entry_to_directory_entry(&name, &sizes, entry);
-                entries.push(entry);
-
-                if let Some(per_page) = per_page
-                    && entries.len() >= per_page
-                {
-                    break;
+                if entry.is_dir() {
+                    directory_entries.push((i, entry.name().to_string()));
+                } else {
+                    other_entries.push((i, entry.name().to_string()));
                 }
             }
 
-            Ok(entries)
-        })
-        .await??;
+            directory_entries.sort_unstable_by(|a, b| a.1.cmp(&b.1));
+            other_entries.sort_unstable_by(|a, b| a.1.cmp(&b.1));
+
+            let total_entries = directory_entries.len() + other_entries.len();
+            let mut entries = Vec::new();
+
+            if let Some(per_page) = per_page {
+                let start = (page - 1) * per_page;
+
+                for entry in directory_entries
+                    .into_iter()
+                    .chain(other_entries.into_iter())
+                    .skip(start)
+                    .take(per_page)
+                {
+                    let entry = archive.by_index(entry.0)?;
+                    let entry_path = match entry.enclosed_name() {
+                        Some(name) => name,
+                        None => continue,
+                    };
+
+                    entries.push(zip_entry_to_directory_entry(&entry_path, &sizes, entry));
+                }
+            } else {
+                for entry in directory_entries
+                    .into_iter()
+                    .chain(other_entries.into_iter())
+                {
+                    let entry = archive.by_index(entry.0)?;
+                    let entry_path = match entry.enclosed_name() {
+                        Some(name) => name,
+                        None => continue,
+                    };
+
+                    entries.push(zip_entry_to_directory_entry(&entry_path, &sizes, entry));
+                }
+            }
+
+            Ok((total_entries, entries))
+        },
+    )
+    .await??;
 
     Ok(entries)
 }

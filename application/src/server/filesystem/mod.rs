@@ -24,13 +24,20 @@ pub mod writer;
 pub struct AsyncCapReadDir(Option<cap_std::fs::ReadDir>);
 
 impl AsyncCapReadDir {
-    async fn next_entry(&mut self) -> Option<std::io::Result<String>> {
+    async fn next_entry(&mut self) -> Option<std::io::Result<(bool, String)>> {
         let mut read_dir = self.0.take()?;
 
         match tokio::task::spawn_blocking(move || (read_dir.next(), read_dir)).await {
             Ok((result, read_dir)) => {
                 self.0 = Some(read_dir);
-                result.map(|entry| entry.map(|e| e.file_name().to_string_lossy().to_string()))
+                result.map(|entry| {
+                    entry.map(|e| {
+                        (
+                            e.file_type().is_ok_and(|ft| ft.is_dir()),
+                            e.file_name().to_string_lossy().to_string(),
+                        )
+                    })
+                })
             }
             Err(_) => {
                 self.0 = None;
@@ -43,9 +50,12 @@ impl AsyncCapReadDir {
 pub struct AsyncTokioReadDir(tokio::fs::ReadDir);
 
 impl AsyncTokioReadDir {
-    async fn next_entry(&mut self) -> Option<std::io::Result<String>> {
+    async fn next_entry(&mut self) -> Option<std::io::Result<(bool, String)>> {
         match self.0.next_entry().await {
-            Ok(Some(entry)) => Some(Ok(entry.file_name().to_string_lossy().to_string())),
+            Ok(Some(entry)) => Some(Ok((
+                entry.file_type().await.is_ok_and(|ft| ft.is_dir()),
+                entry.file_name().to_string_lossy().to_string(),
+            ))),
             Ok(None) => None,
             Err(err) => Some(Err(err)),
         }
@@ -58,7 +68,7 @@ pub enum AsyncReadDir {
 }
 
 impl AsyncReadDir {
-    pub async fn next_entry(&mut self) -> Option<std::io::Result<String>> {
+    pub async fn next_entry(&mut self) -> Option<std::io::Result<(bool, String)>> {
         match self {
             AsyncReadDir::Cap(read_dir) => read_dir.next_entry().await,
             AsyncReadDir::Tokio(read_dir) => read_dir.next_entry().await,

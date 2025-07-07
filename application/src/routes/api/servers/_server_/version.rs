@@ -72,11 +72,11 @@ mod get {
                     {
                         let mut entries = server.filesystem.read_dir(path).await.unwrap();
 
-                        while let Some(Ok(entry)) = entries.next_entry().await {
+                        while let Some(Ok((_, entry))) = entries.next_entry().await {
                             if let Ok(mut entries) =
                                 server.filesystem.read_dir(path.join(&entry)).await
                             {
-                                while let Some(Ok(sub_entry)) = entries.next_entry().await {
+                                while let Some(Ok((_, sub_entry))) = entries.next_entry().await {
                                     if sub_entry.ends_with("-server.jar")
                                         || sub_entry.ends_with("-universal.jar")
                                     {
@@ -100,11 +100,11 @@ mod get {
                     {
                         let mut entries = server.filesystem.read_dir(path).await.unwrap();
 
-                        while let Some(Ok(entry)) = entries.next_entry().await {
+                        while let Some(Ok((_, entry))) = entries.next_entry().await {
                             if let Ok(mut entries) =
                                 server.filesystem.read_dir(path.join(&entry)).await
                             {
-                                while let Some(Ok(sub_entry)) = entries.next_entry().await {
+                                while let Some(Ok((_, sub_entry))) = entries.next_entry().await {
                                     if sub_entry.ends_with("-server.jar")
                                         || sub_entry.ends_with("-universal.jar")
                                     {
