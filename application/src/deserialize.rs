@@ -1,19 +1,23 @@
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, de::DeserializeOwned};
 
 #[inline]
 pub fn deserialize_optional<'de, T, D>(deserializer: D) -> Result<Option<T>, D::Error>
 where
-    T: Deserialize<'de>,
+    T: DeserializeOwned,
     D: Deserializer<'de>,
 {
-    Ok(Option::deserialize(deserializer).ok().flatten())
+    let value = serde_json::Value::deserialize(deserializer)?;
+
+    Ok(serde_json::from_value(value).ok())
 }
 
 #[inline]
 pub fn deserialize_defaultable<'de, T, D>(deserializer: D) -> Result<T, D::Error>
 where
-    T: Deserialize<'de> + Default,
+    T: DeserializeOwned + Default,
     D: Deserializer<'de>,
 {
-    Ok(T::deserialize(deserializer).unwrap_or_default())
+    let value = serde_json::Value::deserialize(deserializer)?;
+
+    Ok(serde_json::from_value(value).unwrap_or_default())
 }
