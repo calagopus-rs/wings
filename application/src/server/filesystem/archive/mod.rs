@@ -63,6 +63,7 @@ pub enum ArchiveType {
     None,
     Tar,
     Zip,
+    Rar,
     SevenZip,
     Ddup,
 }
@@ -136,6 +137,7 @@ impl Archive {
         let archive_format = match path.extension() {
             Some(ext) if ext == "tar" => ArchiveType::Tar,
             Some(ext) if ext == "zip" => ArchiveType::Zip,
+            Some(ext) if ext == "rar" => ArchiveType::Rar,
             Some(ext) if ext == "7z" => ArchiveType::SevenZip,
             Some(ext) if ext == "ddup" => ArchiveType::Ddup,
             _ => path.file_stem().map_or(ArchiveType::None, |stem| {
@@ -470,6 +472,55 @@ impl Archive {
                     } else {
                         Ok(())
                     }
+                })
+                .await??;
+            }
+            ArchiveType::Rar => {
+                let filesystem = self.server.filesystem.base_dir().await?;
+
+                tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
+                    drop(self.file);
+                    let mut archive =
+                        unrar::Archive::new_owned(self.server.filesystem.base_path.join(self.path))
+                            .open_for_processing()?;
+
+                    loop {
+                        let entry = match archive.read_header()? {
+                            Some(entry) => entry,
+                            None => break,
+                        };
+
+                        let path = &entry.entry().filename;
+                        if path.is_absolute() {
+                            archive = entry.skip()?;
+                            continue;
+                        }
+
+                        let destination_path = destination.join(path);
+
+                        if entry.entry().is_directory() {
+                            filesystem.create_dir_all(&destination_path)?;
+
+                            archive = entry.skip()?;
+                            continue;
+                        } else {
+                            if let Some(parent) = destination_path.parent() {
+                                filesystem.create_dir_all(parent)?;
+                            }
+
+                            let writer = super::writer::FileSystemWriter::new(
+                                self.server.clone(),
+                                destination_path,
+                                None,
+                                None,
+                            )?;
+
+                            let (_, processed_archive) = entry.read_to_stream(Box::new(writer))?;
+                            archive = processed_archive;
+                        }
+                    }
+
+                    Ok(())
                 })
                 .await??;
             }

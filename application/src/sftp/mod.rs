@@ -1029,7 +1029,7 @@ impl russh_sftp::server::Handler for SftpSession {
         id: u32,
         handle: String,
         offset: u64,
-        mut data: Vec<u8>,
+        data: Vec<u8>,
     ) -> Result<Status, Self::Error> {
         if !self.allow_action().await {
             return Err(StatusCode::PermissionDenied);
@@ -1043,8 +1043,6 @@ impl russh_sftp::server::Handler for SftpSession {
         if self.state.config.system.sftp.read_only {
             return Err(StatusCode::PermissionDenied);
         }
-
-        data.truncate(96 * 1024);
 
         if !self
             .server

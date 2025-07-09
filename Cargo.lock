@@ -4543,6 +4543,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "unrar"
+version = "0.5.8"
+dependencies = [
+ "bitflags",
+ "regex",
+ "tempfile",
+ "unrar_sys",
+ "widestring",
+]
+
+[[package]]
+name = "unrar_sys"
+version = "0.5.8"
+dependencies = [
+ "cc",
+ "libc",
+ "winapi",
+]
+
+[[package]]
 name = "untrusted"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5243,7 +5263,7 @@ checksum = "271414315aff87387382ec3d271b52d7ae78726f5d44ac98b4f4030c91880486"
 
 [[package]]
 name = "wings-rs"
-version = "0.14.2"
+version = "0.14.3"
 dependencies = [
  "ansi_term",
  "anyhow",
@@ -5296,6 +5316,7 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "unrar",
  "users",
  "utoipa",
  "utoipa-axum",

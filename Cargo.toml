@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["application", "extension"]
+members = ["application", "extension", "unrar-rs"]
 default-members = ["application"]
 
 [workspace.dependencies]
