@@ -49,6 +49,7 @@ mod get {
                 &path,
                 Some(state.config.api.directory_entry_limit),
                 1,
+                |_, _| false,
             )
             .await
             {

@@ -71,8 +71,8 @@ pub struct UserPermissionsMap {
     task: tokio::task::JoinHandle<()>,
 }
 
-impl UserPermissionsMap {
-    pub fn new() -> Self {
+impl Default for UserPermissionsMap {
+    fn default() -> Self {
         let map = Arc::new(RwLock::new(HashMap::new()));
 
         Self {
@@ -89,7 +89,9 @@ impl UserPermissionsMap {
             }),
         }
     }
+}
 
+impl UserPermissionsMap {
     pub async fn has_permission(&self, user_uuid: uuid::Uuid, permission: Permission) -> bool {
         let mut map = self.map.write().await;
         if let Some((permissions, _, last_access)) = map.get_mut(&user_uuid) {

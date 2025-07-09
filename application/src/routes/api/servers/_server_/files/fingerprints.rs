@@ -48,8 +48,8 @@ mod get {
             description = "The algorithm to use for the fingerprint",
         ),
         (
-            "files" = String, Query,
-            description = "Comma-separated list of files to fingerprint",
+            "files" = Vec<String>, Query,
+            description = "The list of files to fingerprint",
         ),
     ))]
     pub async fn route(

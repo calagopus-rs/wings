@@ -16,15 +16,26 @@ pub async fn list(
     path: &Path,
     per_page: Option<usize>,
     page: usize,
+    is_ignored: impl Fn(&Path, bool) -> bool + Send + Sync + 'static,
 ) -> Result<(usize, Vec<DirectoryEntry>), anyhow::Error> {
     let path = super::Filesystem::resolve_path(path);
 
     match backup.adapter {
-        BackupAdapter::Wings => wings::list(server, backup.uuid, path, per_page, page).await,
-        BackupAdapter::DdupBak => ddup_bak::list(server, backup.uuid, path, per_page, page).await,
-        BackupAdapter::Btrfs => btrfs::list(server, backup.uuid, path, per_page, page).await,
-        BackupAdapter::Zfs => zfs::list(server, backup.uuid, path, per_page, page).await,
-        BackupAdapter::Restic => restic::list(server, backup.uuid, path, per_page, page).await,
+        BackupAdapter::Wings => {
+            wings::list(server, backup.uuid, path, per_page, page, is_ignored).await
+        }
+        BackupAdapter::DdupBak => {
+            ddup_bak::list(server, backup.uuid, path, per_page, page, is_ignored).await
+        }
+        BackupAdapter::Btrfs => {
+            btrfs::list(server, backup.uuid, path, per_page, page, is_ignored).await
+        }
+        BackupAdapter::Zfs => {
+            zfs::list(server, backup.uuid, path, per_page, page, is_ignored).await
+        }
+        BackupAdapter::Restic => {
+            restic::list(server, backup.uuid, path, per_page, page, is_ignored).await
+        }
         _ => Err(anyhow::anyhow!(
             "This backup adapter does not support listing files"
         )),

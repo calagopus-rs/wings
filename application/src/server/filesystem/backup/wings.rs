@@ -89,6 +89,7 @@ pub async fn list(
     path: PathBuf,
     per_page: Option<usize>,
     page: usize,
+    is_ignored: impl Fn(&Path, bool) -> bool + Send + Sync + 'static,
 ) -> Result<(usize, Vec<DirectoryEntry>), anyhow::Error> {
     let (file_format, file_name) =
         crate::server::backup::wings::get_first_file_name(server, uuid).await?;
@@ -137,6 +138,10 @@ pub async fn list(
                     || name == path
                     || name_len > path_len + 1
                 {
+                    continue;
+                }
+
+                if is_ignored(&name, entry.is_dir()) {
                     continue;
                 }
 

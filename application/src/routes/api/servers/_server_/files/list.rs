@@ -3,15 +3,18 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod get {
     use crate::routes::{ApiError, GetState, api::servers::_server_::GetServer};
-    use axum::{extract::Query, http::StatusCode};
+    use axum::http::StatusCode;
+    use axum_extra::extract::Query;
     use serde::{Deserialize, Serialize};
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use utoipa::ToSchema;
 
     #[derive(ToSchema, Deserialize)]
     pub struct Params {
         #[serde(default)]
         pub directory: String,
+        #[serde(default)]
+        pub ignored: Vec<String>,
 
         pub per_page: Option<usize>,
         pub page: Option<usize>,
@@ -36,6 +39,10 @@ mod get {
         (
             "directory" = String, Query,
             description = "The directory to list files from",
+        ),
+        (
+            "ignored" = Vec<String>, Query,
+            description = "Additional ignored files",
         ),
         (
             "per_page" = usize, Query,
@@ -65,9 +72,39 @@ mod get {
             Err(_) => PathBuf::from(data.directory),
         };
 
-        if let Some((backup, path)) = server.filesystem.backup_fs(&server, &path).await {
+        let overrides = if data.ignored.is_empty() {
+            None
+        } else {
+            let mut override_builder = ignore::overrides::OverrideBuilder::new("/");
+
+            for file in data.ignored {
+                override_builder.add(&file).ok();
+            }
+
+            override_builder.build().ok()
+        };
+
+        let is_ignored = move |path: &Path, is_dir: bool| {
+            if path == Path::new("/") || path == Path::new("") {
+                return false;
+            }
+
+            overrides
+                .as_ref()
+                .map(|ig| ig.matched(path, is_dir).is_whitelist())
+                .unwrap_or(false)
+        };
+
+        if let Some((backup, rel_path)) = server.filesystem.backup_fs(&server, &path).await {
+            if is_ignored(&path, true) || server.filesystem.is_ignored(&path, true).await {
+                return (
+                    StatusCode::EXPECTATION_FAILED,
+                    axum::Json(ApiError::new("path not a directory").to_json()),
+                );
+            }
+
             let (total, entries) = match crate::server::filesystem::backup::list(
-                backup, &server, &path, per_page, page,
+                backup, &server, &rel_path, per_page, page, is_ignored,
             )
             .await
             {
@@ -95,7 +132,10 @@ mod get {
 
         let metadata = server.filesystem.metadata(&path).await;
         if let Ok(metadata) = metadata {
-            if !metadata.is_dir() || server.filesystem.is_ignored(&path, metadata.is_dir()).await {
+            if !metadata.is_dir()
+                || is_ignored(&path, metadata.is_dir())
+                || server.filesystem.is_ignored(&path, metadata.is_dir()).await
+            {
                 return (
                     StatusCode::EXPECTATION_FAILED,
                     axum::Json(ApiError::new("path not a directory").to_json()),
@@ -116,7 +156,7 @@ mod get {
         while let Some(Ok((is_dir, entry))) = directory.next_entry().await {
             let path = path.join(&entry);
 
-            if server.filesystem.is_ignored(&path, is_dir).await {
+            if is_ignored(&path, is_dir) || server.filesystem.is_ignored(&path, is_dir).await {
                 continue;
             }
 

@@ -111,6 +111,7 @@ pub async fn list(
     path: PathBuf,
     per_page: Option<usize>,
     page: usize,
+    is_ignored: impl Fn(&Path, bool) -> bool + Send + Sync + 'static,
 ) -> Result<(usize, Vec<DirectoryEntry>), anyhow::Error> {
     let repository = get_repository(server).await;
 
@@ -138,6 +139,10 @@ pub async fn list(
                     );
 
                     for entry in archive.entries() {
+                        if is_ignored(Path::new(entry.name()), entry.is_directory()) {
+                            continue;
+                        }
+
                         if entry.is_directory() {
                             directory_entries.push(entry);
                         } else {
@@ -197,6 +202,10 @@ pub async fn list(
                         .reserve_exact(dir.entries.iter().filter(|e| !e.is_directory()).count());
 
                     for entry in &dir.entries {
+                        if is_ignored(Path::new(entry.name()), entry.is_directory()) {
+                            continue;
+                        }
+
                         if entry.is_directory() {
                             directory_entries.push(entry);
                         } else {

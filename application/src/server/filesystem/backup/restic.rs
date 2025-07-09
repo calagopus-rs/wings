@@ -181,6 +181,7 @@ pub async fn list(
     path: PathBuf,
     per_page: Option<usize>,
     page: usize,
+    is_ignored: impl Fn(&Path, bool) -> bool + Send + Sync + 'static,
 ) -> Result<(usize, Vec<DirectoryEntry>), anyhow::Error> {
     let files = get_files_for_backup(server, uuid).await?;
 
@@ -197,6 +198,10 @@ pub async fn list(
             || name == &path
             || name_len > path_len + 1
         {
+            continue;
+        }
+
+        if is_ignored(name, matches!(entry.r#type, ResticEntryType::Dir)) {
             continue;
         }
 

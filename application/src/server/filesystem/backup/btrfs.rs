@@ -16,6 +16,7 @@ pub async fn list(
     path: PathBuf,
     per_page: Option<usize>,
     page: usize,
+    is_ignored: impl Fn(&Path, bool) -> bool + Send + Sync + 'static,
 ) -> Result<(usize, Vec<DirectoryEntry>), anyhow::Error> {
     let full_path = tokio::fs::canonicalize(get_base_path(server, uuid).join(path)).await?;
 
@@ -31,8 +32,12 @@ pub async fn list(
     while let Ok(Some(entry)) = directory.next_entry().await {
         let is_dir = entry.file_type().await.is_ok_and(|ft| ft.is_dir());
         let path = entry.path();
+        let path = match path.strip_prefix(get_base_path(server, uuid)) {
+            Ok(path) => path,
+            Err(_) => continue,
+        };
 
-        if server.filesystem.is_ignored(&path, is_dir).await {
+        if is_ignored(path, is_dir) || server.filesystem.is_ignored(path, is_dir).await {
             continue;
         }
 
