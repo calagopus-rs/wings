@@ -187,9 +187,7 @@ pub async fn restore_backup(
                     runtime.block_on(server.log_daemon(format!("(restoring): {}", path.display())));
 
                     if let Some(parent) = path.parent() {
-                        if !parent.exists() {
-                            std::fs::create_dir_all(parent).unwrap();
-                        }
+                        filesystem.create_dir_all(parent)?;
                     }
 
                     let mut writer = crate::server::filesystem::writer::FileSystemWriter::new(

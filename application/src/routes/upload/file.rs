@@ -38,6 +38,9 @@ mod post {
         pub server_uuid: uuid::Uuid,
         pub user_uuid: uuid::Uuid,
         pub unique_id: String,
+
+        #[serde(default)]
+        pub ignored_files: Vec<String>,
     }
 
     #[utoipa::path(post, path = "/", responses(
@@ -104,6 +107,18 @@ mod post {
             }
         };
 
+        let overrides = if payload.ignored_files.is_empty() {
+            None
+        } else {
+            let mut override_builder = ignore::overrides::OverrideBuilder::new("/");
+
+            for file in payload.ignored_files {
+                override_builder.add(&file).ok();
+            }
+
+            override_builder.build().ok()
+        };
+
         let directory = PathBuf::from(data.directory);
 
         let metadata = server.filesystem.metadata(&directory).await;
@@ -128,7 +143,12 @@ mod post {
             };
             let file_path = directory.join(filename);
 
-            if server.filesystem.is_ignored(&file_path, false).await {
+            if overrides
+                .as_ref()
+                .map(|o| o.matched(&file_path, false).is_whitelist())
+                .unwrap_or(false)
+                || server.filesystem.is_ignored(&file_path, false).await
+            {
                 return (
                     StatusCode::NOT_FOUND,
                     axum::Json(ApiError::new("file not found").to_json()),
