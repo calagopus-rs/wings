@@ -6,7 +6,6 @@ use std::{
     collections::{HashMap, HashSet},
     marker::PhantomData,
     ops::{Deref, DerefMut},
-    path::PathBuf,
     sync::Arc,
 };
 use tokio::sync::RwLock;
@@ -68,17 +67,15 @@ type UserPermissions = (
     std::time::Instant,
 );
 pub struct UserPermissionsMap {
-    base_path: PathBuf,
     map: Arc<RwLock<HashMap<uuid::Uuid, UserPermissions>>>,
     task: tokio::task::JoinHandle<()>,
 }
 
 impl UserPermissionsMap {
-    pub fn new(base_path: PathBuf) -> Self {
+    pub fn new() -> Self {
         let map = Arc::new(RwLock::new(HashMap::new()));
 
         Self {
-            base_path,
             map: Arc::clone(&map),
             task: tokio::spawn(async move {
                 loop {
@@ -129,7 +126,7 @@ impl UserPermissionsMap {
         permissions: Permissions,
         ignored_files: &[String],
     ) {
-        let mut overrides = ignore::overrides::OverrideBuilder::new(&self.base_path);
+        let mut overrides = ignore::overrides::OverrideBuilder::new("/");
         for file in ignored_files {
             overrides.add(file).ok();
         }

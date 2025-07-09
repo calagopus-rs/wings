@@ -118,7 +118,7 @@ impl Server {
             last_crash: Mutex::new(None),
             crash_handled: AtomicBool::new(false),
 
-            user_permissions: permissions::UserPermissionsMap::new(filesystem.base_path.clone()),
+            user_permissions: permissions::UserPermissionsMap::new(),
             filesystem,
         }))
     }

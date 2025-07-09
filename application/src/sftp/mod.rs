@@ -157,6 +157,10 @@ impl SftpSession {
 
     #[inline]
     async fn is_ignored(&self, path: &Path, is_dir: bool) -> bool {
+        if path == Path::new("/") || path == Path::new("") {
+            return false;
+        }
+
         self.server.filesystem.is_ignored(path, is_dir).await
             || self
                 .server
