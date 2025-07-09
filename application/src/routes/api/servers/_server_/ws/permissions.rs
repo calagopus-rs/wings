@@ -18,6 +18,7 @@ mod post {
 
     #[derive(ToSchema, Deserialize)]
     pub struct Payload {
+        #[schema(inline)]
         user_permissions: Vec<PayloadPermissions>,
     }
 

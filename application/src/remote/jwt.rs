@@ -49,13 +49,12 @@ impl BasePayload {
             return false;
         }
 
-        if client
-            .denied_jtokens
-            .read()
-            .await
-            .contains_key(&self.jwt_id)
-        {
-            return false;
+        if let Some(expired_until) = client.denied_jtokens.read().await.get(&self.jwt_id) {
+            if let Some(expiration) = self.expiration_time {
+                if expiration < expired_until.timestamp() {
+                    return false;
+                }
+            }
         }
 
         true
@@ -138,6 +137,9 @@ impl JwtClient {
 
     pub async fn deny(&self, id: &str) {
         let mut denied = self.denied_jtokens.write().await;
-        denied.insert(id.to_string(), chrono::Utc::now());
+        denied.insert(
+            id.to_string(),
+            chrono::Utc::now() + chrono::Duration::minutes(15),
+        );
     }
 }
