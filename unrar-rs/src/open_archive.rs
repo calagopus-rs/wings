@@ -390,7 +390,7 @@ impl OpenArchive<Process, CursorBeforeFile> {
         self,
         stream: Box<dyn std::io::Write + Send + Sync>,
     ) -> UnrarResult<(Stream, OpenArchive<Process, CursorBeforeHeader>)> {
-        let user_data = (Stream(Some(stream)), None);
+        let user_data = (Stream(Some(stream), None), None);
         let result = self.process_file_x::<ReadToStream>(Some(user_data), None, None)?;
 
         Ok((result.0, result.1))
@@ -465,8 +465,12 @@ fn read_header(handle: &Handle) -> UnrarResult<Option<FileHeader>> {
     }
 }
 
+/// A stream that can be written to, used in [`OpenArchive::read_to_stream`].
 #[derive(Default)]
-pub struct Stream(Option<Box<dyn std::io::Write + Send + Sync>>);
+pub struct Stream(
+    pub Option<Box<dyn std::io::Write + Send + Sync>>,
+    pub Option<std::io::Error>,
+);
 
 impl Debug for Stream {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -511,8 +515,14 @@ impl ProcessMode for ReadToStream {
     type Output = Stream;
 
     fn process_data(my: &mut Self::Output, other: &[u8]) {
+        if my.1.is_some() {
+            return;
+        }
+
         if let Some(ref mut stream) = my.0 {
-            stream.write_all(other).ok();
+            if let Err(err) = stream.write_all(other) {
+                my.1 = Some(err);
+            }
         }
     }
 }

@@ -10,5 +10,5 @@ mod pathed;
 pub use error::UnrarResult;
 pub use open_archive::{
     CursorBeforeFile, CursorBeforeHeader, FileHeader, List, ListSplit, OpenArchive, Process,
-    VolumeInfo,
+    Stream, VolumeInfo,
 };
