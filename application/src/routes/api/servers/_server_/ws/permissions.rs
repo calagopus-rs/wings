@@ -1,0 +1,59 @@
+use super::State;
+use utoipa_axum::{router::OpenApiRouter, routes};
+
+mod post {
+    use crate::{routes::api::servers::_server_::GetServer, server::permissions::Permissions};
+    use serde::{Deserialize, Serialize};
+    use utoipa::ToSchema;
+
+    #[derive(ToSchema, Deserialize)]
+    pub struct PayloadPermissions {
+        user: uuid::Uuid,
+
+        #[schema(value_type = Vec<String>)]
+        permissions: Permissions,
+        #[serde(default)]
+        ignored_files: Vec<String>,
+    }
+
+    #[derive(ToSchema, Deserialize)]
+    pub struct Payload {
+        user_permissions: Vec<PayloadPermissions>,
+    }
+
+    #[derive(ToSchema, Serialize)]
+    struct Response {}
+
+    #[utoipa::path(post, path = "/", responses(
+        (status = OK, body = inline(Response)),
+    ), params(
+        (
+            "server" = uuid::Uuid,
+            description = "The server uuid",
+            example = "123e4567-e89b-12d3-a456-426614174000",
+        ),
+    ), request_body = inline(Payload))]
+    pub async fn route(
+        server: GetServer,
+        axum::Json(data): axum::Json<Payload>,
+    ) -> axum::Json<serde_json::Value> {
+        for user_permission in data.user_permissions {
+            server
+                .user_permissions
+                .set_permissions(
+                    user_permission.user,
+                    user_permission.permissions,
+                    &user_permission.ignored_files,
+                )
+                .await;
+        }
+
+        axum::Json(serde_json::to_value(Response {}).unwrap())
+    }
+}
+
+pub fn router(state: &State) -> OpenApiRouter<State> {
+    OpenApiRouter::new()
+        .routes(routes!(post::route))
+        .with_state(state.clone())
+}

@@ -1,4 +1,4 @@
-use crate::{remote::AuthenticationType, routes::State, server::permissions::Permissions};
+use crate::{remote::AuthenticationType, routes::State};
 use russh::{
     Channel, ChannelId, MethodSet,
     server::{Auth, Msg, Session},
@@ -12,7 +12,6 @@ pub struct SshSession {
 
     pub user_ip: Option<IpAddr>,
     pub user_uuid: Option<uuid::Uuid>,
-    pub user_permissions: Permissions,
 
     pub clients: HashMap<ChannelId, Channel<Msg>>,
 }
@@ -51,14 +50,14 @@ impl russh::server::Handler for SshSession {
             });
         }
 
-        let (user, server, permissions) = match self
+        let (user, server, permissions, ignored_files) = match self
             .state
             .config
             .client
             .get_sftp_auth(AuthenticationType::Password, username, password)
             .await
         {
-            Ok((user, server, permissions)) => (user, server, permissions),
+            Ok(data) => data,
             Err(err) => {
                 tracing::debug!(
                     username = username,
@@ -71,7 +70,6 @@ impl russh::server::Handler for SshSession {
         };
 
         self.user_uuid = Some(user);
-        self.user_permissions = permissions;
 
         let server = match self
             .state
@@ -95,6 +93,11 @@ impl russh::server::Handler for SshSession {
             return Ok(Auth::reject());
         }
 
+        server
+            .user_permissions
+            .set_permissions(user, permissions, &ignored_files)
+            .await;
+
         self.server = Some(server);
 
         Ok(Auth::Accept)
@@ -105,7 +108,7 @@ impl russh::server::Handler for SshSession {
         username: &str,
         public_key: &russh::keys::ssh_key::PublicKey,
     ) -> Result<Auth, Self::Error> {
-        let (user, server, permissions) = match self
+        let (user, server, permissions, ignored_files) = match self
             .state
             .config
             .client
@@ -116,7 +119,7 @@ impl russh::server::Handler for SshSession {
             )
             .await
         {
-            Ok((user, server, permissions)) => (user, server, permissions),
+            Ok(data) => data,
             Err(err) => {
                 tracing::debug!(
                     username = username,
@@ -132,7 +135,6 @@ impl russh::server::Handler for SshSession {
         };
 
         self.user_uuid = Some(user);
-        self.user_permissions = permissions;
 
         let server = match self
             .state
@@ -150,6 +152,11 @@ impl russh::server::Handler for SshSession {
         if server.is_locked_state() {
             return Ok(Auth::reject());
         }
+
+        server
+            .user_permissions
+            .set_permissions(user, permissions, &ignored_files)
+            .await;
 
         self.server = Some(server);
 
@@ -182,6 +189,11 @@ impl russh::server::Handler for SshSession {
         name: &str,
         session: &mut Session,
     ) -> Result<(), Self::Error> {
+        let user_uuid = match self.user_uuid {
+            Some(uuid) => uuid,
+            None => return Err(Box::new(StatusCode::PermissionDenied)),
+        };
+
         let server = match &self.server {
             Some(server) => server.clone(),
             None => return Err(Box::new(StatusCode::PermissionDenied)),
@@ -194,8 +206,7 @@ impl russh::server::Handler for SshSession {
                 server,
 
                 user_ip: self.user_ip,
-                user_uuid: self.user_uuid,
-                user_permissions: self.user_permissions.clone(),
+                user_uuid,
 
                 handle_id: 0,
                 handles: HashMap::new(),

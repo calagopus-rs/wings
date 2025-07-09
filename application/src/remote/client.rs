@@ -54,7 +54,7 @@ impl Client {
         r#type: super::AuthenticationType,
         username: &str,
         password: &str,
-    ) -> Result<(uuid::Uuid, uuid::Uuid, Permissions), reqwest::Error> {
+    ) -> Result<(uuid::Uuid, uuid::Uuid, Permissions, Vec<String>), reqwest::Error> {
         tracing::debug!("getting sftp auth");
         super::get_sftp_auth(self, r#type, username, password).await
     }

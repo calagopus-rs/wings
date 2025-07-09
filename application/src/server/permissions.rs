@@ -3,10 +3,13 @@ use serde::{
     de::{SeqAccess, Visitor},
 };
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     marker::PhantomData,
     ops::{Deref, DerefMut},
+    path::PathBuf,
+    sync::Arc,
 };
+use tokio::sync::RwLock;
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Hash)]
 pub enum Permission {
@@ -56,6 +59,99 @@ impl Permission {
 
     pub fn matches(self, other: Permission) -> bool {
         self == other || (other == Permission::All && !other.is_admin())
+    }
+}
+
+type UserPermissions = (
+    Permissions,
+    Option<ignore::overrides::Override>,
+    std::time::Instant,
+);
+pub struct UserPermissionsMap {
+    base_path: PathBuf,
+    map: Arc<RwLock<HashMap<uuid::Uuid, UserPermissions>>>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl UserPermissionsMap {
+    pub fn new(base_path: PathBuf) -> Self {
+        let map = Arc::new(RwLock::new(HashMap::new()));
+
+        Self {
+            base_path,
+            map: Arc::clone(&map),
+            task: tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+
+                    let mut map = map.write().await;
+                    map.retain(|_, (_, _, last_access)| {
+                        last_access.elapsed().as_secs() < 60 * 60 * 24
+                    });
+                }
+            }),
+        }
+    }
+
+    pub async fn has_permission(&self, user_uuid: uuid::Uuid, permission: Permission) -> bool {
+        let mut map = self.map.write().await;
+        if let Some((permissions, _, last_access)) = map.get_mut(&user_uuid) {
+            *last_access = std::time::Instant::now();
+
+            permissions.has_permission(permission)
+        } else {
+            false
+        }
+    }
+
+    pub async fn is_ignored(
+        &self,
+        user_uuid: uuid::Uuid,
+        path: impl AsRef<std::path::Path>,
+        is_dir: bool,
+    ) -> bool {
+        let mut map = self.map.write().await;
+        if let Some((_, ignored, last_access)) = map.get_mut(&user_uuid) {
+            *last_access = std::time::Instant::now();
+
+            ignored
+                .as_ref()
+                .map(|ig| ig.matched(path, is_dir).is_whitelist())
+                .unwrap_or(false)
+        } else {
+            false
+        }
+    }
+
+    pub async fn set_permissions(
+        &self,
+        user_uuid: uuid::Uuid,
+        permissions: Permissions,
+        ignored_files: &[String],
+    ) {
+        let mut overrides = ignore::overrides::OverrideBuilder::new(&self.base_path);
+        for file in ignored_files {
+            overrides.add(file).ok();
+        }
+
+        self.map.write().await.insert(
+            user_uuid,
+            (
+                permissions,
+                overrides.build().ok(),
+                std::time::Instant::now(),
+            ),
+        );
+    }
+
+    pub async fn is_contained(&self, user_id: uuid::Uuid) -> bool {
+        self.map.read().await.contains_key(&user_id)
+    }
+}
+
+impl Drop for UserPermissionsMap {
+    fn drop(&mut self) {
+        self.task.abort();
     }
 }
 

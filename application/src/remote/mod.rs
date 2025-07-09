@@ -27,7 +27,7 @@ pub async fn get_sftp_auth(
     r#type: AuthenticationType,
     username: &str,
     password: &str,
-) -> Result<(uuid::Uuid, uuid::Uuid, Permissions), reqwest::Error> {
+) -> Result<(uuid::Uuid, uuid::Uuid, Permissions, Vec<String>), reqwest::Error> {
     let response: Response = client
         .client
         .post(format!("{}/sftp/auth", client.url))
@@ -47,9 +47,16 @@ pub async fn get_sftp_auth(
         server: uuid::Uuid,
 
         permissions: Permissions,
+        #[serde(default)]
+        ignored_files: Vec<String>,
     }
 
-    Ok((response.user, response.server, response.permissions))
+    Ok((
+        response.user,
+        response.server,
+        response.permissions,
+        response.ignored_files,
+    ))
 }
 
 pub async fn send_activity(

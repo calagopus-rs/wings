@@ -58,6 +58,7 @@ pub struct InnerServer {
     last_crash: Mutex<Option<std::time::Instant>>,
     crash_handled: AtomicBool,
 
+    pub user_permissions: permissions::UserPermissionsMap,
     pub filesystem: filesystem::Filesystem,
 }
 
@@ -117,6 +118,7 @@ impl Server {
             last_crash: Mutex::new(None),
             crash_handled: AtomicBool::new(false),
 
+            user_permissions: permissions::UserPermissionsMap::new(filesystem.base_path.clone()),
             filesystem,
         }))
     }

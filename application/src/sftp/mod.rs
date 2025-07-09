@@ -2,7 +2,7 @@ use crate::{
     routes::State,
     server::{
         activity::{Activity, ActivityEvent},
-        permissions::{Permission, Permissions},
+        permissions::Permission,
     },
 };
 use cap_std::fs::{Metadata, OpenOptions, PermissionsExt};
@@ -39,7 +39,6 @@ impl russh::server::Server for Server {
 
             user_ip: client.map(|addr| addr.ip()),
             user_uuid: None,
-            user_permissions: Default::default(),
 
             clients: HashMap::new(),
         }
@@ -84,8 +83,7 @@ struct SftpSession {
     server: crate::server::Server,
 
     user_ip: Option<IpAddr>,
-    user_uuid: Option<uuid::Uuid>,
-    user_permissions: Permissions,
+    user_uuid: uuid::Uuid,
 
     handle_id: u64,
     handles: HashMap<String, ServerHandle>,
@@ -150,13 +148,31 @@ impl SftpSession {
     }
 
     #[inline]
-    fn has_permission(&self, permission: Permission) -> bool {
-        self.user_permissions.has_permission(permission)
+    async fn has_permission(&self, permission: Permission) -> bool {
+        self.server
+            .user_permissions
+            .has_permission(self.user_uuid, permission)
+            .await
     }
 
     #[inline]
-    fn allow_action(&self) -> bool {
+    async fn is_ignored(&self, path: &Path, is_dir: bool) -> bool {
+        self.server.filesystem.is_ignored(path, is_dir).await
+            || self
+                .server
+                .user_permissions
+                .is_ignored(self.user_uuid, path, is_dir)
+                .await
+    }
+
+    #[inline]
+    async fn allow_action(&self) -> bool {
         !self.server.is_locked_state()
+            && self
+                .server
+                .user_permissions
+                .is_contained(self.user_uuid)
+                .await
     }
 }
 
@@ -215,7 +231,7 @@ impl russh_sftp::server::Handler for SftpSession {
     }
 
     async fn opendir(&mut self, id: u32, path: String) -> Result<Handle, Self::Error> {
-        if !self.allow_action() {
+        if !self.allow_action().await {
             return Err(StatusCode::PermissionDenied);
         }
 
@@ -223,7 +239,7 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::Failure);
         }
 
-        if !self.has_permission(Permission::FileRead) {
+        if !self.has_permission(Permission::FileRead).await {
             return Err(StatusCode::PermissionDenied);
         }
 
@@ -232,7 +248,7 @@ impl russh_sftp::server::Handler for SftpSession {
             Err(_) => return Err(StatusCode::NoSuchFile),
         };
 
-        if self.server.filesystem.is_ignored(&path, true).await {
+        if self.is_ignored(&path, true).await {
             return Err(StatusCode::NoSuchFile);
         }
 
@@ -256,7 +272,7 @@ impl russh_sftp::server::Handler for SftpSession {
     }
 
     async fn readdir(&mut self, id: u32, handle: String) -> Result<Name, Self::Error> {
-        if !self.allow_action() {
+        if !self.allow_action().await {
             return Err(StatusCode::PermissionDenied);
         }
 
@@ -294,6 +310,11 @@ impl russh_sftp::server::Handler for SftpSession {
                 .filesystem
                 .is_ignored(&path, metadata.is_dir())
                 .await
+                || self
+                    .server
+                    .user_permissions
+                    .is_ignored(self.user_uuid, &path, metadata.is_dir())
+                    .await
             {
                 continue;
             }
@@ -324,7 +345,7 @@ impl russh_sftp::server::Handler for SftpSession {
     }
 
     async fn remove(&mut self, id: u32, filename: String) -> Result<Status, Self::Error> {
-        if !self.allow_action() {
+        if !self.allow_action().await {
             return Err(StatusCode::PermissionDenied);
         }
 
@@ -332,7 +353,7 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
-        if !self.has_permission(Permission::FileDelete) {
+        if !self.has_permission(Permission::FileDelete).await {
             return Err(StatusCode::PermissionDenied);
         }
 
@@ -346,12 +367,7 @@ impl russh_sftp::server::Handler for SftpSession {
                 return Err(StatusCode::NoSuchFile);
             }
 
-            if self
-                .server
-                .filesystem
-                .is_ignored(&path, metadata.is_dir())
-                .await
-            {
+            if self.is_ignored(&path, metadata.is_dir()).await {
                 return Err(StatusCode::NoSuchFile);
             }
 
@@ -363,7 +379,7 @@ impl russh_sftp::server::Handler for SftpSession {
                 .activity
                 .log_activity(Activity {
                     event: ActivityEvent::SftpDelete,
-                    user: self.user_uuid,
+                    user: Some(self.user_uuid),
                     ip: self.user_ip,
                     metadata: Some(json!({
                         "files": [self.server.filesystem.relative_path(&path)],
@@ -382,7 +398,7 @@ impl russh_sftp::server::Handler for SftpSession {
     }
 
     async fn rmdir(&mut self, id: u32, path: String) -> Result<Status, Self::Error> {
-        if !self.allow_action() {
+        if !self.allow_action().await {
             return Err(StatusCode::PermissionDenied);
         }
 
@@ -390,7 +406,7 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
-        if !self.has_permission(Permission::FileDelete) {
+        if !self.has_permission(Permission::FileDelete).await {
             return Err(StatusCode::PermissionDenied);
         }
 
@@ -407,7 +423,7 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::NoSuchFile);
         }
 
-        if self.server.filesystem.is_ignored(&path, true).await {
+        if self.is_ignored(&path, true).await {
             return Err(StatusCode::NoSuchFile);
         }
 
@@ -421,7 +437,7 @@ impl russh_sftp::server::Handler for SftpSession {
             .activity
             .log_activity(Activity {
                 event: ActivityEvent::SftpDelete,
-                user: self.user_uuid,
+                user: Some(self.user_uuid),
                 ip: self.user_ip,
                 metadata: Some(json!({
                     "files": [self.server.filesystem.relative_path(&path)],
@@ -444,7 +460,7 @@ impl russh_sftp::server::Handler for SftpSession {
         path: String,
         attrs: FileAttributes,
     ) -> Result<Status, Self::Error> {
-        if !self.allow_action() {
+        if !self.allow_action().await {
             return Err(StatusCode::PermissionDenied);
         }
 
@@ -452,14 +468,14 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
-        if !self.has_permission(Permission::FileCreate) {
+        if !self.has_permission(Permission::FileCreate).await {
             return Err(StatusCode::PermissionDenied);
         }
 
         let path = Path::new(&path);
 
         if self.server.filesystem.symlink_metadata(&path).await.is_ok()
-            || self.server.filesystem.is_ignored(path, true).await
+            || self.is_ignored(path, true).await
         {
             return Err(StatusCode::NoSuchFile);
         }
@@ -484,7 +500,7 @@ impl russh_sftp::server::Handler for SftpSession {
             .activity
             .log_activity(Activity {
                 event: ActivityEvent::SftpCreateDirectory,
-                user: self.user_uuid,
+                user: Some(self.user_uuid),
                 ip: self.user_ip,
                 metadata: Some(json!({
                     "files": [self.server.filesystem.relative_path(path)],
@@ -507,7 +523,7 @@ impl russh_sftp::server::Handler for SftpSession {
         old_path: String,
         new_path: String,
     ) -> Result<Status, Self::Error> {
-        if !self.allow_action() {
+        if !self.allow_action().await {
             return Err(StatusCode::PermissionDenied);
         }
 
@@ -515,7 +531,7 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
-        if !self.has_permission(Permission::FileUpdate) {
+        if !self.has_permission(Permission::FileUpdate).await {
             return Err(StatusCode::PermissionDenied);
         }
 
@@ -536,23 +552,15 @@ impl russh_sftp::server::Handler for SftpSession {
             .symlink_metadata(&new_path)
             .await
             .is_ok()
-            || self
-                .server
-                .filesystem
-                .is_ignored(&old_path, old_metadata.is_dir())
-                .await
-            || self
-                .server
-                .filesystem
-                .is_ignored(&new_path, old_metadata.is_dir())
-                .await
+            || self.is_ignored(&old_path, old_metadata.is_dir()).await
+            || self.is_ignored(&new_path, old_metadata.is_dir()).await
         {
             return Err(StatusCode::Failure);
         }
 
         let activity = Activity {
             event: ActivityEvent::SftpRename,
-            user: self.user_uuid,
+            user: Some(self.user_uuid),
             ip: self.user_ip,
             metadata: Some(json!({
                 "files": [
@@ -591,7 +599,7 @@ impl russh_sftp::server::Handler for SftpSession {
         path: String,
         attrs: FileAttributes,
     ) -> Result<Status, Self::Error> {
-        if !self.allow_action() {
+        if !self.allow_action().await {
             return Err(StatusCode::PermissionDenied);
         }
 
@@ -599,7 +607,7 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
-        if !self.has_permission(Permission::FileUpdate) {
+        if !self.has_permission(Permission::FileUpdate).await {
             return Err(StatusCode::PermissionDenied);
         }
 
@@ -613,12 +621,7 @@ impl russh_sftp::server::Handler for SftpSession {
             Err(_) => return Err(StatusCode::NoSuchFile),
         };
 
-        if self
-            .server
-            .filesystem
-            .is_ignored(&path, metadata.is_dir())
-            .await
-        {
+        if self.is_ignored(&path, metadata.is_dir()).await {
             return Err(StatusCode::NoSuchFile);
         }
 
@@ -647,7 +650,7 @@ impl russh_sftp::server::Handler for SftpSession {
         handle: String,
         attrs: FileAttributes,
     ) -> Result<Status, Self::Error> {
-        if !self.allow_action() {
+        if !self.allow_action().await {
             return Err(StatusCode::PermissionDenied);
         }
 
@@ -665,11 +668,11 @@ impl russh_sftp::server::Handler for SftpSession {
         id: u32,
         path: String,
     ) -> Result<russh_sftp::protocol::Attrs, Self::Error> {
-        if !self.allow_action() {
+        if !self.allow_action().await {
             return Err(StatusCode::PermissionDenied);
         }
 
-        if !self.has_permission(Permission::FileRead) {
+        if !self.has_permission(Permission::FileRead).await {
             return Err(StatusCode::PermissionDenied);
         }
 
@@ -683,12 +686,7 @@ impl russh_sftp::server::Handler for SftpSession {
             Err(_) => return Err(StatusCode::NoSuchFile),
         };
 
-        if self
-            .server
-            .filesystem
-            .is_ignored(&path, metadata.is_dir())
-            .await
-        {
+        if self.is_ignored(&path, metadata.is_dir()).await {
             return Err(StatusCode::NoSuchFile);
         }
 
@@ -705,7 +703,7 @@ impl russh_sftp::server::Handler for SftpSession {
         id: u32,
         handle: String,
     ) -> Result<russh_sftp::protocol::Attrs, Self::Error> {
-        if !self.allow_action() {
+        if !self.allow_action().await {
             return Err(StatusCode::PermissionDenied);
         }
 
@@ -723,11 +721,11 @@ impl russh_sftp::server::Handler for SftpSession {
         id: u32,
         path: String,
     ) -> Result<russh_sftp::protocol::Attrs, Self::Error> {
-        if !self.allow_action() {
+        if !self.allow_action().await {
             return Err(StatusCode::PermissionDenied);
         }
 
-        if !self.has_permission(Permission::FileRead) {
+        if !self.has_permission(Permission::FileRead).await {
             return Err(StatusCode::PermissionDenied);
         }
 
@@ -738,12 +736,7 @@ impl russh_sftp::server::Handler for SftpSession {
             Err(_) => return Err(StatusCode::NoSuchFile),
         };
 
-        if self
-            .server
-            .filesystem
-            .is_ignored(path, metadata.is_dir())
-            .await
-        {
+        if self.is_ignored(path, metadata.is_dir()).await {
             return Err(StatusCode::NoSuchFile);
         }
 
@@ -762,11 +755,11 @@ impl russh_sftp::server::Handler for SftpSession {
     }
 
     async fn readlink(&mut self, id: u32, path: String) -> Result<Name, Self::Error> {
-        if !self.allow_action() {
+        if !self.allow_action().await {
             return Err(StatusCode::PermissionDenied);
         }
 
-        if !self.has_permission(Permission::FileRead) {
+        if !self.has_permission(Permission::FileRead).await {
             return Err(StatusCode::PermissionDenied);
         }
 
@@ -780,12 +773,7 @@ impl russh_sftp::server::Handler for SftpSession {
             Err(_) => return Err(StatusCode::NoSuchFile),
         };
 
-        if self
-            .server
-            .filesystem
-            .is_ignored(&path, metadata.is_dir())
-            .await
-        {
+        if self.is_ignored(&path, metadata.is_dir()).await {
             return Err(StatusCode::NoSuchFile);
         }
 
@@ -809,7 +797,7 @@ impl russh_sftp::server::Handler for SftpSession {
         linkpath: String,
         targetpath: String,
     ) -> Result<Status, Self::Error> {
-        if !self.allow_action() {
+        if !self.allow_action().await {
             return Err(StatusCode::PermissionDenied);
         }
 
@@ -817,7 +805,7 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
-        if !self.has_permission(Permission::FileCreate) {
+        if !self.has_permission(Permission::FileCreate).await {
             return Err(StatusCode::PermissionDenied);
         }
 
@@ -836,12 +824,7 @@ impl russh_sftp::server::Handler for SftpSession {
             Err(_) => return Err(StatusCode::NoSuchFile),
         };
 
-        if self
-            .server
-            .filesystem
-            .is_ignored(&targetpath, metadata.is_dir())
-            .await
-        {
+        if self.is_ignored(&targetpath, metadata.is_dir()).await {
             return Err(StatusCode::NoSuchFile);
         }
 
@@ -859,7 +842,7 @@ impl russh_sftp::server::Handler for SftpSession {
             .activity
             .log_activity(Activity {
                 event: ActivityEvent::SftpCreate,
-                user: self.user_uuid,
+                user: Some(self.user_uuid),
                 ip: self.user_ip,
                 metadata: Some(json!({
                     "files": [self.server.filesystem.relative_path(&linkpath)],
@@ -883,7 +866,7 @@ impl russh_sftp::server::Handler for SftpSession {
         pflags: russh_sftp::protocol::OpenFlags,
         _attrs: FileAttributes,
     ) -> Result<Handle, Self::Error> {
-        if !self.allow_action() {
+        if !self.allow_action().await {
             return Err(StatusCode::PermissionDenied);
         }
 
@@ -897,17 +880,22 @@ impl russh_sftp::server::Handler for SftpSession {
         };
 
         if (pflags.contains(OpenFlags::WRITE) || pflags.contains(OpenFlags::APPEND))
-            && !self.has_permission(Permission::FileUpdate)
+            && !self.has_permission(Permission::FileUpdate).await
         {
             return Err(StatusCode::PermissionDenied);
         }
-        if pflags.contains(OpenFlags::CREATE) && !self.has_permission(Permission::FileCreate) {
+        if pflags.contains(OpenFlags::CREATE) && !self.has_permission(Permission::FileCreate).await
+        {
             return Err(StatusCode::PermissionDenied);
         }
-        if pflags.contains(OpenFlags::TRUNCATE) && !self.has_permission(Permission::FileDelete) {
+        if pflags.contains(OpenFlags::TRUNCATE)
+            && !self.has_permission(Permission::FileDelete).await
+        {
             return Err(StatusCode::PermissionDenied);
         }
-        if pflags.contains(OpenFlags::READ) && !self.has_permission(Permission::FileReadContent) {
+        if pflags.contains(OpenFlags::READ)
+            && !self.has_permission(Permission::FileReadContent).await
+        {
             return Err(StatusCode::PermissionDenied);
         }
 
@@ -929,7 +917,7 @@ impl russh_sftp::server::Handler for SftpSession {
             }
         }
 
-        if self.server.filesystem.is_ignored(&path, false).await {
+        if self.is_ignored(&path, false).await {
             return Err(StatusCode::NoSuchFile);
         }
 
@@ -967,7 +955,7 @@ impl russh_sftp::server::Handler for SftpSession {
                 .activity
                 .log_activity(Activity {
                     event,
-                    user: self.user_uuid,
+                    user: Some(self.user_uuid),
                     ip: self.user_ip,
                     metadata: Some(json!({
                         "files": [self.server.filesystem.relative_path(&path)],
@@ -1000,7 +988,7 @@ impl russh_sftp::server::Handler for SftpSession {
         offset: u64,
         len: u32,
     ) -> Result<russh_sftp::protocol::Data, Self::Error> {
-        if !self.allow_action() {
+        if !self.allow_action().await {
             return Err(StatusCode::PermissionDenied);
         }
 
@@ -1017,7 +1005,7 @@ impl russh_sftp::server::Handler for SftpSession {
             let file = Arc::clone(&handle.file);
 
             move || {
-                let mut buf = vec![0; len.min(96 * 1024) as usize];
+                let mut buf = vec![0; len.min(256 * 1024) as usize];
                 let bytes_read = file.read_at(&mut buf, offset).unwrap();
 
                 buf.truncate(bytes_read);
@@ -1039,7 +1027,7 @@ impl russh_sftp::server::Handler for SftpSession {
         offset: u64,
         mut data: Vec<u8>,
     ) -> Result<Status, Self::Error> {
-        if !self.allow_action() {
+        if !self.allow_action().await {
             return Err(StatusCode::PermissionDenied);
         }
 
@@ -1090,7 +1078,7 @@ impl russh_sftp::server::Handler for SftpSession {
         command: String,
         data: Vec<u8>,
     ) -> Result<russh_sftp::protocol::Packet, Self::Error> {
-        if !self.allow_action() {
+        if !self.allow_action().await {
             return Err(StatusCode::PermissionDenied);
         }
 
@@ -1098,7 +1086,7 @@ impl russh_sftp::server::Handler for SftpSession {
 
         match command.as_str() {
             "check-file" | "check-file-name" => {
-                if !self.has_permission(Permission::FileRead) {
+                if !self.has_permission(Permission::FileRead).await {
                     return Err(StatusCode::PermissionDenied);
                 }
 
@@ -1137,12 +1125,7 @@ impl russh_sftp::server::Handler for SftpSession {
                         return Err(StatusCode::NoSuchFile);
                     }
 
-                    if self
-                        .server
-                        .filesystem
-                        .is_ignored(&path, metadata.is_dir())
-                        .await
-                    {
+                    if self.is_ignored(&path, metadata.is_dir()).await {
                         return Err(StatusCode::NoSuchFile);
                     }
 
@@ -1354,8 +1337,8 @@ impl russh_sftp::server::Handler for SftpSession {
                 }
             }
             "copy-file" => {
-                if !self.has_permission(Permission::FileReadContent)
-                    || !self.has_permission(Permission::FileCreate)
+                if !self.has_permission(Permission::FileReadContent).await
+                    || !self.has_permission(Permission::FileCreate).await
                 {
                     return Err(StatusCode::PermissionDenied);
                 }
@@ -1386,7 +1369,7 @@ impl russh_sftp::server::Handler for SftpSession {
                     return Err(StatusCode::NoSuchFile);
                 }
 
-                if self.server.filesystem.is_ignored(&source_path, false).await {
+                if self.is_ignored(&source_path, false).await {
                     return Err(StatusCode::NoSuchFile);
                 }
 
@@ -1417,7 +1400,7 @@ impl russh_sftp::server::Handler for SftpSession {
                     .activity
                     .log_activity(Activity {
                         event: ActivityEvent::SftpCreate,
-                        user: self.user_uuid,
+                        user: Some(self.user_uuid),
                         ip: self.user_ip,
                         metadata: Some(json!({
                             "files": [self.server.filesystem.relative_path(destination_path)],
@@ -1502,7 +1485,7 @@ impl russh_sftp::server::Handler for SftpSession {
                         id,
                         data: russh_sftp::ser::to_bytes(&LimitsReply {
                             max_packet_length: 512 * 1024,
-                            max_read_length: 96 * 1024,
+                            max_read_length: 256 * 1024,
                             max_write_length: 96 * 1024,
                             max_handle_count: HANDLE_LIMIT as u64,
                         })

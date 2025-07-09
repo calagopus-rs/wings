@@ -148,56 +148,71 @@ pub async fn handle_ws(
 
             Box::pin(async move {
                 loop {
-                    if let Ok(message) = reciever.recv().await {
-                        let socket_jwt = socket_jwt.read().await;
-                        let socket_jwt = match socket_jwt.as_ref() {
-                            Some(jwt) => jwt,
-                            None => {
-                                tracing::debug!(
-                                    server = %server.uuid,
-                                    "no socket jwt found, ignoring websocket message",
-                                );
-                                continue;
-                            }
-                        };
+                    match reciever.recv().await {
+                        Ok(message) => {
+                            let socket_jwt = socket_jwt.read().await;
+                            let socket_jwt = match socket_jwt.as_ref() {
+                                Some(jwt) => jwt,
+                                None => {
+                                    tracing::debug!(
+                                        server = %server.uuid,
+                                        "no socket jwt found, ignoring websocket message",
+                                    );
+                                    continue;
+                                }
+                            };
 
-                        match message.event {
-                            websocket::WebsocketEvent::ServerInstallOutput => {
-                                if !socket_jwt
-                                    .permissions
-                                    .has_permission(Permission::AdminWebsocketInstall)
-                                {
-                                    continue;
+                            match message.event {
+                                websocket::WebsocketEvent::ServerInstallOutput => {
+                                    if !socket_jwt
+                                        .permissions
+                                        .has_permission(Permission::AdminWebsocketInstall)
+                                    {
+                                        continue;
+                                    }
                                 }
-                            }
-                            websocket::WebsocketEvent::ServerBackupProgress => {
-                                if !socket_jwt
-                                    .permissions
-                                    .has_permission(Permission::BackupRead)
-                                {
-                                    continue;
+                                websocket::WebsocketEvent::ServerBackupProgress => {
+                                    if !socket_jwt
+                                        .permissions
+                                        .has_permission(Permission::BackupRead)
+                                    {
+                                        continue;
+                                    }
                                 }
-                            }
-                            websocket::WebsocketEvent::ServerBackupCompleted => {
-                                if !socket_jwt
-                                    .permissions
-                                    .has_permission(Permission::BackupRead)
-                                {
-                                    continue;
+                                websocket::WebsocketEvent::ServerBackupCompleted => {
+                                    if !socket_jwt
+                                        .permissions
+                                        .has_permission(Permission::BackupRead)
+                                    {
+                                        continue;
+                                    }
                                 }
-                            }
-                            websocket::WebsocketEvent::ServerTransferLogs => {
-                                if !socket_jwt
-                                    .permissions
-                                    .has_permission(Permission::AdminWebsocketTransfer)
-                                {
-                                    continue;
+                                websocket::WebsocketEvent::ServerTransferLogs => {
+                                    if !socket_jwt
+                                        .permissions
+                                        .has_permission(Permission::AdminWebsocketTransfer)
+                                    {
+                                        continue;
+                                    }
                                 }
+                                _ => {}
                             }
-                            _ => {}
+
+                            super::send_message(&sender, message).await
                         }
-
-                        super::send_message(&sender, message).await
+                        Err(RecvError::Closed) => {
+                            tracing::debug!(
+                                server = %server.uuid,
+                                "websocket channel closed, stopping listener"
+                            );
+                            break;
+                        }
+                        Err(RecvError::Lagged(_)) => {
+                            tracing::debug!(
+                                server = %server.uuid,
+                                "websocket lagged behind, messages dropped"
+                            );
+                        }
                     }
                 }
             })

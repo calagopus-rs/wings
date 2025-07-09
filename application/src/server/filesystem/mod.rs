@@ -231,8 +231,7 @@ impl Filesystem {
             .read()
             .await
             .matched(path, is_dir)
-            .invert()
-            .is_ignore()
+            .is_whitelist()
     }
 
     pub fn is_ignored_sync(&self, path: &Path, is_dir: bool) -> bool {

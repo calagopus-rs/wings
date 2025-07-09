@@ -82,6 +82,8 @@ impl JwtClient {
 
             async move {
                 loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+
                     let mut denied = denied_jtokens.write().await;
                     denied.retain(|_, &mut expiration| {
                         expiration > chrono::Utc::now() - chrono::Duration::hours(1)

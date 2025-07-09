@@ -57,7 +57,7 @@ mod get {
         }
 
         let mut directory = server.filesystem.read_dir(&path).await.unwrap();
-        while let Some(Ok(entry)) = directory.next_entry().await {
+        while let Some(Ok((_, entry))) = directory.next_entry().await {
             let path = path.join(entry);
             let metadata = match server.filesystem.symlink_metadata(&path).await {
                 Ok(metadata) => metadata,
