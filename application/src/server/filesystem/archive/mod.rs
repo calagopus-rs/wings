@@ -515,8 +515,12 @@ impl Archive {
                                 None,
                             )?;
 
-                            let (unrar::Stream(_, err), processed_archive) =
+                            let (unrar::Stream(writer, err), processed_archive) =
                                 entry.read_to_stream(Box::new(writer))?;
+                            if let Some(mut writer) = writer {
+                                writer.flush()?;
+                            }
+
                             if let Some(err) = err {
                                 return Err(err.into());
                             }
