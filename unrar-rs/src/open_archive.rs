@@ -238,18 +238,18 @@ impl<Mode: OpenMode> OpenArchive<Mode, CursorBeforeHeader> {
         let handle =
             NonNull::new(unsafe { native::RAROpenArchiveEx(&mut data as *mut _) } as *mut _);
 
-        let arc = handle.and_then(|handle| {
+        let arc = handle.map(|handle| {
             if let Some(pw) = password {
                 let cpw = std::ffi::CString::new(pw).unwrap();
                 unsafe { native::RARSetPassword(handle.as_ptr(), cpw.as_ptr() as *const _) }
             }
-            Some(OpenArchive {
+            OpenArchive {
                 handle: Handle(handle),
                 damaged: false,
                 flags: ArchiveFlags::from_bits(data.flags).unwrap(),
                 extra: CursorBeforeHeader,
                 marker: std::marker::PhantomData,
-            })
+            }
         });
         let result = Code::from(data.open_result as i32).unwrap();
 
@@ -365,7 +365,7 @@ impl<M: OpenMode> OpenArchive<M, CursorBeforeFile> {
         path: Option<&pathed::RarStr>,
         file: Option<&pathed::RarStr>,
     ) -> UnrarResult<(PM::Output, OpenArchive<M, CursorBeforeHeader>)> {
-        let result = Ok((
+        Ok((
             Internal::<PM>::process_file_raw(&self.handle, user_data, path, file)?,
             OpenArchive {
                 extra: CursorBeforeHeader,
@@ -374,8 +374,7 @@ impl<M: OpenMode> OpenArchive<M, CursorBeforeFile> {
                 flags: self.flags,
                 marker: std::marker::PhantomData,
             },
-        ));
-        result
+        ))
     }
 }
 
@@ -383,7 +382,7 @@ impl OpenArchive<Process, CursorBeforeFile> {
     /// Reads the underlying file into a `Vec<u8>`
     /// Returns the data as well as the owned Archive that can be processed further.
     pub fn read(self) -> UnrarResult<(Vec<u8>, OpenArchive<Process, CursorBeforeHeader>)> {
-        Ok(self.process_file_x::<ReadToVec>(None, None, None)?)
+        self.process_file_x::<ReadToVec>(None, None, None)
     }
 
     /// Reads the underlying file into a `Stream` that can be written to.
@@ -399,7 +398,7 @@ impl OpenArchive<Process, CursorBeforeFile> {
 
     /// Test the file without extracting it
     pub fn test(self) -> UnrarResult<OpenArchive<Process, CursorBeforeHeader>> {
-        Ok(self.process_file::<Test>(None, None)?)
+        self.process_file::<Test>(None, None)
     }
 
     /// Extracts the file into the current working directory

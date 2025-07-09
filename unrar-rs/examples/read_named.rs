@@ -18,7 +18,10 @@ fn main() -> UnrarResult<()> {
                         print!("{content}");
                         std::process::exit(0);
                     } else {
-                        eprintln!("error: file too long for this example (is: {}, max: 10000)", content.len());
+                        eprintln!(
+                            "error: file too long for this example (is: {}, max: 10000)",
+                            content.len()
+                        );
                         std::process::exit(1);
                     }
                 }

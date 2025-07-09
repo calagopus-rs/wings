@@ -1,4 +1,4 @@
-use std::ffi::{CString, CStr};
+use std::ffi::{CStr, CString};
 use std::path::{Path, PathBuf};
 
 pub(crate) type RarString = CString;
@@ -18,8 +18,12 @@ pub(crate) fn process_file(
         unrar_sys::RARProcessFile(
             handle,
             operation,
-            dest_path.map(|path| path.as_ptr().cast()).unwrap_or(std::ptr::null()),
-            dest_name.map(|file| file.as_ptr().cast()).unwrap_or(std::ptr::null()),
+            dest_path
+                .map(|path| path.as_ptr().cast())
+                .unwrap_or(std::ptr::null()),
+            dest_name
+                .map(|file| file.as_ptr().cast())
+                .unwrap_or(std::ptr::null()),
         )
     }
 }
@@ -28,5 +32,8 @@ pub(crate) fn preprocess_extract(
     base: Option<&Path>,
     filename: &PathBuf,
 ) -> (Option<RarString>, Option<RarString>) {
-    (None, Some(construct(base.unwrap_or(".".as_ref()).join(filename))))
+    (
+        None,
+        Some(construct(base.unwrap_or(".".as_ref()).join(filename))),
+    )
 }

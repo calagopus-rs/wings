@@ -16,11 +16,10 @@ use libc::{c_char, c_int, c_uchar, c_uint};
 #[cfg(windows)]
 mod env {
     pub use {
-        winapi::shared::minwindef::{LPARAM, UINT, UCHAR, INT},
+        winapi::shared::minwindef::{INT, LPARAM, UCHAR, UINT},
         winapi::shared::ntdef::LONG,
     };
 }
-
 
 #[cfg(not(windows))]
 mod env {
@@ -113,7 +112,9 @@ pub type ProcessDataProc = extern "C" fn(*mut c_uchar, c_int) -> c_int;
 pub type Callback = extern "C" fn(UINT, LPARAM, LPARAM, LPARAM) -> c_int;
 
 #[repr(C)]
-pub struct Handle { _private: [u8; 0] }
+pub struct Handle {
+    _private: [u8; 0],
+}
 
 // ----------------- STRUCTS ----------------- //
 
@@ -205,7 +206,10 @@ pub struct OpenArchiveDataEx {
 // ----------------- BINDINGS ----------------- //
 
 #[link(name = "unrar", kind = "static")]
-#[cfg_attr(all(windows, target_env = "gnu"), link(name = "stdc++", kind = "static", modifiers = "-bundle"))]
+#[cfg_attr(
+    all(windows, target_env = "gnu"),
+    link(name = "stdc++", kind = "static", modifiers = "-bundle")
+)]
 #[cfg_attr(target_os = "macos", link(name = "c++"))]
 #[cfg_attr(any(target_os = "freebsd", target_os = "openbsd"), link(name = "c++"))]
 #[cfg_attr(any(target_os = "linux", target_os = "netbsd"), link(name = "stdc++"))]
@@ -321,8 +325,8 @@ impl OpenArchiveData {
         buffer_size: c_uint,
     ) -> Self {
         OpenArchiveData {
-            archive_name: archive_name,
-            open_mode: open_mode,
+            archive_name,
+            open_mode,
             comment_buffer: buffer,
             comment_buffer_size: buffer_size,
             // set by library:

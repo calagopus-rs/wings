@@ -1,10 +1,9 @@
 use unrar::Archive;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut archive =
-        Archive::new("../archive.rar")
-            .open_for_processing()
-            .unwrap();
+    let mut archive = Archive::new("../archive.rar")
+        .open_for_processing()
+        .unwrap();
     while let Some(header) = archive.read_header()? {
         println!(
             "{} bytes: {}",

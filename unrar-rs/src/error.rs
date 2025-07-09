@@ -6,7 +6,6 @@ use std::ffi;
 use std::fmt;
 use std::result::Result;
 
-
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
 #[repr(i32)]
 pub enum Code {
@@ -77,7 +76,7 @@ impl std::error::Error for UnrarError {}
 impl fmt::Debug for UnrarError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:?}@{:?}", self.code, self.when)?;
-        write!(f, " ({})", self)
+        write!(f, " ({self})")
     }
 }
 

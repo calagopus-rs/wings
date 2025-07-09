@@ -2,7 +2,6 @@ use crate::error::*;
 use crate::open_archive::{CursorBeforeHeader, List, ListSplit, OpenArchive, OpenMode, Process};
 use regex::Regex;
 use std::borrow::Cow;
-use std::iter::repeat;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -17,25 +16,6 @@ fn extension() -> &'static Regex {
 }
 
 /// A RAR archive on the file system.
-///
-/// This struct provides two major classes of methods:
-///    1. methods that do not touch the FS. These are opinionated utility methods
-///         that are based on RAR path conventions out in the wild. Most commonly, multipart
-///         files usually have extensions such as `.part08.rar` or `.r08.rar`. Since extracting
-///         must start at the first part, it may be helpful to figure that out using, for instance,
-///         [`archive.as_first_part()`](Archive::as_first_part)
-///    2. methods that open the underlying path in the specified mode
-///         (possible modes are [`List`], [`ListSplit`] and [`Process`]).
-///         These methods have the word `open` in them, are fallible operations,
-///         return [`OpenArchive`](struct.OpenArchive.html) inside a `Result` and are as follows:
-///         - [`open_for_listing`](Archive::open_for_listing) and
-///             [`open_for_listing_split`](Archive::open_for_listing_split): list the archive
-///             entries (skipping over content/payload)
-///         - [`open_for_processing`](Archive::open_for_processing): process archive entries
-///             as well as content/payload
-///         - [`break_open`](Archive::break_open): read archive even if an error is returned,
-///             if possible. The [`OpenMode`](open_archive/struct.OpenMode.html) must be provided
-///             explicitly.
 pub struct Archive<'a> {
     filename: Cow<'a, Path>,
     password: Option<&'a [u8]>,
@@ -69,7 +49,7 @@ impl<'a> Archive<'a> {
             comments: None,
         }
     }
-    
+
     /// Creates an `Archive` object to operate on a plain non-encrypted RAR archive.
     /// as opposed to [`new`](struct.Archive.html#method.new) that borrows from its input, this function takes ownership of it,
     /// potentially cloning if the input is a reference.
@@ -141,8 +121,7 @@ impl<'a> Archive<'a> {
                 multipart_extension().captures(&full_ext).map(|captures| {
                     let mut replacement = String::from(captures.get(1).unwrap().as_str());
                     replacement.push_str(
-                        &repeat("?")
-                            .take(captures.get(2).unwrap().as_str().len())
+                        &std::iter::repeat_n("?", captures.get(2).unwrap().as_str().len())
                             .collect::<String>(),
                     );
                     replacement.push_str(captures.get(3).unwrap().as_str());
@@ -328,8 +307,9 @@ impl<'a> Archive<'a> {
     /// assert_eq!(archive.filename(), PathBuf::from("path/some.001.rar"));
     /// ```
     pub fn as_first_part(mut self) -> Self {
-        self.first_part_option()
-            .map(|fp| self.filename = Cow::Owned(fp));
+        if let Some(fp) = self.first_part_option() {
+            self.filename = Cow::Owned(fp);
+        }
         self
     }
 
@@ -367,7 +347,6 @@ impl<'a> Archive<'a> {
     /// # Panics
     ///
     /// Panics if `self.filename` contains nul values.
-
     pub fn open_for_listing_split(self) -> UnrarResult<OpenArchive<ListSplit, CursorBeforeHeader>> {
         self.open(None)
     }
@@ -427,7 +406,9 @@ impl<'a> Archive<'a> {
         self.open(Some(&mut recovered))
             .or_else(|x| match recovered {
                 Some(archive) => {
-                    error.map(|error| *error = Some(x));
+                    if let Some(error) = error {
+                        *error = Some(x);
+                    }
                     Ok(archive)
                 }
                 None => Err(x),

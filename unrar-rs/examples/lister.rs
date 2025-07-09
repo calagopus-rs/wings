@@ -27,7 +27,7 @@ fn main() {
                     Ok(e) => println!("{}", e),
                     Err(err) => writeln!(&mut stderr, "Error: {}", err).unwrap(),
                 }
-            }    
+            }
         }
         Err(e) => {
             // the error we passed in is always None
@@ -36,5 +36,4 @@ fn main() {
             writeln!(&mut stderr, "Error: {}", e).unwrap();
         }
     }
-
 }

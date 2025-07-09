@@ -56,7 +56,10 @@ fn main() {
         "scantree",
         "dll",
         "qopen",
-    ].iter().map(|&s| format!("vendor/unrar/{s}.cpp")).collect();
+    ]
+    .iter()
+    .map(|&s| format!("vendor/unrar/{s}.cpp"))
+    .collect();
     cc::Build::new()
         .cpp(true) // Switch to C++ library compilation.
         .opt_level(2)

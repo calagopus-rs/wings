@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use widestring::{WideCString, WideCStr};
+use widestring::{WideCStr, WideCString};
 
 pub(crate) type RarString = WideCString;
 pub(crate) type RarStr = WideCStr;
@@ -18,8 +18,12 @@ pub(crate) fn process_file(
         unrar_sys::RARProcessFileW(
             handle,
             operation,
-            dest_path.map(|path| path.as_ptr().cast()).unwrap_or(std::ptr::null()),
-            dest_name.map(|file| file.as_ptr().cast()).unwrap_or(std::ptr::null()),
+            dest_path
+                .map(|path| path.as_ptr().cast())
+                .unwrap_or(std::ptr::null()),
+            dest_name
+                .map(|file| file.as_ptr().cast())
+                .unwrap_or(std::ptr::null()),
         )
     }
 }
