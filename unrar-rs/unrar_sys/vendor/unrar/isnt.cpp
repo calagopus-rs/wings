@@ -22,7 +22,6 @@ DWORD WinNT()
   return Result;
 }
 
-#ifdef _MSC_VER
 
 // Replace it with documented Windows 11 check when available.
 #include <comdef.h>
@@ -91,16 +90,6 @@ static bool WMI_IsWindows10()
   return Win10;
 }
 
-#else /* _MSC_VER */
-
-#include <wbemidl.h>
-
-static bool WMI_IsWindows10()
-{
-  return false;
-}
-
-#endif /* _MSC_VER */
 
 // Replace it with actual check when available.
 bool IsWindows11OrGreater()
