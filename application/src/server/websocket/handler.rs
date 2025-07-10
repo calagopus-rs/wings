@@ -270,9 +270,7 @@ pub async fn handle_ws(
             let sender = Arc::clone(&sender);
 
             Box::pin(async move {
-                loop {
-                    super::jwt::listen_jwt(&sender, &socket_jwt).await;
-                }
+                super::jwt::listen_jwt(&sender, &socket_jwt).await;
             })
         });
 
@@ -282,7 +280,7 @@ pub async fn handle_ws(
 
             Box::pin(async move {
                 loop {
-                    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                    tokio::time::sleep(std::time::Duration::from_secs(30)).await;
 
                     let ping = sender
                         .lock()

@@ -12,7 +12,7 @@ fatal() {
 
 cd "$(dirname "$(realpath "$0")")"
 
-git status --porcelain | grep -v '^??' >/dev/null && fatal "git repository must not be dirty"
+#git status --porcelain | grep -v '^??' >/dev/null && fatal "git repository must not be dirty"
 
 [ -z "$1" ] && usage 1
 [ "$1" = "--help" ] && usage 0

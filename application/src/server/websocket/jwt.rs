@@ -134,7 +134,8 @@ pub async fn listen_jwt(
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(30)).await;
 
-        if let Some(jwt) = socket_jwt.read().await.as_ref() {
+        let socket_jwt_guard = socket_jwt.read().await;
+        if let Some(jwt) = socket_jwt_guard.as_ref() {
             if let Some(expiration) = jwt.base.expiration_time {
                 if expiration < chrono::Utc::now().timestamp() {
                     super::send_message(
@@ -142,12 +143,21 @@ pub async fn listen_jwt(
                         WebsocketMessage::new(WebsocketEvent::TokenExpired, &[]),
                     )
                     .await;
+
+                    drop(socket_jwt_guard);
+                    socket_jwt.write().await.take();
+
+                    tracing::debug!("jwt expired for websocket connection, removing jwt");
                 } else if expiration - 60 < chrono::Utc::now().timestamp() {
                     super::send_message(
                         sender,
                         WebsocketMessage::new(WebsocketEvent::TokenExpiring, &[]),
                     )
                     .await;
+
+                    tracing::debug!(
+                        "jwt is expiring soon for websocket connection, notifying client"
+                    );
                 }
             }
         } else {
