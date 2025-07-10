@@ -6,7 +6,7 @@ const TARGET: &str = env!("CARGO_TARGET");
 
 pub async fn version(_matches: &ArgMatches, _config: Option<&Arc<crate::config::Config>>) -> i32 {
     println!(
-        "wings-rs {}:{} ({})",
+        "github.com/pterodactyl-rs/wings {}:{} ({})",
         crate::VERSION,
         crate::GIT_COMMIT,
         TARGET

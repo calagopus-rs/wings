@@ -44,4 +44,20 @@ fn main() {
 
     println!("cargo:rustc-env=CARGO_GIT_COMMIT={git_hash}");
     println!("cargo:rustc-env=CARGO_TARGET={target_arch}-{target_env}");
+
+    println!("cargo:rerun-if-changed=seccomp.json");
+
+    let seccomp_path = std::path::Path::new("seccomp.json");
+    if seccomp_path.exists() {
+        let seccomp_min_path = std::path::Path::new("seccomp.min.json");
+
+        let seccomp = std::fs::read_to_string(seccomp_path).expect("Failed to read seccomp.json");
+        let seccomp_min = serde_json::to_string(
+            &serde_json::from_str::<serde_json::Value>(&seccomp)
+                .expect("Failed to parse seccomp.json"),
+        )
+        .expect("Failed to serialize seccomp.json");
+
+        std::fs::write(seccomp_min_path, seccomp_min).expect("Failed to write seccomp.min.json");
+    }
 }

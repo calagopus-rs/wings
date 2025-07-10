@@ -385,7 +385,10 @@ impl ServerConfiguration {
                     typ: Some(config.docker.log_config.r#type.clone()),
                     config: Some(config.docker.log_config.config.clone()),
                 }),
-                security_opt: Some(vec!["no-new-privileges".to_string()]),
+                security_opt: Some(vec![
+                    "no-new-privileges".to_string(),
+                    concat!("seccomp=", include_str!("../../../seccomp.min.json")).to_string(),
+                ]),
                 cap_drop: Some(vec![
                     "setpcap".to_string(),
                     "mknod".to_string(),

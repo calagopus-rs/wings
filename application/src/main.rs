@@ -246,7 +246,19 @@ async fn main() {
             )
             .await,
         ),
-        _ => {}
+        _ => {
+            tracing::info!(" __      ___ _ __   __ _ ___        ");
+            tracing::info!(" \\ \\ /\\ / / | '_ \\ / _` / __|       ");
+            tracing::info!("  \\ V  V /| | | | | (_| \\__ \\       ");
+            tracing::info!("   \\_/\\_/ |_|_| |_|\\__, |___/__ ___ ");
+            tracing::info!("                    __/ | | '__/ __|");
+            tracing::info!("                   |___/  | |  \\__ \\");
+            tracing::info!(
+                "{: >25} |_|  |___/",
+                format!("{} (git-{})", wings_rs::VERSION, wings_rs::GIT_COMMIT)
+            );
+            tracing::info!("github.com/pterodactyl-rs/wings\n");
+        }
     }
 
     let (config, _guard) = config.context("failed to load config").unwrap();
