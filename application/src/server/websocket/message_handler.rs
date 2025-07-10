@@ -30,15 +30,6 @@ pub async fn handle_message(
                 ),
             )
             .await;
-
-            let state_str = serde_json::to_value(server.state.get_state()).unwrap();
-            let state_str = state_str.as_str().unwrap();
-
-            super::send_message(
-                sender,
-                WebsocketMessage::new(WebsocketEvent::ServerStatus, &[state_str.to_string()]),
-            )
-            .await;
         }
         WebsocketEvent::SendServerLogs => {
             if server.state.get_state() != crate::server::state::ServerState::Offline
