@@ -54,24 +54,24 @@ impl Client {
         r#type: super::AuthenticationType,
         username: &str,
         password: &str,
-    ) -> Result<(uuid::Uuid, uuid::Uuid, Permissions, Vec<String>), reqwest::Error> {
+    ) -> Result<(uuid::Uuid, uuid::Uuid, Permissions, Vec<String>), anyhow::Error> {
         tracing::debug!("getting sftp auth");
         super::get_sftp_auth(self, r#type, username, password).await
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn send_activity(&self, activity: Vec<ApiActivity>) -> Result<(), reqwest::Error> {
+    pub async fn send_activity(&self, activity: Vec<ApiActivity>) -> Result<(), anyhow::Error> {
         tracing::debug!("sending {} activity to remote", activity.len());
         super::send_activity(self, activity).await
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn reset_state(&self) -> Result<(), reqwest::Error> {
+    pub async fn reset_state(&self) -> Result<(), anyhow::Error> {
         tracing::info!("resetting remote state");
         super::reset_state(self).await
     }
 
-    pub async fn servers(&self) -> Result<Vec<super::servers::RawServer>, reqwest::Error> {
+    pub async fn servers(&self) -> Result<Vec<super::servers::RawServer>, anyhow::Error> {
         tracing::info!("fetching all servers from remote");
 
         let mut servers = Vec::new();
@@ -97,7 +97,7 @@ impl Client {
     pub async fn server(
         &self,
         uuid: uuid::Uuid,
-    ) -> Result<super::servers::RawServer, reqwest::Error> {
+    ) -> Result<super::servers::RawServer, anyhow::Error> {
         super::servers::get_server(self, uuid).await
     }
 
@@ -105,7 +105,7 @@ impl Client {
     pub async fn server_install_script(
         &self,
         uuid: uuid::Uuid,
-    ) -> Result<InstallationScript, reqwest::Error> {
+    ) -> Result<InstallationScript, anyhow::Error> {
         tracing::info!("fetching server install script");
         super::servers::get_server_install_script(self, uuid).await
     }
@@ -116,7 +116,7 @@ impl Client {
         uuid: uuid::Uuid,
         successful: bool,
         reinstalled: bool,
-    ) -> Result<(), reqwest::Error> {
+    ) -> Result<(), anyhow::Error> {
         tracing::info!("setting server install status");
         super::servers::set_server_install(self, uuid, successful, reinstalled).await
     }
@@ -126,7 +126,7 @@ impl Client {
         &self,
         uuid: uuid::Uuid,
         successful: bool,
-    ) -> Result<(), reqwest::Error> {
+    ) -> Result<(), anyhow::Error> {
         tracing::info!("setting server transfer status");
         super::servers::set_server_transfer(self, uuid, successful).await
     }
@@ -136,7 +136,7 @@ impl Client {
         &self,
         uuid: uuid::Uuid,
         data: &super::backups::RawServerBackup,
-    ) -> Result<(), reqwest::Error> {
+    ) -> Result<(), anyhow::Error> {
         tracing::info!("setting backup status");
         super::backups::set_backup_status(self, uuid, data).await
     }
@@ -146,7 +146,7 @@ impl Client {
         &self,
         uuid: uuid::Uuid,
         successful: bool,
-    ) -> Result<(), reqwest::Error> {
+    ) -> Result<(), anyhow::Error> {
         tracing::info!("setting backup restore status");
         super::backups::set_backup_restore_status(self, uuid, successful).await
     }
@@ -156,7 +156,7 @@ impl Client {
         &self,
         uuid: uuid::Uuid,
         size: u64,
-    ) -> Result<(u64, Vec<String>), reqwest::Error> {
+    ) -> Result<(u64, Vec<String>), anyhow::Error> {
         tracing::info!("getting backup upload urls");
         super::backups::backup_upload_urls(self, uuid, size).await
     }

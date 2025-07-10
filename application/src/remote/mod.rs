@@ -1,12 +1,20 @@
 use crate::server::{activity::ApiActivity, permissions::Permissions};
 use client::Client;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::json;
 
 pub mod backups;
 pub mod client;
 pub mod jwt;
 pub mod servers;
+
+#[inline]
+fn into_json<T: DeserializeOwned>(value: String) -> Result<T, anyhow::Error> {
+    match serde_json::from_str(&value) {
+        Ok(json) => Ok(json),
+        Err(err) => Err(anyhow::anyhow!("failed to parse JSON: {:#?}\n{value}", err)),
+    }
+}
 
 #[derive(Deserialize, Serialize, Default)]
 pub struct Pagination {
@@ -27,19 +35,21 @@ pub async fn get_sftp_auth(
     r#type: AuthenticationType,
     username: &str,
     password: &str,
-) -> Result<(uuid::Uuid, uuid::Uuid, Permissions, Vec<String>), reqwest::Error> {
-    let response: Response = client
-        .client
-        .post(format!("{}/sftp/auth", client.url))
-        .json(&json!({
-            "type": r#type,
-            "username": username,
-            "password": password,
-        }))
-        .send()
-        .await?
-        .json()
-        .await?;
+) -> Result<(uuid::Uuid, uuid::Uuid, Permissions, Vec<String>), anyhow::Error> {
+    let response: Response = into_json(
+        client
+            .client
+            .post(format!("{}/sftp/auth", client.url))
+            .json(&json!({
+                "type": r#type,
+                "username": username,
+                "password": password,
+            }))
+            .send()
+            .await?
+            .text()
+            .await?,
+    )?;
 
     #[derive(Deserialize)]
     pub struct Response {
@@ -62,7 +72,7 @@ pub async fn get_sftp_auth(
 pub async fn send_activity(
     client: &Client,
     activity: Vec<ApiActivity>,
-) -> Result<(), reqwest::Error> {
+) -> Result<(), anyhow::Error> {
     client
         .client
         .post(format!("{}/activity", client.url))
@@ -75,7 +85,7 @@ pub async fn send_activity(
     Ok(())
 }
 
-pub async fn reset_state(client: &Client) -> Result<(), reqwest::Error> {
+pub async fn reset_state(client: &Client) -> Result<(), anyhow::Error> {
     client
         .client
         .post(format!("{}/servers/reset", client.url))

@@ -13,17 +13,19 @@ pub struct RawServer {
 pub async fn get_servers_paged(
     client: &Client,
     page: usize,
-) -> Result<(Vec<RawServer>, super::Pagination), reqwest::Error> {
-    let response: Response = client
-        .client
-        .get(format!(
-            "{}/servers?page={}&per_page={}",
-            client.url, page, client.config.boot_servers_per_page
-        ))
-        .send()
-        .await?
-        .json()
-        .await?;
+) -> Result<(Vec<RawServer>, super::Pagination), anyhow::Error> {
+    let response: Response = super::into_json(
+        client
+            .client
+            .get(format!(
+                "{}/servers?page={}&per_page={}",
+                client.url, page, client.config.boot_servers_per_page
+            ))
+            .send()
+            .await?
+            .text()
+            .await?,
+    )?;
 
     #[derive(Deserialize, Default)]
     struct Response {
@@ -34,14 +36,16 @@ pub async fn get_servers_paged(
     Ok((response.data, response.meta))
 }
 
-pub async fn get_server(client: &Client, uuid: uuid::Uuid) -> Result<RawServer, reqwest::Error> {
-    let response = client
-        .client
-        .get(format!("{}/servers/{}", client.url, uuid))
-        .send()
-        .await?
-        .json()
-        .await?;
+pub async fn get_server(client: &Client, uuid: uuid::Uuid) -> Result<RawServer, anyhow::Error> {
+    let response = super::into_json(
+        client
+            .client
+            .get(format!("{}/servers/{}", client.url, uuid))
+            .send()
+            .await?
+            .text()
+            .await?,
+    )?;
 
     Ok(response)
 }
@@ -49,14 +53,16 @@ pub async fn get_server(client: &Client, uuid: uuid::Uuid) -> Result<RawServer, 
 pub async fn get_server_install_script(
     client: &Client,
     uuid: uuid::Uuid,
-) -> Result<InstallationScript, reqwest::Error> {
-    let response = client
-        .client
-        .get(format!("{}/servers/{}/install", client.url, uuid))
-        .send()
-        .await?
-        .json()
-        .await?;
+) -> Result<InstallationScript, anyhow::Error> {
+    let response = super::into_json(
+        client
+            .client
+            .get(format!("{}/servers/{}/install", client.url, uuid))
+            .send()
+            .await?
+            .text()
+            .await?,
+    )?;
 
     Ok(response)
 }
@@ -66,7 +72,7 @@ pub async fn set_server_install(
     uuid: uuid::Uuid,
     successful: bool,
     reinstalled: bool,
-) -> Result<(), reqwest::Error> {
+) -> Result<(), anyhow::Error> {
     client
         .client
         .post(format!("{}/servers/{}/install", client.url, uuid))
@@ -84,7 +90,7 @@ pub async fn set_server_transfer(
     client: &Client,
     uuid: uuid::Uuid,
     successful: bool,
-) -> Result<(), reqwest::Error> {
+) -> Result<(), anyhow::Error> {
     client
         .client
         .post(format!(
