@@ -213,6 +213,9 @@ fn docker_container_pid_limit() -> u64 {
     512
 }
 
+fn docker_installer_limits_timeout_seconds() -> u64 {
+    30 * 60
+}
 fn docker_installer_limits_memory() -> u64 {
     1024
 }
@@ -546,6 +549,9 @@ nestify::nest! {
 
             #[serde(default)]
             pub installer_limits: #[derive(Deserialize, Serialize, DefaultFromSerde)] #[serde(default)] pub struct DockerInstallerLimits {
+                #[serde(default = "docker_installer_limits_timeout_seconds")]
+                pub timeout_seconds: u64,
+
                 #[serde(default = "docker_installer_limits_memory")]
                 /// MiB
                 pub memory: u64,

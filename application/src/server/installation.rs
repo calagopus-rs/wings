@@ -366,128 +366,140 @@ pub async fn install_server(
 
     *container_id.lock().await = Some(container.id.clone());
 
-    if tokio::time::timeout(std::time::Duration::from_secs(15 * 60), async move {
-        let thread = {
-            let docker_id = container.id.clone();
-            let server = Arc::clone(server);
-            let client = Arc::clone(client);
+    if let Err(err) = tokio::time::timeout(
+        if server.config.docker.installer_limits.timeout_seconds > 0 {
+            std::time::Duration::from_secs(server.config.docker.installer_limits.timeout_seconds)
+        } else {
+            std::time::Duration::MAX
+        },
+        async move {
+            let thread = {
+                let docker_id = container.id.clone();
+                let server = Arc::clone(server);
+                let client = Arc::clone(client);
 
-            async move {
-                let mut stream = client
-                    .attach_container::<String>(
-                        &docker_id,
-                        Some(bollard::container::AttachContainerOptions {
-                            stdout: Some(true),
-                            stderr: Some(true),
-                            stream: Some(true),
-                            ..Default::default()
-                        }),
-                    )
-                    .await
-                    .unwrap();
+                async move {
+                    let mut stream = client
+                        .attach_container::<String>(
+                            &docker_id,
+                            Some(bollard::container::AttachContainerOptions {
+                                stdout: Some(true),
+                                stderr: Some(true),
+                                stream: Some(true),
+                                ..Default::default()
+                            }),
+                        )
+                        .await
+                        .unwrap();
 
-                let mut buffer = Vec::with_capacity(1024);
-                let mut line_start = 0;
+                    let mut buffer = Vec::with_capacity(1024);
+                    let mut line_start = 0;
 
-                while let Some(Ok(data)) = stream.output.next().await {
-                    buffer.extend_from_slice(&data.into_bytes());
+                    while let Some(Ok(data)) = stream.output.next().await {
+                        buffer.extend_from_slice(&data.into_bytes());
 
-                    let mut search_start = line_start;
+                        let mut search_start = line_start;
 
-                    loop {
-                        if let Some(pos) = buffer[search_start..].iter().position(|&b| b == b'\n') {
-                            let newline_pos = search_start + pos;
+                        loop {
+                            if let Some(pos) =
+                                buffer[search_start..].iter().position(|&b| b == b'\n')
+                            {
+                                let newline_pos = search_start + pos;
 
-                            if newline_pos - line_start <= 512 {
-                                let line =
-                                    String::from_utf8_lossy(&buffer[line_start..newline_pos])
-                                        .trim()
-                                        .to_string();
-                                server
-                                    .websocket
-                                    .send(super::websocket::WebsocketMessage::new(
-                                        super::websocket::WebsocketEvent::ServerInstallOutput,
-                                        &[line],
-                                    ))
-                                    .ok();
+                                if newline_pos - line_start <= 512 {
+                                    let line =
+                                        String::from_utf8_lossy(&buffer[line_start..newline_pos])
+                                            .trim()
+                                            .to_string();
+                                    server
+                                        .websocket
+                                        .send(super::websocket::WebsocketMessage::new(
+                                            super::websocket::WebsocketEvent::ServerInstallOutput,
+                                            &[line],
+                                        ))
+                                        .ok();
 
-                                line_start = newline_pos + 1;
-                                search_start = line_start;
+                                    line_start = newline_pos + 1;
+                                    search_start = line_start;
+                                } else {
+                                    let line = String::from_utf8_lossy(
+                                        &buffer[line_start..(line_start + 512)],
+                                    )
+                                    .trim()
+                                    .to_string();
+                                    server
+                                        .websocket
+                                        .send(super::websocket::WebsocketMessage::new(
+                                            super::websocket::WebsocketEvent::ServerInstallOutput,
+                                            &[line],
+                                        ))
+                                        .ok();
+
+                                    line_start += 512;
+                                    search_start = line_start;
+                                }
                             } else {
-                                let line = String::from_utf8_lossy(
-                                    &buffer[line_start..(line_start + 512)],
-                                )
-                                .trim()
-                                .to_string();
-                                server
-                                    .websocket
-                                    .send(super::websocket::WebsocketMessage::new(
-                                        super::websocket::WebsocketEvent::ServerInstallOutput,
-                                        &[line],
-                                    ))
-                                    .ok();
+                                let current_line_length = buffer.len() - line_start;
+                                if current_line_length > 512 {
+                                    let line = String::from_utf8_lossy(
+                                        &buffer[line_start..(line_start + 512)],
+                                    )
+                                    .trim()
+                                    .to_string();
+                                    server
+                                        .websocket
+                                        .send(super::websocket::WebsocketMessage::new(
+                                            super::websocket::WebsocketEvent::ServerInstallOutput,
+                                            &[line],
+                                        ))
+                                        .ok();
 
-                                line_start += 512;
-                                search_start = line_start;
+                                    line_start += 512;
+                                    search_start = line_start;
+                                } else {
+                                    break;
+                                }
                             }
-                        } else {
-                            let current_line_length = buffer.len() - line_start;
-                            if current_line_length > 512 {
-                                let line = String::from_utf8_lossy(
-                                    &buffer[line_start..(line_start + 512)],
-                                )
-                                .trim()
-                                .to_string();
-                                server
-                                    .websocket
-                                    .send(super::websocket::WebsocketMessage::new(
-                                        super::websocket::WebsocketEvent::ServerInstallOutput,
-                                        &[line],
-                                    ))
-                                    .ok();
+                        }
 
-                                line_start += 512;
-                                search_start = line_start;
-                            } else {
-                                break;
-                            }
+                        if line_start > 1024 && line_start > buffer.len() / 2 {
+                            buffer.drain(0..line_start);
+                            line_start = 0;
                         }
                     }
 
-                    if line_start > 1024 && line_start > buffer.len() / 2 {
-                        buffer.drain(0..line_start);
-                        line_start = 0;
+                    if line_start < buffer.len() {
+                        let line = String::from_utf8_lossy(&buffer[line_start..])
+                            .trim()
+                            .to_string();
+                        server
+                            .websocket
+                            .send(super::websocket::WebsocketMessage::new(
+                                super::websocket::WebsocketEvent::ServerInstallOutput,
+                                &[line],
+                            ))
+                            .ok();
                     }
                 }
+            };
 
-                if line_start < buffer.len() {
-                    let line = String::from_utf8_lossy(&buffer[line_start..])
-                        .trim()
-                        .to_string();
-                    server
-                        .websocket
-                        .send(super::websocket::WebsocketMessage::new(
-                            super::websocket::WebsocketEvent::ServerInstallOutput,
-                            &[line],
-                        ))
-                        .ok();
-                }
-            }
-        };
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            client
+                .start_container::<String>(&container.id, None)
+                .await
+                .unwrap();
 
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-        client
-            .start_container::<String>(&container.id, None)
-            .await
-            .unwrap();
-
-        thread.await;
-    })
+            thread.await;
+        },
+    )
     .await
-    .is_err()
     {
         unset_installing(false).await?;
-        return Err(anyhow::anyhow!("Timeout while waiting for installation"));
+
+        return Err(anyhow::anyhow!(
+            "timeout while waiting for installation: {:#?}",
+            err
+        ));
     }
 
     unset_installing(true).await?;

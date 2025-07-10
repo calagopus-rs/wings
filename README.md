@@ -108,6 +108,10 @@ docker:
   network:
     # whether to disable binding to a specific ip
     disable_interface_binding: false
+
+  installer_limits:
+    # how long in seconds to wait until an install container is considered failed, 0 means no limit
+    timeout_seconds: 1800
 ```
 
 ## added features
