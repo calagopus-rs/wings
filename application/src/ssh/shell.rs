@@ -311,7 +311,10 @@ impl ShellSession {
                     if line.starts_with(&self.state.config.system.sftp.shell.cli.name) {
                         self.handle_cli_command(&line, writer).await;
                     } else if self.has_permission(Permission::ControlConsole).await {
-                        if let Some(stdin) = self.server.container_stdin().await {
+                        if self.server.state.get_state()
+                            != crate::server::state::ServerState::Offline
+                            && let Some(stdin) = self.server.container_stdin().await
+                        {
                             if let Err(err) = stdin.send(format!("{line}\n")).await {
                                 writer.write_all(b"\r\n").await.unwrap_or_default();
 
@@ -337,12 +340,31 @@ impl ShellSession {
                                     .await;
                             }
                         } else {
-                            writer.write_all(b"\r\n\x1b[2K").await.unwrap_or_default();
-                            writer.write_all(b"The server is currently offline.\r\n\x1b[2K").await.unwrap_or_default();
+                            let prelude = ansi_term::Color::Yellow
+                                .bold()
+                                .paint(format!("[{} Daemon]:", self.state.config.app_name));
+
+                            writer.write_all(b"\r\n").await.unwrap_or_default();
+                            writer
+                                .write_all(
+                                    format!(
+                                        "{prelude} The server is currently offline.\r\n\x1b[2K"
+                                    )
+                                    .as_bytes(),
+                                )
+                                .await
+                                .unwrap_or_default();
                         }
                     } else {
-                        writer.write_all(b"\r\n\x1b[2K").await.unwrap_or_default();
-                        writer.write_all(b"You are missing the `control.console` permission to do this.\r\n\x1b[2K").await.unwrap_or_default();
+                        let prelude = ansi_term::Color::Yellow
+                            .bold()
+                            .paint(format!("[{} Daemon]:", self.state.config.app_name));
+
+                        writer.write_all(b"\r\n").await.unwrap_or_default();
+                        writer
+                            .write_all(format!("{prelude} You are missing the `control.console` permission to do this.\r\n\x1b[2K").as_bytes())
+                            .await
+                            .unwrap_or_default();
                     }
 
                     current_line.clear();
