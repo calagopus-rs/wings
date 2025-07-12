@@ -121,6 +121,14 @@ fn system_sftp_directory_entry_send_amount() -> usize {
     500
 }
 
+fn system_sftp_shell_enabled() -> bool {
+    true
+}
+
+fn system_sftp_shell_cli_name() -> String {
+    ".wings".to_string()
+}
+
 fn system_crash_detection_enabled() -> bool {
     true
 }
@@ -394,6 +402,18 @@ nestify::nest! {
                 pub directory_entry_limit: u64,
                 #[serde(default = "system_sftp_directory_entry_send_amount")]
                 pub directory_entry_send_amount: usize,
+
+                #[serde(default)]
+                pub shell: #[derive(Deserialize, Serialize, DefaultFromSerde)] #[serde(default)] pub struct SystemSftpShell {
+                    #[serde(default = "system_sftp_shell_enabled")]
+                    pub enabled: bool,
+
+                    #[serde(default)]
+                    pub cli: #[derive(Deserialize, Serialize, DefaultFromSerde)] #[serde(default)] pub struct SystemSftpShellCli {
+                        #[serde(default = "system_sftp_shell_cli_name")]
+                        pub name: String,
+                    },
+                },
             },
 
             #[serde(default)]

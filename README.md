@@ -53,6 +53,14 @@ system:
     # how many entries to send on each readdir call (chunk size)
     directory_entry_send_amount: 500
 
+    shell:
+      # whether to enable the wings remote shell (allows server management over ssh)
+      enabled: true
+
+      cli:
+        # what to call the internal cli for managing server actions (e.g. ".wings help")
+        name: ".wings"
+
   backups:
     # allow browsing backups via the web file manager
     mounting:
@@ -138,6 +146,11 @@ docker:
 - add multithreading support to `POST /api/servers/{server}/files/decompress`
 - add support for `ignored_files` in the file upload jwt
 - allow transferring backups in server transfers
+
+### shell
+
+- add ability to connect via ssh and access server console
+- add `.wings` cli to do basic server actions like power
 
 ### sftp
 

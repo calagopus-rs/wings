@@ -79,7 +79,7 @@ pub async fn handle_message(
                             err,
                         );
 
-                        server.log_daemon_error("an unexpected error occurred while starting the server. please contact an administrator.")
+                        server.log_daemon_error("An unexpected error occurred while starting the server. Please contact an Administrator.")
                                 .await;
                     } else {
                         server
@@ -115,7 +115,7 @@ pub async fn handle_message(
                             err
                         );
 
-                        server.log_daemon_error("an unexpected error occurred while starting the server. please contact an administrator.")
+                        server.log_daemon_error("An unexpected error occurred while restarting the server. Please contact an Administrator.")
                                 .await;
                     } else {
                         server
@@ -151,7 +151,7 @@ pub async fn handle_message(
                             err
                         );
 
-                        server.log_daemon_error("an unexpected error occurred while starting the server. please contact an administrator.")
+                        server.log_daemon_error("An unexpected error occurred while stopping the server. Please contact an Administrator.")
                                 .await;
                     } else {
                         server
@@ -187,7 +187,7 @@ pub async fn handle_message(
                             err
                         );
 
-                        server.log_daemon_error("an unexpected error occurred while starting the server. please contact an administrator.")
+                        server.log_daemon_error("An unexpected error occurred while killing the server. Please contact an Administrator.")
                                 .await;
                     } else {
                         server

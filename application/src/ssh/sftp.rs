@@ -15,7 +15,7 @@ use sha1::Digest;
 use std::{
     collections::HashMap,
     io::SeekFrom,
-    net::{IpAddr, SocketAddr},
+    net::IpAddr,
     os::unix::fs::FileExt,
     path::{Path, PathBuf},
     sync::Arc,
@@ -23,29 +23,7 @@ use std::{
 use sysinfo::Disks;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
-mod auth;
-
-pub struct Server {
-    pub state: State,
-}
-
-impl russh::server::Server for Server {
-    type Handler = auth::SshSession;
-
-    fn new_client(&mut self, client: Option<SocketAddr>) -> Self::Handler {
-        auth::SshSession {
-            state: Arc::clone(&self.state),
-            server: None,
-
-            user_ip: client.map(|addr| addr.ip()),
-            user_uuid: None,
-
-            clients: HashMap::new(),
-        }
-    }
-}
-
-struct FileHandle {
+pub struct FileHandle {
     path: PathBuf,
     path_components: Vec<String>,
 
@@ -54,14 +32,14 @@ struct FileHandle {
     size: u64,
 }
 
-struct DirHandle {
+pub struct DirHandle {
     path: PathBuf,
 
     dir: crate::server::filesystem::AsyncReadDir,
     consumed: u64,
 }
 
-enum ServerHandle {
+pub enum ServerHandle {
     File(FileHandle),
     Dir(DirHandle),
 }
@@ -78,15 +56,15 @@ impl ServerHandle {
 
 const HANDLE_LIMIT: usize = 32;
 
-struct SftpSession {
-    state: State,
-    server: crate::server::Server,
+pub struct SftpSession {
+    pub state: State,
+    pub server: crate::server::Server,
 
-    user_ip: Option<IpAddr>,
-    user_uuid: uuid::Uuid,
+    pub user_ip: Option<IpAddr>,
+    pub user_uuid: uuid::Uuid,
 
-    handle_id: u64,
-    handles: HashMap<String, ServerHandle>,
+    pub handle_id: u64,
+    pub handles: HashMap<String, ServerHandle>,
 }
 
 impl SftpSession {

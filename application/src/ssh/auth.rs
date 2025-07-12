@@ -27,8 +27,8 @@ impl SshSession {
         methods
     }
 
-    pub async fn get_channel(&mut self, channel_id: ChannelId) -> Channel<Msg> {
-        self.clients.remove(&channel_id).unwrap()
+    pub async fn get_channel(&mut self, channel_id: ChannelId) -> Option<Channel<Msg>> {
+        self.clients.remove(&channel_id)
     }
 }
 
@@ -88,6 +88,8 @@ impl russh::server::Handler for SshSession {
                 });
             }
         };
+
+        tracing::debug!("user {} authenticated with password", username);
 
         if server.is_locked_state() {
             return Ok(Auth::reject());
@@ -149,6 +151,8 @@ impl russh::server::Handler for SshSession {
             None => return Ok(Auth::reject()),
         };
 
+        tracing::debug!("user {} authenticated with public key", username);
+
         if server.is_locked_state() {
             return Ok(Auth::reject());
         }
@@ -168,6 +172,7 @@ impl russh::server::Handler for SshSession {
         channel: Channel<Msg>,
         _session: &mut Session,
     ) -> Result<bool, Self::Error> {
+        tracing::debug!("opening new channel: {}", channel.id());
         self.clients.insert(channel.id(), channel);
 
         Ok(true)
@@ -178,7 +183,60 @@ impl russh::server::Handler for SshSession {
         channel: ChannelId,
         session: &mut Session,
     ) -> Result<(), Self::Error> {
+        tracing::debug!("channel eof: {}", channel);
         session.close(channel)?;
+
+        Ok(())
+    }
+
+    async fn shell_request(
+        &mut self,
+        channel_id: ChannelId,
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        tracing::debug!("channel shell request: {}", channel_id);
+
+        if !self.state.config.system.sftp.shell.enabled {
+            return Err(Box::new(StatusCode::PermissionDenied));
+        }
+
+        let user_uuid = match self.user_uuid {
+            Some(uuid) => uuid,
+            None => return Err(Box::new(StatusCode::PermissionDenied)),
+        };
+
+        let server = match &self.server {
+            Some(server) => server.clone(),
+            None => return Err(Box::new(StatusCode::PermissionDenied)),
+        };
+
+        let channel = match self.get_channel(channel_id).await {
+            Some(channel) => channel,
+            None => return Err(Box::new(StatusCode::PermissionDenied)),
+        };
+
+        session.channel_success(channel_id)?;
+        let ssh = super::shell::ShellSession {
+            state: Arc::clone(&self.state),
+            server,
+
+            user_ip: self.user_ip,
+            user_uuid,
+        };
+        ssh.run(channel);
+
+        Ok(())
+    }
+
+    async fn data(
+        &mut self,
+        _channel_id: ChannelId,
+        data: &[u8],
+        _session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        if data == [3] {
+            return Err(Box::new(russh::Error::Disconnect));
+        }
 
         Ok(())
     }
@@ -200,8 +258,11 @@ impl russh::server::Handler for SshSession {
         };
 
         if name == "sftp" {
-            let channel = self.get_channel(channel_id).await;
-            let sftp = super::SftpSession {
+            let channel = match self.get_channel(channel_id).await {
+                Some(channel) => channel,
+                None => return Err(Box::new(StatusCode::PermissionDenied)),
+            };
+            let sftp = super::sftp::SftpSession {
                 state: Arc::clone(&self.state),
                 server,
 

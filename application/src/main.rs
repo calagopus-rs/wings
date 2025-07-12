@@ -376,7 +376,7 @@ async fn main() {
         let state = Arc::clone(&state);
 
         async move {
-            let mut server = wings_rs::sftp::Server {
+            let mut server = wings_rs::ssh::Server {
                 state: Arc::clone(&state),
             };
 
@@ -451,7 +451,7 @@ async fn main() {
 
             tracing::info!(
                 "{} listening on {} {}",
-                "sftp server".yellow(),
+                "ssh server".yellow(),
                 address.to_string().cyan(),
                 format!(
                     "(app@{}, {}ms)",

@@ -6,7 +6,7 @@ pub mod models;
 pub mod remote;
 pub mod routes;
 pub mod server;
-pub mod sftp;
+pub mod ssh;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const GIT_COMMIT: &str = env!("CARGO_GIT_COMMIT");
