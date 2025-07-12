@@ -294,7 +294,7 @@ impl ShellSession {
         match byte {
             b'\r' | b'\n' => {
                 if !current_line.is_empty() {
-                    let line = String::from_utf8_lossy(&current_line);
+                    let line = String::from_utf8_lossy(current_line);
 
                     if !command_history.is_empty()
                         && command_history.last().unwrap() != current_line
@@ -336,6 +336,9 @@ impl ShellSession {
                                     })
                                     .await;
                             }
+                        } else {
+                            writer.write_all(b"\r\n\x1b[2K").await.unwrap_or_default();
+                            writer.write_all(b"The server is currently offline.\r\n\x1b[2K").await.unwrap_or_default();
                         }
                     } else {
                         writer.write_all(b"\r\n\x1b[2K").await.unwrap_or_default();
