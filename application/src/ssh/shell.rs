@@ -512,16 +512,18 @@ impl ShellSession {
                                                             }
                                                         }
                                                     } else if self.has_permission(Permission::ControlConsole).await {
-                                                        writer.write_all(b"\r").await.unwrap_or_default();
-
                                                         if let Some(stdin) = server.container_stdin().await {
                                                             if let Err(err) = stdin.send(format!("{line}\n")).await {
+                                                                writer.write_all(b"\r\n").await.unwrap_or_default();
+
                                                                 tracing::error!(
                                                                     server = %server.uuid,
                                                                     "failed to send command to server: {}",
                                                                     err
                                                                 );
                                                             } else {
+                                                                writer.write_all(b"\r").await.unwrap_or_default();
+
                                                                 server
                                                                     .activity
                                                                     .log_activity(Activity {
