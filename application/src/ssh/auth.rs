@@ -14,6 +14,7 @@ pub struct SshSession {
     pub user_uuid: Option<uuid::Uuid>,
 
     pub clients: HashMap<ChannelId, Channel<Msg>>,
+    pub shell_clients: Vec<ChannelId>,
 }
 
 impl SshSession {
@@ -186,6 +187,9 @@ impl russh::server::Handler for SshSession {
         tracing::debug!("channel eof: {}", channel);
         session.close(channel)?;
 
+        self.clients.remove(&channel);
+        self.shell_clients.retain(|&id| id != channel);
+
         Ok(())
     }
 
@@ -215,6 +219,8 @@ impl russh::server::Handler for SshSession {
             None => return Err(Box::new(StatusCode::PermissionDenied)),
         };
 
+        self.shell_clients.push(channel_id);
+
         session.channel_success(channel_id)?;
         let ssh = super::shell::ShellSession {
             state: Arc::clone(&self.state),
@@ -230,11 +236,11 @@ impl russh::server::Handler for SshSession {
 
     async fn data(
         &mut self,
-        _channel_id: ChannelId,
+        channel_id: ChannelId,
         data: &[u8],
         _session: &mut Session,
     ) -> Result<(), Self::Error> {
-        if data == [3] {
+        if self.shell_clients.contains(&channel_id) && data == [3] {
             return Err(Box::new(russh::Error::Disconnect));
         }
 

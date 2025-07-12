@@ -21,6 +21,7 @@ impl russh::server::Server for Server {
             user_uuid: None,
 
             clients: HashMap::new(),
+            shell_clients: Vec::new(),
         }
     }
 }

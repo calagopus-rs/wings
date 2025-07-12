@@ -539,7 +539,7 @@ impl ShellSession {
                                                             }
                                                         }
                                                     } else {
-                                                        writer.write_all(b"\r\n").await.unwrap_or_default();
+                                                        writer.write_all(b"\r\n\x1b[2K").await.unwrap_or_default();
                                                         writer
                                                             .write_all(b"You are missing the `control.console` permission to do this.\r\n\x1b[2K")
                                                             .await
