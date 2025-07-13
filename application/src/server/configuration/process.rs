@@ -56,7 +56,14 @@ impl ServerConfigurationFile {
                         if parts.len() >= 3 {
                             match parts[2] {
                                 "memory" => return Some(config.build.memory_limit.to_string()),
-                                "io" => return Some(config.build.io_weight.to_string()),
+                                "io" => {
+                                    return Some(
+                                        config
+                                            .build
+                                            .io_weight
+                                            .map_or("none".to_string(), |v| v.to_string()),
+                                    );
+                                }
                                 "cpu" => return Some(config.build.cpu_limit.to_string()),
                                 "disk" => return Some(config.build.disk_space.to_string()),
                                 "default" if parts.len() >= 4 => match parts[3] {

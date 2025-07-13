@@ -62,7 +62,7 @@ nestify::nest! {
         pub build: #[derive(ToSchema, Deserialize, Serialize)] pub struct ServerConfigurationBuild {
             pub memory_limit: i64,
             pub swap: i64,
-            pub io_weight: u16,
+            pub io_weight: Option<u16>,
             pub cpu_limit: i64,
             pub disk_space: u64,
             pub threads: Option<String>,
@@ -242,7 +242,7 @@ impl ServerConfiguration {
                     ),
                 },
             },
-            blkio_weight: Some(self.build.io_weight),
+            blkio_weight: self.build.io_weight,
             oom_kill_disable: Some(self.build.oom_disabled),
             pids_limit: match config.docker.container_pid_limit {
                 0 => None,
