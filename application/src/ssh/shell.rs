@@ -59,6 +59,7 @@ impl ShellSession {
                 writeln("  help    - Show this help message").await;
                 writeln("  version - Show the current version").await;
                 writeln("  power   - Send a power action to the server").await;
+                writeln("  stats   - Show server statistics").await;
             }
             Some("version") => {
                 writeln(&format!("Current version: {}", crate::VERSION)).await;
@@ -177,6 +178,65 @@ impl ShellSession {
                     writeln(&format!("Usage: {prefix} power <start|restart|stop|kill>")).await;
                 }
             },
+            Some("stats") => {
+                let resource_usage = self.server.resource_usage().await;
+
+                writeln("Server Statistics:").await;
+                writeln(&format!(
+                    "  CPU Usage: {:.2}% / {}",
+                    resource_usage.cpu_absolute,
+                    if self.server.configuration.read().await.build.cpu_limit == 0 {
+                        "Unlimited".to_string()
+                    } else {
+                        format!(
+                            "{}%",
+                            self.server.configuration.read().await.build.cpu_limit
+                        )
+                    }
+                ))
+                .await;
+                writeln(&format!(
+                    "  Memory Usage: {} / {} ({:.2}%)",
+                    human_bytes::human_bytes(resource_usage.memory_bytes as f64),
+                    if self.server.configuration.read().await.build.memory_limit == 0 {
+                        "Unlimited".to_string()
+                    } else {
+                        human_bytes::human_bytes(
+                            (self.server.configuration.read().await.build.memory_limit
+                                * 1024
+                                * 1024) as f64,
+                        )
+                    },
+                    (resource_usage.memory_bytes as f64 / resource_usage.memory_limit_bytes as f64
+                        * 100.0)
+                        .min(100.0)
+                ))
+                .await;
+                writeln(&format!(
+                    "  Disk Usage: {} / {} ({:.2}%)",
+                    human_bytes::human_bytes(resource_usage.disk_bytes as f64),
+                    if self.server.filesystem.disk_limit() == 0 {
+                        "Unlimited".to_string()
+                    } else {
+                        human_bytes::human_bytes(self.server.filesystem.disk_limit() as f64)
+                    },
+                    (resource_usage.disk_bytes as f64 / self.server.filesystem.disk_limit() as f64
+                        * 100.0)
+                        .min(100.0)
+                ))
+                .await;
+                writeln("  Network Usage:").await;
+                writeln(&format!(
+                    "    Received: {}",
+                    human_bytes::human_bytes(resource_usage.network.rx_bytes as f64)
+                ))
+                .await;
+                writeln(&format!(
+                    "    Sent: {}",
+                    human_bytes::human_bytes(resource_usage.network.tx_bytes as f64)
+                ))
+                .await;
+            }
             _ => {
                 writeln("Unknown command. Type '.wings help' for a list of commands.").await;
             }

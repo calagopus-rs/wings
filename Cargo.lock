@@ -220,9 +220,9 @@ dependencies = [
 
 [[package]]
 name = "async-compression"
-version = "0.4.25"
+version = "0.4.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "40f6024f3f856663b45fd0c9b6f2024034a702f453549449e0d84a305900dad4"
+checksum = "937f41778d8baa0b8984a101f48ec5d2e5b0d23a3f9235b2066eef29c3472bb9"
 dependencies = [
  "bzip2 0.6.0",
  "flate2",
@@ -5263,7 +5263,7 @@ checksum = "271414315aff87387382ec3d271b52d7ae78726f5d44ac98b4f4030c91880486"
 
 [[package]]
 name = "wings-rs"
-version = "0.15.1"
+version = "0.15.2"
 dependencies = [
  "ansi_term",
  "anyhow",
