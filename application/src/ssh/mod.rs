@@ -1,5 +1,5 @@
 use crate::routes::State;
-use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use std::{collections::{HashMap, HashSet}, net::SocketAddr, sync::Arc};
 
 mod auth;
 mod sftp;
@@ -21,7 +21,7 @@ impl russh::server::Server for Server {
             user_uuid: None,
 
             clients: HashMap::new(),
-            shell_clients: Vec::new(),
+            shell_clients: HashSet::new(),
         }
     }
 }

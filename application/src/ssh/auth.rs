@@ -4,7 +4,11 @@ use russh::{
     server::{Auth, Msg, Session},
 };
 use russh_sftp::protocol::StatusCode;
-use std::{collections::HashMap, net::IpAddr, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    net::IpAddr,
+    sync::Arc,
+};
 
 pub struct SshSession {
     pub state: State,
@@ -14,7 +18,7 @@ pub struct SshSession {
     pub user_uuid: Option<uuid::Uuid>,
 
     pub clients: HashMap<ChannelId, Channel<Msg>>,
-    pub shell_clients: Vec<ChannelId>,
+    pub shell_clients: HashSet<ChannelId>,
 }
 
 impl SshSession {
@@ -219,7 +223,7 @@ impl russh::server::Handler for SshSession {
             None => return Err(Box::new(StatusCode::PermissionDenied)),
         };
 
-        self.shell_clients.push(channel_id);
+        self.shell_clients.insert(channel_id);
 
         session.channel_success(channel_id)?;
         let ssh = super::shell::ShellSession {
