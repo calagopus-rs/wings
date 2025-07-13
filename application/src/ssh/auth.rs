@@ -244,7 +244,7 @@ impl russh::server::Handler for SshSession {
         data: &[u8],
         _session: &mut Session,
     ) -> Result<(), Self::Error> {
-        if self.shell_clients.contains(&channel_id) && data == [3] {
+        if data == [3] && self.shell_clients.contains(&channel_id) {
             return Err(Box::new(russh::Error::Disconnect));
         }
 
