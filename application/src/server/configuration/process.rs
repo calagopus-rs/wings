@@ -61,7 +61,7 @@ impl ServerConfigurationFile {
                                         config
                                             .build
                                             .io_weight
-                                            .map_or("none".to_string(), |v| v.to_string()),
+                                            .map_or_else(|| "none".to_string(), |v| v.to_string()),
                                     );
                                 }
                                 "cpu" => return Some(config.build.cpu_limit.to_string()),

@@ -82,19 +82,20 @@ pub async fn handle_jwt(
                             )
                             .await;
 
-                            socket_jwt.write().await.replace(Arc::new(jwt));
+                            if socket_jwt.write().await.replace(Arc::new(jwt)).is_none() {
+                                let state_str =
+                                    serde_json::to_value(server.state.get_state()).unwrap();
+                                let state_str = state_str.as_str().unwrap();
 
-                            let state_str = serde_json::to_value(server.state.get_state()).unwrap();
-                            let state_str = state_str.as_str().unwrap();
-
-                            super::send_message(
-                                sender,
-                                WebsocketMessage::new(
-                                    WebsocketEvent::ServerStatus,
-                                    &[state_str.to_string()],
-                                ),
-                            )
-                            .await;
+                                super::send_message(
+                                    sender,
+                                    WebsocketMessage::new(
+                                        WebsocketEvent::ServerStatus,
+                                        &[state_str.to_string()],
+                                    ),
+                                )
+                                .await;
+                            }
 
                             Ok(None)
                         }
