@@ -29,7 +29,10 @@ mod post {
     #[derive(ToSchema, Deserialize)]
     pub struct Payload {
         uuid: uuid::Uuid,
+        #[serde(default)]
         start_on_completion: bool,
+        #[serde(default)]
+        skip_scripts: bool,
     }
 
     #[derive(ToSchema, Serialize)]
@@ -62,7 +65,10 @@ mod post {
         let mut server_data = state.config.client.server(data.uuid).await.unwrap();
         server_data.settings.start_on_completion = Some(data.start_on_completion);
 
-        state.server_manager.create_server(server_data, true).await;
+        state
+            .server_manager
+            .create_server(server_data, !data.skip_scripts)
+            .await;
 
         (
             StatusCode::OK,

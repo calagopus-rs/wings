@@ -196,7 +196,8 @@ impl Manager {
 
                 async move {
                     if let Err(err) =
-                        crate::server::installation::install_server(&server, &client, false).await
+                        crate::server::installation::install_server(&server, &client, false, true)
+                            .await
                     {
                         tracing::error!(
                             server = %server.uuid,

@@ -38,7 +38,8 @@ mod post {
 
         tokio::spawn(async move {
             if let Err(err) =
-                crate::server::installation::install_server(&server, &state.docker, true).await
+                crate::server::installation::install_server(&server, &state.docker, true, false)
+                    .await
             {
                 tracing::error!(
                     server = %server.uuid,

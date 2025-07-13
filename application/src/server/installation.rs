@@ -201,6 +201,7 @@ pub async fn install_server(
     server: &super::Server,
     client: &Arc<bollard::Docker>,
     reinstall: bool,
+    force: bool,
 ) -> Result<(), anyhow::Error> {
     if server.is_locked_state() {
         return Err(anyhow::anyhow!("server is in a locked state"));
@@ -294,7 +295,7 @@ pub async fn install_server(
             ))
     };
 
-    if server.configuration.read().await.skip_egg_scripts {
+    if server.configuration.read().await.skip_egg_scripts && !force {
         unset_installing(true).await?;
         tracing::info!(
             server = %server.uuid,
