@@ -1073,7 +1073,10 @@ impl Server {
         );
 
         if self.state.get_state() != state::ServerState::Offline {
-            self.stop(client, aquire_timeout).await?;
+            if self.state.get_state() != state::ServerState::Stopping {
+                self.stop(client, aquire_timeout).await?;
+            }
+
             self.restarting.store(true, Ordering::Relaxed);
         } else {
             self.start(client, aquire_timeout).await?;
