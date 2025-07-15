@@ -246,7 +246,7 @@ async fn main() {
             )
             .await,
         ),
-        _ => {
+        None => {
             tracing::info!(" __      ___ _ __   __ _ ___        ");
             tracing::info!(" \\ \\ /\\ / / | '_ \\ / _` / __|       ");
             tracing::info!("  \\ V  V /| | | | | (_| \\__ \\       ");
@@ -258,6 +258,10 @@ async fn main() {
                 format!("{} (git-{})", wings_rs::VERSION, wings_rs::GIT_COMMIT)
             );
             tracing::info!("github.com/pterodactyl-rs/wings\n");
+        }
+        _ => {
+            cli().print_help().unwrap();
+            std::process::exit(0);
         }
     }
 
@@ -463,11 +467,18 @@ async fn main() {
                 .bright_black()
             );
 
-            server
-                .run_on_address(Arc::new(config), address)
-                .await
-                .context("failed to bind to SFTP address")
-                .unwrap();
+            match server.run_on_address(Arc::new(config), address).await {
+                Ok(_) => {}
+                Err(err) => {
+                    if err.kind() == std::io::ErrorKind::AddrInUse {
+                        tracing::error!("failed to start ssh server (address already in use)");
+                    } else {
+                        tracing::error!("failed to start ssh server: {:#?}", err);
+                    }
+
+                    std::process::exit(1);
+                }
+            }
         }
     });
 
@@ -500,11 +511,21 @@ async fn main() {
             address.to_string().cyan(),
         );
 
-        axum_server::bind_rustls(address, config)
+        match axum_server::bind_rustls(address, config)
             .serve(router.into_make_service_with_connect_info::<SocketAddr>())
             .await
-            .context("failed to bind to address")
-            .unwrap();
+        {
+            Ok(_) => {}
+            Err(err) => {
+                if err.kind() == std::io::ErrorKind::AddrInUse {
+                    tracing::error!("failed to start https server (address already in use)");
+                } else {
+                    tracing::error!("failed to start https server: {:#?}", err,);
+                }
+
+                std::process::exit(1);
+            }
+        }
     } else {
         tracing::info!(
             "{} listening on {}",
@@ -512,15 +533,33 @@ async fn main() {
             address.to_string().cyan(),
         );
 
-        axum::serve(
-            tokio::net::TcpListener::bind(address)
-                .await
-                .context("failed to bind to address")
-                .unwrap(),
+        match axum::serve(
+            match tokio::net::TcpListener::bind(address).await {
+                Ok(listener) => listener,
+                Err(err) => {
+                    if err.kind() == std::io::ErrorKind::AddrInUse {
+                        tracing::error!("failed to start http server (address already in use)");
+                        std::process::exit(1);
+                    } else {
+                        tracing::error!("failed to start http server: {:#?}", err);
+                        std::process::exit(1);
+                    }
+                }
+            },
             router.into_make_service_with_connect_info::<SocketAddr>(),
         )
         .await
-        .context("failed to start HTTP server")
-        .unwrap();
+        {
+            Ok(_) => {}
+            Err(err) => {
+                if err.kind() == std::io::ErrorKind::AddrInUse {
+                    tracing::error!("failed to start http server (address already in use)");
+                } else {
+                    tracing::error!("failed to start http server: {:#?}", err);
+                }
+
+                std::process::exit(1);
+            }
+        }
     }
 }
