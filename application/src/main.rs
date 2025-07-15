@@ -265,7 +265,13 @@ async fn main() {
         }
     }
 
-    let (config, _guard) = config.context("failed to load config").unwrap();
+    let (config, _guard) = match config {
+        Ok(config) => config,
+        Err(err) => {
+            tracing::error!("failed to load configuration: {:#?}", err);
+            std::process::exit(1);
+        }
+    };
     tracing::info!("config loaded from {}", config_path);
 
     tracing::info!("connecting to docker");
