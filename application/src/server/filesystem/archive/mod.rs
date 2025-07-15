@@ -1,15 +1,20 @@
+use cap_std::fs::PermissionsExt as _;
+use chrono::{Datelike, Timelike};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::{
     fs::Permissions,
-    io::{SeekFrom, Write},
+    io::{Seek, SeekFrom, Write},
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
-    sync::{Arc, RwLock, atomic::AtomicUsize},
+    sync::{
+        Arc, RwLock,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
 };
 use tokio::{
     fs::File,
-    io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader},
+    io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufReader},
 };
 use utoipa::ToSchema;
 
@@ -721,6 +726,345 @@ impl Archive {
                 .await??;
             }
         }
+
+        Ok(())
+    }
+
+    pub async fn create_tar(
+        server: crate::server::Server,
+        destination: impl AsyncWrite + Unpin + Send + 'static,
+        base: &Path,
+        sources: Vec<PathBuf>,
+        compression_type: CompressionType,
+        compression_level: CompressionLevel,
+    ) -> Result<(), anyhow::Error> {
+        let writer: Box<dyn AsyncWrite + Send + Unpin> = match compression_type {
+            CompressionType::None => Box::new(destination),
+            CompressionType::Gz => {
+                Box::new(async_compression::tokio::write::GzipEncoder::with_quality(
+                    destination,
+                    async_compression::Level::Precise(
+                        compression_level.flate2_compression_level().level() as i32,
+                    ),
+                ))
+            }
+            CompressionType::Bz2 => {
+                Box::new(async_compression::tokio::write::BzEncoder::new(destination))
+            }
+            CompressionType::Xz => {
+                Box::new(async_compression::tokio::write::XzEncoder::new(destination))
+            }
+            CompressionType::Lz4 => Box::new(async_compression::tokio::write::Lz4Encoder::new(
+                destination,
+            )),
+            CompressionType::Zstd => {
+                Box::new(async_compression::tokio::write::ZstdEncoder::with_quality(
+                    destination,
+                    async_compression::Level::Precise(compression_level.zstd_compression_level()),
+                ))
+            }
+        };
+        let mut archive = tokio_tar::Builder::new(writer);
+
+        for source in sources {
+            let source = base.join(source);
+
+            let relative = match source.strip_prefix(base) {
+                Ok(path) => path,
+                Err(_) => continue,
+            };
+
+            let source_metadata = match server.filesystem.symlink_metadata(&source).await {
+                Ok(metadata) => metadata,
+                Err(_) => continue,
+            };
+            if server
+                .filesystem
+                .is_ignored(&source, source_metadata.is_dir())
+                .await
+            {
+                continue;
+            }
+
+            let mut header = tokio_tar::Header::new_gnu();
+            header.set_size(0);
+            header.set_mode(source_metadata.permissions().mode());
+            header.set_mtime(
+                source_metadata
+                    .modified()
+                    .map(|t| {
+                        t.into_std()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                    })
+                    .unwrap_or_default()
+                    .as_secs() as u64,
+            );
+
+            if source_metadata.is_dir() {
+                header.set_entry_type(tokio_tar::EntryType::Directory);
+
+                archive
+                    .append_data(&mut header, relative, tokio::io::empty())
+                    .await?;
+
+                let mut walker =
+                    crate::server::filesystem::walker::AsyncWalkDir::new(server.clone(), source)
+                        .await?;
+                while let Some(Ok((is_dir, path))) = walker.next_entry().await {
+                    let relative = match path.strip_prefix(base) {
+                        Ok(path) => path,
+                        Err(_) => continue,
+                    };
+
+                    if server.filesystem.is_ignored(&path, is_dir).await {
+                        continue;
+                    }
+
+                    let metadata = match server.filesystem.symlink_metadata(&path).await {
+                        Ok(metadata) => metadata,
+                        Err(_) => continue,
+                    };
+
+                    let mut header = tokio_tar::Header::new_gnu();
+                    header.set_size(0);
+                    header.set_mode(metadata.permissions().mode());
+                    header.set_mtime(
+                        metadata
+                            .modified()
+                            .map(|t| {
+                                t.into_std()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default()
+                            })
+                            .unwrap_or_default()
+                            .as_secs() as u64,
+                    );
+
+                    if metadata.is_dir() {
+                        header.set_entry_type(tokio_tar::EntryType::Directory);
+
+                        archive
+                            .append_data(&mut header, relative, tokio::io::empty())
+                            .await?;
+                    } else if metadata.is_file() {
+                        let file = server.filesystem.open(&path).await?;
+
+                        header.set_size(metadata.len());
+                        header.set_entry_type(tokio_tar::EntryType::Regular);
+
+                        archive.append_data(&mut header, relative, file).await?;
+                    } else if let Ok(link_target) =
+                        server.filesystem.read_link_contents(&path).await
+                    {
+                        header.set_entry_type(tokio_tar::EntryType::Symlink);
+
+                        if header.set_link_name(link_target).is_ok() {
+                            archive
+                                .append_data(&mut header, relative, tokio::io::empty())
+                                .await?;
+                        }
+                    }
+                }
+            } else if source_metadata.is_file() {
+                header.set_size(source_metadata.len());
+                header.set_entry_type(tokio_tar::EntryType::Regular);
+
+                archive
+                    .append_data(
+                        &mut header,
+                        relative,
+                        server.filesystem.open(&source).await?,
+                    )
+                    .await?;
+            } else if let Ok(link_target) = server.filesystem.read_link_contents(&source).await {
+                header.set_entry_type(tokio_tar::EntryType::Symlink);
+
+                if header.set_link_name(link_target).is_ok() {
+                    archive
+                        .append_data(&mut header, relative, tokio::io::empty())
+                        .await?;
+                }
+            }
+        }
+
+        let mut inner = archive.into_inner().await?;
+        inner.shutdown().await?;
+
+        Ok(())
+    }
+
+    pub async fn create_zip(
+        server: crate::server::Server,
+        destination: impl Write + Seek + Send + 'static,
+        base: PathBuf,
+        sources: Vec<PathBuf>,
+    ) -> Result<(), anyhow::Error> {
+        let abort = Arc::new(AtomicBool::new(false));
+
+        struct AbortGuard(Arc<AtomicBool>);
+        impl Drop for AbortGuard {
+            #[inline]
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Relaxed);
+            }
+        }
+
+        let guard = AbortGuard(Arc::clone(&abort));
+        let filesystem = server.filesystem.base_dir().await?;
+
+        tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
+            let is_aborted = || abort.load(Ordering::Relaxed);
+            let mut archive = zip::ZipWriter::new(destination);
+
+            for source in sources {
+                let source = base.join(&source);
+                let source = server.filesystem.relative_path(&source);
+
+                let relative = match source.strip_prefix(&base) {
+                    Ok(path) => path,
+                    Err(_) => continue,
+                };
+
+                let source_metadata = match filesystem.symlink_metadata(&source) {
+                    Ok(metadata) => metadata,
+                    Err(_) => continue,
+                };
+                if server
+                    .filesystem
+                    .is_ignored_sync(&source, source_metadata.is_dir())
+                {
+                    continue;
+                }
+
+                if is_aborted() {
+                    return Err(anyhow::anyhow!("operation aborted"));
+                }
+
+                let mut options: zip::write::FileOptions<'_, ()> =
+                    zip::write::FileOptions::default()
+                        .compression_level(Some(
+                            server
+                                .config
+                                .system
+                                .backups
+                                .compression_level
+                                .flate2_compression_level()
+                                .level() as i64,
+                        ))
+                        .unix_permissions(source_metadata.permissions().mode())
+                        .large_file(source_metadata.len() >= u32::MAX as u64);
+
+                if let Ok(mtime) = source_metadata.modified() {
+                    let mtime: chrono::DateTime<chrono::Local> =
+                        chrono::DateTime::from(mtime.into_std());
+
+                    options = options.last_modified_time(zip::DateTime::from_date_and_time(
+                        mtime.year() as u16,
+                        mtime.month() as u8,
+                        mtime.day() as u8,
+                        mtime.hour() as u8,
+                        mtime.minute() as u8,
+                        mtime.second() as u8,
+                    )?);
+                }
+
+                if source_metadata.is_dir() {
+                    archive.add_directory(relative.to_string_lossy(), options)?;
+
+                    let mut walker =
+                        crate::server::filesystem::walker::WalkDir::new(server.clone(), source)?;
+                    while let Some(Ok((is_dir, path))) = walker.next_entry() {
+                        let relative = match path.strip_prefix(&base) {
+                            Ok(path) => path,
+                            Err(_) => continue,
+                        };
+
+                        if server.filesystem.is_ignored_sync(&path, is_dir) {
+                            continue;
+                        }
+
+                        let metadata = match filesystem.symlink_metadata(&path) {
+                            Ok(metadata) => metadata,
+                            Err(_) => continue,
+                        };
+
+                        if is_aborted() {
+                            return Err(anyhow::anyhow!("operation aborted"));
+                        }
+
+                        let mut options: zip::write::FileOptions<'_, ()> =
+                            zip::write::FileOptions::default()
+                                .compression_level(Some(
+                                    server
+                                        .config
+                                        .system
+                                        .backups
+                                        .compression_level
+                                        .flate2_compression_level()
+                                        .level() as i64,
+                                ))
+                                .unix_permissions(metadata.permissions().mode())
+                                .large_file(metadata.len() >= u32::MAX as u64);
+
+                        if let Ok(mtime) = metadata.modified() {
+                            let mtime: chrono::DateTime<chrono::Local> =
+                                chrono::DateTime::from(mtime.into_std());
+
+                            options =
+                                options.last_modified_time(zip::DateTime::from_date_and_time(
+                                    mtime.year() as u16,
+                                    mtime.month() as u8,
+                                    mtime.day() as u8,
+                                    mtime.hour() as u8,
+                                    mtime.minute() as u8,
+                                    mtime.second() as u8,
+                                )?);
+                        }
+
+                        if metadata.is_dir() {
+                            archive.add_directory(relative.to_string_lossy(), options)?;
+                        } else if metadata.is_file() {
+                            let mut file = match filesystem.open(&path) {
+                                Ok(file) => file,
+                                Err(_) => continue,
+                            };
+
+                            archive.start_file(relative.to_string_lossy(), options)?;
+                            std::io::copy(&mut file, &mut archive)?;
+                        } else if let Ok(link_target) = filesystem.read_link_contents(&path) {
+                            archive.add_symlink(
+                                relative.to_string_lossy(),
+                                link_target.to_string_lossy(),
+                                options,
+                            )?;
+                        }
+                    }
+                } else if source_metadata.is_file() {
+                    let mut file = match filesystem.open(&source) {
+                        Ok(file) => file,
+                        Err(_) => continue,
+                    };
+
+                    archive.start_file(relative.to_string_lossy(), options)?;
+                    std::io::copy(&mut file, &mut archive)?;
+                } else if let Ok(link_target) = filesystem.read_link_contents(&source) {
+                    archive.add_symlink(
+                        relative.to_string_lossy(),
+                        link_target.to_string_lossy(),
+                        options,
+                    )?;
+                }
+            }
+
+            let mut inner = archive.finish()?;
+            inner.flush()?;
+
+            Ok(())
+        })
+        .await??;
+
+        drop(guard);
 
         Ok(())
     }

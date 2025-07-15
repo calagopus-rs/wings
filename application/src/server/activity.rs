@@ -29,6 +29,10 @@ pub enum ActivityEvent {
 
     #[serde(rename = "server:file.uploaded")]
     FileUploaded,
+    #[serde(rename = "server:file.compress")]
+    FileCompress,
+    #[serde(rename = "server:file.decompress")]
+    FileDecompress,
 }
 
 #[derive(Debug, Serialize)]

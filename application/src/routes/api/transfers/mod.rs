@@ -10,7 +10,7 @@ mod _server_;
 mod post {
     use crate::{
         routes::{ApiError, GetState},
-        server::transfer::ArchiveFormat,
+        server::transfer::TransferArchiveFormat,
     };
     use axum::{
         extract::Multipart,
@@ -124,14 +124,14 @@ mod post {
                                 ))
                             }));
                         let reader: Box<dyn tokio::io::AsyncRead + Send> =
-                            match ArchiveFormat::from_str(&file_name)
-                                .unwrap_or(ArchiveFormat::TarGz)
+                            match TransferArchiveFormat::from_str(&file_name)
+                                .unwrap_or(TransferArchiveFormat::TarGz)
                             {
-                                ArchiveFormat::Tar => Box::new(reader),
-                                ArchiveFormat::TarGz => Box::new(
+                                TransferArchiveFormat::Tar => Box::new(reader),
+                                TransferArchiveFormat::TarGz => Box::new(
                                     async_compression::tokio::bufread::GzipDecoder::new(reader),
                                 ),
-                                ArchiveFormat::TarZstd => Box::new(
+                                TransferArchiveFormat::TarZstd => Box::new(
                                     async_compression::tokio::bufread::ZstdDecoder::new(reader),
                                 ),
                             };

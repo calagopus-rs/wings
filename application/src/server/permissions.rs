@@ -44,6 +44,8 @@ pub enum Permission {
     FileUpdate,
     #[serde(rename = "file.delete", alias = "files.delete")]
     FileDelete,
+    #[serde(rename = "file.archive", alias = "files.archive")]
+    FileArchive,
 }
 
 impl Permission {

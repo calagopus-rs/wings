@@ -2,18 +2,37 @@ use super::State;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod post {
-    use crate::routes::{ApiError, GetState, api::servers::_server_::GetServer};
+    use crate::{
+        routes::{ApiError, GetState, api::servers::_server_::GetServer},
+        server::filesystem::archive::CompressionType,
+    };
     use axum::http::StatusCode;
-    use cap_std::fs::PermissionsExt;
     use serde::Deserialize;
-    use std::io::Write;
+    use std::path::PathBuf;
     use utoipa::ToSchema;
+
+    #[derive(ToSchema, Deserialize, Default, Clone, Copy)]
+    #[serde(rename_all = "snake_case")]
+    #[schema(rename_all = "snake_case")]
+    pub enum ArchiveFormat {
+        Tar,
+        #[default]
+        TarGz,
+        TarXz,
+        TarBz2,
+        TarLz4,
+        TarZstd,
+        Zip,
+    }
 
     #[derive(ToSchema, Deserialize)]
     pub struct Payload {
         #[serde(default)]
-        pub root: String,
+        pub format: ArchiveFormat,
+        pub name: Option<String>,
 
+        #[serde(default)]
+        pub root: String,
         pub files: Vec<String>,
     }
 
@@ -51,10 +70,21 @@ mod post {
             );
         }
 
-        let file_name = format!(
-            "archive-{}.tar.gz",
-            chrono::Local::now().format("%Y-%m-%dT%H%M%S%z")
-        );
+        let file_name = data.name.unwrap_or_else(|| {
+            format!(
+                "archive-{}.{}",
+                chrono::Local::now().format("%Y-%m-%dT%H%M%S%z"),
+                match data.format {
+                    ArchiveFormat::Tar => "tar",
+                    ArchiveFormat::TarGz => "tar.gz",
+                    ArchiveFormat::TarXz => "tar.xz",
+                    ArchiveFormat::TarBz2 => "tar.bz2",
+                    ArchiveFormat::TarLz4 => "tar.lz4",
+                    ArchiveFormat::TarZstd => "tar.zst",
+                    ArchiveFormat::Zip => "zip",
+                }
+            )
+        });
         let file_name = root.join(file_name);
 
         if server.filesystem.is_ignored(&file_name, false).await {
@@ -64,153 +94,69 @@ mod post {
             );
         }
 
-        match tokio::task::spawn_blocking({
-            let filesystem = server.filesystem.base_dir().await.unwrap();
-            let file_name = file_name.clone();
-            let server = server.0.clone();
+        match tokio::spawn({
             let root = root.clone();
+            let server = server.0.clone();
+            let file_name = file_name.clone();
 
-            move || -> Result<(), anyhow::Error> {
-                let writer = crate::server::filesystem::writer::FileSystemWriter::new(
-                    server.clone(),
-                    file_name,
-                    None,
-                    None,
-                )?;
+            async move {
+                match data.format {
+                    ArchiveFormat::Tar
+                    | ArchiveFormat::TarGz
+                    | ArchiveFormat::TarXz
+                    | ArchiveFormat::TarBz2
+                    | ArchiveFormat::TarLz4
+                    | ArchiveFormat::TarZstd => {
+                        let writer = crate::server::filesystem::writer::AsyncFileSystemWriter::new(
+                            server.clone(),
+                            file_name,
+                            None,
+                            None,
+                        )
+                        .await?;
 
-                let mut archive = tar::Builder::new(flate2::write::GzEncoder::new(
-                    writer,
-                    state
-                        .config
-                        .system
-                        .backups
-                        .compression_level
-                        .flate2_compression_level(),
-                ));
-
-                for file in data.files {
-                    let source = server.filesystem.relative_path(&root.join(file));
-
-                    let relative = match source.strip_prefix(&root) {
-                        Ok(path) => path,
-                        Err(_) => continue,
-                    };
-
-                    let source_metadata = match filesystem.symlink_metadata(&source) {
-                        Ok(metadata) => metadata,
-                        Err(_) => continue,
-                    };
-                    if server
-                        .filesystem
-                        .is_ignored_sync(&source, source_metadata.is_dir())
-                    {
-                        continue;
+                        crate::server::filesystem::archive::Archive::create_tar(
+                            server,
+                            writer,
+                            &root,
+                            data.files.into_iter().map(PathBuf::from).collect(),
+                            match data.format {
+                                ArchiveFormat::Tar => CompressionType::None,
+                                ArchiveFormat::TarGz => CompressionType::Gz,
+                                ArchiveFormat::TarXz => CompressionType::Xz,
+                                ArchiveFormat::TarBz2 => CompressionType::Bz2,
+                                ArchiveFormat::TarLz4 => CompressionType::Lz4,
+                                ArchiveFormat::TarZstd => CompressionType::Zstd,
+                                _ => unreachable!(),
+                            },
+                            state.config.system.backups.compression_level,
+                        )
+                        .await
                     }
+                    ArchiveFormat::Zip => {
+                        let writer = tokio::task::spawn_blocking({
+                            let server = server.clone();
 
-                    let mut header = tar::Header::new_gnu();
-                    header.set_size(0);
-                    header.set_mode(source_metadata.permissions().mode());
-                    header.set_mtime(
-                        source_metadata
-                            .modified()
-                            .map(|t| {
-                                t.into_std()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .unwrap_or_default()
-                            })
-                            .unwrap_or_default()
-                            .as_secs() as u64,
-                    );
-
-                    if source_metadata.is_dir() {
-                        header.set_entry_type(tar::EntryType::Directory);
-
-                        archive.append_data(&mut header, relative, std::io::empty())?;
-
-                        let (mut walker, strip_path) = server.filesystem.walk_dir(&source)?;
-
-                        for entry in walker
-                            .git_ignore(false)
-                            .ignore(false)
-                            .git_exclude(false)
-                            .follow_links(false)
-                            .hidden(false)
-                            .build()
-                            .flatten()
-                        {
-                            let path = entry
-                                .path()
-                                .strip_prefix(&strip_path)
-                                .unwrap_or(entry.path());
-                            if path.display().to_string().is_empty() {
-                                continue;
+                            move || {
+                                crate::server::filesystem::writer::FileSystemWriter::new(
+                                    server.clone(),
+                                    file_name,
+                                    None,
+                                    None,
+                                )
                             }
+                        })
+                        .await??;
 
-                            let display_path = relative.join(path);
-                            let path = server.filesystem.relative_path(&source.join(path));
-
-                            let metadata = match filesystem.symlink_metadata(&path) {
-                                Ok(metadata) => metadata,
-                                Err(_) => continue,
-                            };
-
-                            if server.filesystem.is_ignored_sync(&path, metadata.is_dir()) {
-                                continue;
-                            }
-
-                            let mut header = tar::Header::new_gnu();
-                            header.set_size(0);
-                            header.set_mode(metadata.permissions().mode());
-                            header.set_mtime(
-                                metadata
-                                    .modified()
-                                    .map(|t| {
-                                        t.into_std()
-                                            .duration_since(std::time::UNIX_EPOCH)
-                                            .unwrap_or_default()
-                                    })
-                                    .unwrap_or_default()
-                                    .as_secs() as u64,
-                            );
-
-                            if metadata.is_dir() {
-                                header.set_entry_type(tar::EntryType::Directory);
-
-                                archive
-                                    .append_data(&mut header, display_path, std::io::empty())
-                                    .ok();
-                            } else if metadata.is_file() {
-                                let file = match filesystem.open(&path) {
-                                    Ok(file) => file,
-                                    Err(_) => continue,
-                                };
-
-                                header.set_size(metadata.len());
-                                header.set_entry_type(tar::EntryType::Regular);
-
-                                archive.append_data(&mut header, display_path, file).ok();
-                            } else if let Ok(link_target) = filesystem.read_link_contents(path) {
-                                header.set_entry_type(tar::EntryType::Symlink);
-
-                                archive.append_link(&mut header, relative, link_target)?;
-                            }
-                        }
-                    } else if source_metadata.is_file() {
-                        header.set_size(source_metadata.len());
-                        header.set_entry_type(tar::EntryType::Regular);
-
-                        archive.append_data(&mut header, relative, filesystem.open(&source)?)?;
-                    } else if let Ok(link_target) = filesystem.read_link_contents(&source) {
-                        header.set_entry_type(tar::EntryType::Symlink);
-
-                        archive.append_link(&mut header, relative, link_target)?;
+                        crate::server::filesystem::archive::Archive::create_zip(
+                            server,
+                            writer,
+                            root,
+                            data.files.into_iter().map(PathBuf::from).collect(),
+                        )
+                        .await
                     }
                 }
-
-                let mut inner = archive.into_inner()?;
-                inner.flush()?;
-
-                Ok(())
             }
         })
         .await

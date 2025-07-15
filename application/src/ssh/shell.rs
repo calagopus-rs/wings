@@ -6,7 +6,7 @@ use crate::{
         websocket::WebsocketEvent,
     },
 };
-use russh::{Channel, server::Msg};
+use russh::{Channel, ChannelWriteHalf, server::Msg};
 use serde_json::json;
 use std::{net::IpAddr, pin::Pin, sync::Arc};
 use tokio::{
@@ -14,12 +14,19 @@ use tokio::{
     sync::broadcast::error::RecvError,
 };
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Copy)]
+pub enum ShellMode {
+    Normal,
+    WinScp,
+}
+
 pub struct ShellSession {
     pub state: State,
     pub server: crate::server::Server,
 
     pub user_ip: Option<IpAddr>,
     pub user_uuid: uuid::Uuid,
+    pub mode: ShellMode,
 }
 
 impl ShellSession {
@@ -32,7 +39,7 @@ impl ShellSession {
     }
 
     async fn handle_cli_command(
-        &self,
+        &mut self,
         line: &str,
         writer: &mut Pin<Box<impl tokio::io::AsyncWrite>>,
     ) {
@@ -244,13 +251,13 @@ impl ShellSession {
     }
 
     async fn handle_special_keys(
-        &self,
+        &mut self,
         byte: u8,
         current_line: &mut Vec<u8>,
         cursor_pos: &mut usize,
         command_history: &mut Vec<Vec<u8>>,
         history_index: &mut Option<usize>,
-        writer: &mut Pin<Box<impl tokio::io::AsyncWrite>>,
+        data_writer: &mut Pin<Box<impl tokio::io::AsyncWrite>>,
     ) {
         match byte {
             b'A' => {
@@ -266,26 +273,26 @@ impl ShellSession {
                     } else if history_index.unwrap() > 0 {
                         *history_index = Some(history_index.unwrap() - 1);
                     } else {
-                        writer.write_all(b"\x07").await.unwrap_or_default();
-                        writer.flush().await.unwrap_or_default();
+                        data_writer.write_all(b"\x07").await.unwrap_or_default();
+                        data_writer.flush().await.unwrap_or_default();
                         return;
                     }
 
                     let history_cmd = &command_history[history_index.unwrap()];
 
-                    writer.write_all(b"\r").await.unwrap_or_default();
+                    data_writer.write_all(b"\r").await.unwrap_or_default();
                     let mut output = Vec::with_capacity(history_cmd.len() + 3);
                     output.extend_from_slice(b"\x1b[2K");
                     output.extend_from_slice(history_cmd);
-                    writer.write_all(&output).await.unwrap_or_default();
-                    writer.flush().await.unwrap_or_default();
+                    data_writer.write_all(&output).await.unwrap_or_default();
+                    data_writer.flush().await.unwrap_or_default();
 
                     current_line.clear();
                     current_line.extend_from_slice(history_cmd);
                     *cursor_pos = current_line.len();
                 } else {
-                    writer.write_all(b"\x07").await.unwrap_or_default();
-                    writer.flush().await.unwrap_or_default();
+                    data_writer.write_all(b"\x07").await.unwrap_or_default();
+                    data_writer.flush().await.unwrap_or_default();
                 }
             }
             b'B' => {
@@ -294,62 +301,65 @@ impl ShellSession {
                         *history_index = Some(idx + 1);
                         let history_cmd = &command_history[history_index.unwrap()];
 
-                        writer.write_all(b"\r").await.unwrap_or_default();
+                        data_writer.write_all(b"\r").await.unwrap_or_default();
                         let mut output = Vec::with_capacity(history_cmd.len() + 3);
                         output.extend_from_slice(b"\x1b[2K");
                         output.extend_from_slice(history_cmd);
-                        writer.write_all(&output).await.unwrap_or_default();
-                        writer.flush().await.unwrap_or_default();
+                        data_writer.write_all(&output).await.unwrap_or_default();
+                        data_writer.flush().await.unwrap_or_default();
 
                         current_line.clear();
                         current_line.extend_from_slice(history_cmd);
                         *cursor_pos = current_line.len();
                     } else {
                         *history_index = None;
-                        writer.write_all(b"\r\x1b[2K").await.unwrap_or_default();
-                        writer.flush().await.unwrap_or_default();
+                        data_writer
+                            .write_all(b"\r\x1b[2K")
+                            .await
+                            .unwrap_or_default();
+                        data_writer.flush().await.unwrap_or_default();
                         current_line.clear();
                         *cursor_pos = 0;
                     }
                 } else {
-                    writer.write_all(b"\x07").await.unwrap_or_default();
-                    writer.flush().await.unwrap_or_default();
+                    data_writer.write_all(b"\x07").await.unwrap_or_default();
+                    data_writer.flush().await.unwrap_or_default();
                 }
             }
             b'C' => {
                 if *cursor_pos < current_line.len() {
                     *cursor_pos += 1;
-                    writer.write_all(b"\x1b[C").await.unwrap_or_default();
-                    writer.flush().await.unwrap_or_default();
+                    data_writer.write_all(b"\x1b[C").await.unwrap_or_default();
+                    data_writer.flush().await.unwrap_or_default();
                 } else {
-                    writer.write_all(b"\x07").await.unwrap_or_default();
-                    writer.flush().await.unwrap_or_default();
+                    data_writer.write_all(b"\x07").await.unwrap_or_default();
+                    data_writer.flush().await.unwrap_or_default();
                 }
             }
             b'D' => {
                 if *cursor_pos > 0 {
                     *cursor_pos -= 1;
-                    writer.write_all(b"\x1b[D").await.unwrap_or_default();
-                    writer.flush().await.unwrap_or_default();
+                    data_writer.write_all(b"\x1b[D").await.unwrap_or_default();
+                    data_writer.flush().await.unwrap_or_default();
                 } else {
-                    writer.write_all(b"\x07").await.unwrap_or_default();
-                    writer.flush().await.unwrap_or_default();
+                    data_writer.write_all(b"\x07").await.unwrap_or_default();
+                    data_writer.flush().await.unwrap_or_default();
                 }
             }
-            _ => {
-                // Handle other sequences by echoing them back
-            }
+            _ => {}
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn handle_input_byte(
-        &self,
+        &mut self,
         byte: u8,
         current_line: &mut Vec<u8>,
         cursor_pos: &mut usize,
         command_history: &mut Vec<Vec<u8>>,
         history_index: &mut Option<usize>,
-        writer: &mut Pin<Box<impl tokio::io::AsyncWrite>>,
+        data_writer: &mut Pin<Box<impl tokio::io::AsyncWrite>>,
+        writer: &ChannelWriteHalf<Msg>,
     ) {
         match byte {
             b'\r' | b'\n' => {
@@ -368,70 +378,102 @@ impl ShellSession {
                     }
                     *history_index = None;
 
-                    if line.starts_with(&self.state.config.system.sftp.shell.cli.name) {
-                        self.handle_cli_command(&line, writer).await;
-                    } else if self.has_permission(Permission::ControlConsole).await {
-                        if self.server.state.get_state()
-                            != crate::server::state::ServerState::Offline
-                            && let Some(stdin) = self.server.container_stdin().await
-                        {
-                            if let Err(err) = stdin.send(format!("{line}\n")).await {
-                                writer.write_all(b"\r\n").await.unwrap_or_default();
+                    tracing::debug!(
+                        server = %self.server.uuid,
+                        "received command from shell: {}",
+                        line
+                    );
 
-                                tracing::error!(
-                                    server = %self.server.uuid,
-                                    "failed to send command to server: {}",
-                                    err
-                                );
+                    if line.starts_with("echo \"WinSCP: this is end-of-file:0\"") {
+                        tracing::debug!(
+                            server = %self.server.uuid,
+                            "received WinSCP end-of-file command, switching to WinSCP mode"
+                        );
+                        self.mode = ShellMode::WinScp;
+                    }
+
+                    match self.mode {
+                        ShellMode::Normal => {
+                            if line.starts_with(&self.state.config.system.sftp.shell.cli.name) {
+                                self.handle_cli_command(&line, data_writer).await;
+                            } else if self.has_permission(Permission::ControlConsole).await {
+                                if self.server.state.get_state()
+                                    != crate::server::state::ServerState::Offline
+                                    && let Some(stdin) = self.server.container_stdin().await
+                                {
+                                    if let Err(err) = stdin.send(format!("{line}\n")).await {
+                                        data_writer.write_all(b"\r\n").await.unwrap_or_default();
+
+                                        tracing::error!(
+                                            server = %self.server.uuid,
+                                            "failed to send command to server: {}",
+                                            err
+                                        );
+                                    } else {
+                                        data_writer.write_all(b"\r").await.unwrap_or_default();
+
+                                        self.server
+                                            .activity
+                                            .log_activity(Activity {
+                                                event: ActivityEvent::ConsoleCommand,
+                                                user: Some(self.user_uuid),
+                                                ip: self.user_ip,
+                                                metadata: Some(json!({
+                                                    "command": line,
+                                                })),
+                                                timestamp: chrono::Utc::now(),
+                                            })
+                                            .await;
+                                    }
+                                } else {
+                                    let prelude = ansi_term::Color::Yellow
+                                        .bold()
+                                        .paint(format!("[{} Daemon]:", self.state.config.app_name));
+
+                                    data_writer.write_all(b"\r\n").await.unwrap_or_default();
+                                    data_writer
+                                        .write_all(
+                                            format!(
+                                                "{prelude} The server is currently offline.\r\n\x1b[2K"
+                                            )
+                                            .as_bytes(),
+                                        )
+                                        .await
+                                        .unwrap_or_default();
+                                }
                             } else {
-                                writer.write_all(b"\r").await.unwrap_or_default();
+                                let prelude = ansi_term::Color::Yellow
+                                    .bold()
+                                    .paint(format!("[{} Daemon]:", self.state.config.app_name));
 
-                                self.server
-                                    .activity
-                                    .log_activity(Activity {
-                                        event: ActivityEvent::ConsoleCommand,
-                                        user: Some(self.user_uuid),
-                                        ip: self.user_ip,
-                                        metadata: Some(json!({
-                                            "command": line,
-                                        })),
-                                        timestamp: chrono::Utc::now(),
-                                    })
-                                    .await;
+                                data_writer.write_all(b"\r\n").await.unwrap_or_default();
+                                data_writer
+                                    .write_all(format!("{prelude} You are missing the `control.console` permission to do this.\r\n\x1b[2K").as_bytes())
+                                    .await
+                                    .unwrap_or_default();
                             }
-                        } else {
-                            let prelude = ansi_term::Color::Yellow
-                                .bold()
-                                .paint(format!("[{} Daemon]:", self.state.config.app_name));
-
-                            writer.write_all(b"\r\n").await.unwrap_or_default();
-                            writer
-                                .write_all(
-                                    format!(
-                                        "{prelude} The server is currently offline.\r\n\x1b[2K"
-                                    )
-                                    .as_bytes(),
-                                )
-                                .await
-                                .unwrap_or_default();
                         }
-                    } else {
-                        let prelude = ansi_term::Color::Yellow
-                            .bold()
-                            .paint(format!("[{} Daemon]:", self.state.config.app_name));
+                        ShellMode::WinScp => {
+                            let mut segments = line.split_whitespace();
 
-                        writer.write_all(b"\r\n").await.unwrap_or_default();
-                        writer
-                            .write_all(format!("{prelude} You are missing the `control.console` permission to do this.\r\n\x1b[2K").as_bytes())
-                            .await
-                            .unwrap_or_default();
+                            if let Some("echo") = segments.next() {
+                                let content = segments.collect::<Vec<&str>>().join(" ");
+
+                                data_writer.write_all(b"\r\n").await.unwrap_or_default();
+                                data_writer
+                                    .write_all(content.trim_matches('"').as_bytes())
+                                    .await
+                                    .unwrap_or_default();
+                                writer.exit_status(0).await.unwrap_or_default();
+                            }
+                        }
                     }
 
                     current_line.clear();
                     *cursor_pos = 0;
                 }
 
-                writer.flush().await.unwrap_or_default();
+                data_writer.flush().await.unwrap_or_default();
             }
             8 | 127 => {
                 if *cursor_pos > 0 {
@@ -439,16 +481,16 @@ impl ShellSession {
                         current_line.remove(*cursor_pos - 1);
                         *cursor_pos -= 1;
 
-                        writer.write_all(b"\x08").await.unwrap_or_default();
-                        writer.write_all(b"\x1b[K").await.unwrap_or_default();
-                        writer
+                        data_writer.write_all(b"\x08").await.unwrap_or_default();
+                        data_writer.write_all(b"\x1b[K").await.unwrap_or_default();
+                        data_writer
                             .write_all(&current_line[*cursor_pos..])
                             .await
                             .unwrap_or_default();
 
                         if *cursor_pos < current_line.len() {
                             let move_back = current_line.len() - *cursor_pos;
-                            writer
+                            data_writer
                                 .write_all(format!("\x1b[{move_back}D").as_bytes())
                                 .await
                                 .unwrap_or_default();
@@ -456,13 +498,16 @@ impl ShellSession {
                     } else {
                         current_line.pop();
                         *cursor_pos -= 1;
-                        writer.write_all(b"\x08 \x08").await.unwrap_or_default();
+                        data_writer
+                            .write_all(b"\x08 \x08")
+                            .await
+                            .unwrap_or_default();
                     }
 
-                    writer.flush().await.unwrap_or_default();
+                    data_writer.flush().await.unwrap_or_default();
                 } else {
-                    writer.write_all(b"\x07").await.unwrap_or_default();
-                    writer.flush().await.unwrap_or_default();
+                    data_writer.write_all(b"\x07").await.unwrap_or_default();
+                    data_writer.flush().await.unwrap_or_default();
                 }
             }
             _ => {
@@ -471,34 +516,34 @@ impl ShellSession {
                         current_line.insert(*cursor_pos, byte);
                         *cursor_pos += 1;
 
-                        writer.write_all(&[byte]).await.unwrap_or_default();
-                        writer
+                        data_writer.write_all(&[byte]).await.unwrap_or_default();
+                        data_writer
                             .write_all(&current_line[*cursor_pos..])
                             .await
                             .unwrap_or_default();
 
                         if *cursor_pos < current_line.len() {
                             let move_back = current_line.len() - *cursor_pos;
-                            writer
+                            data_writer
                                 .write_all(format!("\x1b[{move_back}D").as_bytes())
                                 .await
                                 .unwrap_or_default();
                         }
                     } else {
-                        writer.write_all(&[byte]).await.unwrap_or_default();
+                        data_writer.write_all(&[byte]).await.unwrap_or_default();
                         current_line.push(byte);
                         *cursor_pos += 1;
                     }
-                    writer.flush().await.unwrap_or_default();
+                    data_writer.flush().await.unwrap_or_default();
                 } else {
-                    writer.write_all(b"\x07").await.unwrap_or_default();
-                    writer.flush().await.unwrap_or_default();
+                    data_writer.write_all(b"\x07").await.unwrap_or_default();
+                    data_writer.flush().await.unwrap_or_default();
                 }
             }
         }
     }
 
-    pub fn run(self, channel: Channel<Msg>) {
+    pub fn run(mut self, channel: Channel<Msg>) {
         tokio::spawn(async move {
             let (mut reader, writer) = channel.split();
             let mut reader = reader.make_reader();
@@ -679,7 +724,7 @@ impl ShellSession {
             });
 
             let stdin_task = {
-                let mut writer = writer.make_writer();
+                let mut data_writer = writer.make_writer();
 
                 Box::pin(async move {
                     let mut buffer = [0; 1024];
@@ -708,7 +753,7 @@ impl ShellSession {
                                                 &mut cursor_pos,
                                                 &mut command_history,
                                                 &mut history_index,
-                                                &mut Box::pin(&mut writer),
+                                                &mut Box::pin(&mut data_writer),
                                             )
                                             .await;
 
@@ -718,12 +763,15 @@ impl ShellSession {
                                         } else if sequence_buffer.len() >= 3
                                             || (!cursor_sequence && sequence_buffer.len() >= 2)
                                         {
-                                            writer.write_all(b"\x1b").await.unwrap_or_default();
-                                            writer
+                                            data_writer
+                                                .write_all(b"\x1b")
+                                                .await
+                                                .unwrap_or_default();
+                                            data_writer
                                                 .write_all(&sequence_buffer)
                                                 .await
                                                 .unwrap_or_default();
-                                            writer.flush().await.unwrap_or_default();
+                                            data_writer.flush().await.unwrap_or_default();
                                             escape_sequence = false;
                                             cursor_sequence = false;
                                             sequence_buffer.clear();
@@ -738,7 +786,8 @@ impl ShellSession {
                                             &mut cursor_pos,
                                             &mut command_history,
                                             &mut history_index,
-                                            &mut Box::pin(&mut writer),
+                                            &mut Box::pin(&mut data_writer),
+                                            &writer,
                                         )
                                         .await;
                                     }

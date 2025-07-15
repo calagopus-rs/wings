@@ -232,8 +232,47 @@ impl russh::server::Handler for SshSession {
 
             user_ip: self.user_ip,
             user_uuid,
+            mode: super::shell::ShellMode::Normal,
         };
         ssh.run(channel);
+
+        Ok(())
+    }
+
+    async fn exec_request(
+        &mut self,
+        channel_id: ChannelId,
+        data: &[u8],
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        let command = String::from_utf8_lossy(data);
+
+        let user_uuid = match self.user_uuid {
+            Some(uuid) => uuid,
+            None => return Err(Box::new(StatusCode::PermissionDenied)),
+        };
+
+        let server = match &self.server {
+            Some(server) => server.clone(),
+            None => return Err(Box::new(StatusCode::PermissionDenied)),
+        };
+
+        let channel = match self.get_channel(channel_id).await {
+            Some(channel) => channel,
+            None => return Err(Box::new(StatusCode::PermissionDenied)),
+        };
+
+        tracing::debug!("recieved command from exec: {}", command);
+
+        session.channel_success(channel_id)?;
+        let exec = super::exec::ExecSession {
+            state: Arc::clone(&self.state),
+            server,
+
+            user_ip: self.user_ip,
+            user_uuid,
+        };
+        exec.run(command.to_string(), channel);
 
         Ok(())
     }

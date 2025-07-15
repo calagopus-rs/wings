@@ -8,7 +8,6 @@ mod get {
         extract::Query,
         http::{HeaderMap, StatusCode},
     };
-    use cap_std::fs::PermissionsExt;
     use serde::Deserialize;
     use std::path::PathBuf;
     use utoipa::ToSchema;
@@ -161,95 +160,41 @@ mod get {
 
         let (writer, reader) = tokio::io::duplex(65536);
 
-        tokio::task::spawn_blocking(move || {
-            let writer = tokio_util::io::SyncIoBridge::new(writer);
-            let writer = flate2::write::GzEncoder::new(writer, flate2::Compression::default());
+        tokio::spawn({
+            let path = path.clone();
+            let server = server.clone();
 
-            let mut tar = tar::Builder::new(writer);
-            tar.mode(tar::HeaderMode::Complete);
-            tar.follow_symlinks(false);
+            async move {
+                let mut read_dir = match server.filesystem.read_dir(&path).await {
+                    Ok(dir) => dir,
+                    Err(err) => {
+                        tracing::error!(
+                            server = %server.uuid,
+                            path = %path.display(),
+                            error = %err,
+                            "failed to read directory"
+                        );
 
-            let (mut walker, strip_path) = server.filesystem.walk_dir(path).unwrap();
-            let filesystem = server.filesystem.sync_base_dir().unwrap();
-
-            for entry in walker
-                .git_ignore(false)
-                .ignore(false)
-                .git_exclude(false)
-                .follow_links(false)
-                .hidden(false)
-                .build()
-                .flatten()
-            {
-                let display_path = entry
-                    .path()
-                    .strip_prefix(&strip_path)
-                    .unwrap_or(entry.path());
-                if display_path.display().to_string().is_empty() {
-                    continue;
-                }
-
-                let path = server.filesystem.relative_path(entry.path());
-
-                let metadata = match filesystem.symlink_metadata(&path) {
-                    Ok(metadata) => metadata,
-                    Err(_) => continue,
+                        return;
+                    }
                 };
+                let mut names = Vec::new();
 
-                if server
-                    .filesystem
-                    .is_ignored_sync(entry.path(), metadata.is_dir())
-                {
-                    continue;
+                while let Some(Ok((_, name))) = read_dir.next_entry().await {
+                    names.push(PathBuf::from(name));
                 }
 
-                if metadata.is_dir() {
-                    tar.append_dir(display_path, entry.path()).ok();
-                } else if metadata.is_file() {
-                    let file = match filesystem.open(&path) {
-                        Ok(file) => file,
-                        Err(_) => continue,
-                    };
-
-                    let mut header = tar::Header::new_gnu();
-                    header.set_size(metadata.len());
-                    header.set_mode(metadata.permissions().mode());
-                    header.set_mtime(
-                        metadata
-                            .modified()
-                            .map(|t| {
-                                t.into_std()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .unwrap_or_default()
-                            })
-                            .unwrap_or_default()
-                            .as_secs() as u64,
-                    );
-
-                    tar.append_data(&mut header, display_path, file).ok();
-                } else if let Ok(link_target) = filesystem.read_link(&path) {
-                    let mut header = tar::Header::new_gnu();
-                    header.set_size(0);
-                    header.set_mode(metadata.permissions().mode());
-                    header.set_mtime(
-                        metadata
-                            .modified()
-                            .map(|t| {
-                                t.into_std()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .unwrap_or_default()
-                            })
-                            .unwrap_or_default()
-                            .as_secs() as u64,
-                    );
-                    header.set_entry_type(tar::EntryType::Symlink);
-
-                    tar.append_link(&mut header, display_path, link_target)
-                        .unwrap();
-                }
+                crate::server::filesystem::archive::Archive::create_tar(
+                    server,
+                    writer,
+                    &path,
+                    names,
+                    crate::server::filesystem::archive::CompressionType::Gz,
+                    state.config.system.backups.compression_level,
+                )
+                .await
+                .ok();
             }
-
-            tar.finish().ok();
         });
 
         (

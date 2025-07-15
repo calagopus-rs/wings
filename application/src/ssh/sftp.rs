@@ -28,8 +28,6 @@ pub struct FileHandle {
     path_components: Vec<String>,
 
     file: Arc<std::fs::File>,
-    consumed: u64,
-    size: u64,
 }
 
 pub struct DirHandle {
@@ -176,7 +174,7 @@ impl russh_sftp::server::Handler for SftpSession {
             extensions: HashMap::from([
                 ("check-file".to_string(), "1".to_string()),
                 ("copy-file".to_string(), "1".to_string()),
-                ("space-available".to_string(), "1".to_string()),
+                ("space-available".to_string(), "6".to_string()),
                 ("limits@openssh.com".to_string(), "1".to_string()),
                 ("statvfs@openssh.com".to_string(), "2".to_string()),
             ]),
@@ -910,7 +908,7 @@ impl russh_sftp::server::Handler for SftpSession {
             activity_event = Some(ActivityEvent::SftpWrite);
         }
 
-        let (file, metadata) = tokio::task::spawn_blocking({
+        let file = tokio::task::spawn_blocking({
             let path = path.clone();
 
             move || {
@@ -921,13 +919,11 @@ impl russh_sftp::server::Handler for SftpSession {
                 options.create(pflags.contains(OpenFlags::CREATE));
                 options.truncate(pflags.contains(OpenFlags::TRUNCATE));
 
-                let file = filesystem.open_with(path, &options).unwrap();
-                let metadata = file.metadata().unwrap();
-
-                (file, metadata)
+                filesystem.open_with(path, &options)
             }
         })
         .await
+        .map_err(|_| StatusCode::Failure)?
         .map_err(|_| StatusCode::Failure)?;
 
         let path_components = self.server.filesystem.path_to_components(&path);
@@ -955,8 +951,6 @@ impl russh_sftp::server::Handler for SftpSession {
                 path,
                 path_components,
                 file: Arc::new(file.into_std()),
-                consumed: 0,
-                size: metadata.len(),
             }),
         );
 
@@ -979,27 +973,22 @@ impl russh_sftp::server::Handler for SftpSession {
             _ => return Err(StatusCode::NoSuchFile),
         };
 
-        if handle.consumed >= handle.size || offset >= handle.size {
-            return Err(StatusCode::Eof);
-        }
-
-        let buf = tokio::task::spawn_blocking({
+        let data = tokio::task::spawn_blocking({
             let file = Arc::clone(&handle.file);
 
-            move || {
-                let mut buf = vec![0; len.min(256 * 1024) as usize];
-                let bytes_read = file.read_at(&mut buf, offset).unwrap();
+            move || -> Result<Vec<u8>, std::io::Error> {
+                let mut data = vec![0; len.min(256 * 1024) as usize];
+                let bytes_read = file.read_at(&mut data, offset)?;
 
-                buf.truncate(bytes_read);
-                buf
+                data.truncate(bytes_read);
+                Ok(data)
             }
         })
         .await
+        .map_err(|_| StatusCode::Failure)?
         .map_err(|_| StatusCode::Failure)?;
 
-        handle.consumed += buf.len() as u64;
-
-        Ok(Data { id, data: buf })
+        Ok(Data { id, data })
     }
 
     async fn write(

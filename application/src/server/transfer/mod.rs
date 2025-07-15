@@ -16,33 +16,33 @@ pub mod counting_reader;
 #[derive(Clone, Copy, ToSchema, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 #[schema(rename_all = "snake_case")]
-pub enum ArchiveFormat {
+pub enum TransferArchiveFormat {
     Tar,
     #[default]
     TarGz,
     TarZstd,
 }
 
-impl ArchiveFormat {
+impl TransferArchiveFormat {
     pub fn extension(&self) -> &'static str {
         match self {
-            ArchiveFormat::Tar => "tar",
-            ArchiveFormat::TarGz => "tar.gz",
-            ArchiveFormat::TarZstd => "tar.zst",
+            TransferArchiveFormat::Tar => "tar",
+            TransferArchiveFormat::TarGz => "tar.gz",
+            TransferArchiveFormat::TarZstd => "tar.zst",
         }
     }
 }
 
-impl std::str::FromStr for ArchiveFormat {
+impl std::str::FromStr for TransferArchiveFormat {
     type Err = &'static str;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s.ends_with(".tar") {
-            Ok(ArchiveFormat::Tar)
+            Ok(TransferArchiveFormat::Tar)
         } else if s.ends_with(".tar.gz") {
-            Ok(ArchiveFormat::TarGz)
+            Ok(TransferArchiveFormat::TarGz)
         } else if s.ends_with(".tar.zst") {
-            Ok(ArchiveFormat::TarZstd)
+            Ok(TransferArchiveFormat::TarZstd)
         } else {
             Err("Invalid archive format")
         }
@@ -53,7 +53,7 @@ pub struct OutgoingServerTransfer {
     pub bytes_archived: Arc<AtomicU64>,
 
     server: super::Server,
-    archive_format: ArchiveFormat,
+    archive_format: TransferArchiveFormat,
     compression_level: CompressionLevel,
     pub task: Option<tokio::task::JoinHandle<()>>,
 }
@@ -61,7 +61,7 @@ pub struct OutgoingServerTransfer {
 impl OutgoingServerTransfer {
     pub fn new(
         server: &super::Server,
-        archive_format: ArchiveFormat,
+        archive_format: TransferArchiveFormat,
         compression_level: CompressionLevel,
     ) -> Self {
         Self {
@@ -154,12 +154,12 @@ impl OutgoingServerTransfer {
 
                     let writer = tokio_util::io::SyncIoBridge::new(checksummed_writer);
                     let writer: Box<dyn std::io::Write> = match archive_format {
-                        ArchiveFormat::Tar => Box::new(writer),
-                        ArchiveFormat::TarGz => Box::new(flate2::write::GzEncoder::new(
+                        TransferArchiveFormat::Tar => Box::new(writer),
+                        TransferArchiveFormat::TarGz => Box::new(flate2::write::GzEncoder::new(
                             writer,
                             compression_level.flate2_compression_level(),
                         )),
-                        ArchiveFormat::TarZstd => Box::new(
+                        TransferArchiveFormat::TarZstd => Box::new(
                             zstd::Encoder::new(writer, compression_level.zstd_compression_level())
                                 .unwrap(),
                         ),

@@ -19,6 +19,7 @@ pub mod backup;
 pub mod limiter;
 pub mod pull;
 mod usage;
+pub mod walker;
 pub mod writer;
 
 pub struct AsyncCapReadDir(Option<cap_std::fs::ReadDir>);
@@ -72,6 +73,50 @@ impl AsyncReadDir {
         match self {
             AsyncReadDir::Cap(read_dir) => read_dir.next_entry().await,
             AsyncReadDir::Tokio(read_dir) => read_dir.next_entry().await,
+        }
+    }
+}
+
+pub struct CapReadDir(cap_std::fs::ReadDir);
+
+impl CapReadDir {
+    pub fn next_entry(&mut self) -> Option<std::io::Result<(bool, String)>> {
+        match self.0.next() {
+            Some(Ok(entry)) => Some(Ok((
+                entry.file_type().is_ok_and(|ft| ft.is_dir()),
+                entry.file_name().to_string_lossy().to_string(),
+            ))),
+            Some(Err(err)) => Some(Err(err)),
+            None => None,
+        }
+    }
+}
+
+pub struct StdReadDir(std::fs::ReadDir);
+
+impl StdReadDir {
+    pub fn next_entry(&mut self) -> Option<std::io::Result<(bool, String)>> {
+        match self.0.next() {
+            Some(Ok(entry)) => Some(Ok((
+                entry.file_type().is_ok_and(|ft| ft.is_dir()),
+                entry.file_name().to_string_lossy().to_string(),
+            ))),
+            Some(Err(err)) => Some(Err(err)),
+            None => None,
+        }
+    }
+}
+
+pub enum ReadDir {
+    Cap(CapReadDir),
+    Std(StdReadDir),
+}
+
+impl ReadDir {
+    pub fn next_entry(&mut self) -> Option<std::io::Result<(bool, String)>> {
+        match self {
+            ReadDir::Cap(read_dir) => read_dir.next_entry(),
+            ReadDir::Std(read_dir) => read_dir.next_entry(),
         }
     }
 }
@@ -564,6 +609,19 @@ impl Filesystem {
         Ok(link)
     }
 
+    pub async fn read_link_contents(
+        &self,
+        path: impl Into<PathBuf>,
+    ) -> Result<PathBuf, anyhow::Error> {
+        let filesystem = self.base_dir().await?;
+
+        let path = self.relative_path(&path.into());
+        let link_contents =
+            tokio::task::spawn_blocking(move || filesystem.read_link_contents(path)).await??;
+
+        Ok(link_contents)
+    }
+
     pub async fn read_to_string(&self, path: impl Into<PathBuf>) -> Result<String, anyhow::Error> {
         let filesystem = self.base_dir().await?;
 
@@ -651,20 +709,16 @@ impl Filesystem {
         })
     }
 
-    pub fn walk_dir(
-        &self,
-        path: impl Into<PathBuf>,
-    ) -> Result<(WalkBuilder, PathBuf), anyhow::Error> {
+    pub fn read_dir_sync(&self, path: impl Into<PathBuf>) -> Result<ReadDir, anyhow::Error> {
         let filesystem = self.sync_base_dir()?;
 
         let path = self.relative_path(&path.into());
-        let full_path = if path.components().next().is_none() {
-            self.base_path.clone()
-        } else {
-            self.base_path.join(filesystem.canonicalize(path)?)
-        };
 
-        Ok((WalkBuilder::new(&full_path), full_path))
+        Ok(if path.components().next().is_none() {
+            ReadDir::Std(StdReadDir(std::fs::read_dir(&self.base_path)?))
+        } else {
+            ReadDir::Cap(CapReadDir(filesystem.read_dir(path)?))
+        })
     }
 
     pub async fn symlink(

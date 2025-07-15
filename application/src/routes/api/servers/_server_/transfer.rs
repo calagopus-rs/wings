@@ -13,7 +13,7 @@ mod post {
         token: String,
 
         #[serde(default)]
-        archive_format: crate::server::transfer::ArchiveFormat,
+        archive_format: crate::server::transfer::TransferArchiveFormat,
         #[serde(deserialize_with = "crate::deserialize::deserialize_optional")]
         compression_level: Option<crate::server::filesystem::archive::CompressionLevel>,
         #[serde(deserialize_with = "crate::deserialize::deserialize_defaultable")]

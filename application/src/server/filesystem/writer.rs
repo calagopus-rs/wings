@@ -1,3 +1,4 @@
+use std::future::Future;
 use std::{
     fs::Permissions,
     io::{BufWriter, Seek, SeekFrom, Write},
@@ -17,6 +18,8 @@ pub struct FileSystemWriter {
     ignorant: bool,
     accumulated_bytes: i64,
     modified: Option<SystemTime>,
+    current_position: u64,
+    highest_position: u64,
 }
 
 impl FileSystemWriter {
@@ -57,13 +60,14 @@ impl FileSystemWriter {
             ignorant: false,
             accumulated_bytes: 0,
             modified,
+            current_position: 0,
+            highest_position: 0,
         })
     }
 
     /// Skip Disk Limit Checks
     pub fn ignorant(mut self) -> Self {
         self.ignorant = true;
-
         self
     }
 
@@ -90,19 +94,25 @@ impl FileSystemWriter {
 impl Write for FileSystemWriter {
     #[inline]
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let size = buf.len() as i64;
+        let written = if let Some(writer) = self.writer.as_mut() {
+            writer.write(buf)?
+        } else {
+            return Err(std::io::Error::other("Writer is not available"));
+        };
 
-        self.accumulated_bytes += size;
+        self.current_position += written as u64;
+
+        if self.current_position > self.highest_position {
+            let additional_space = (self.current_position - self.highest_position) as i64;
+            self.accumulated_bytes += additional_space;
+            self.highest_position = self.current_position;
+        }
 
         if self.accumulated_bytes >= ALLOCATION_THRESHOLD {
             self.allocate_accumulated()?;
         }
 
-        if let Some(writer) = self.writer.as_mut() {
-            writer.write(buf)
-        } else {
-            Err(std::io::Error::other("Writer is not available"))
-        }
+        Ok(written)
     }
 
     #[inline]
@@ -121,11 +131,15 @@ impl Seek for FileSystemWriter {
     fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
         self.allocate_accumulated()?;
 
-        if let Some(writer) = self.writer.as_mut() {
-            writer.seek(pos)
+        let new_pos = if let Some(writer) = self.writer.as_mut() {
+            writer.seek(pos)?
         } else {
-            Err(std::io::Error::other("Writer is not available"))
-        }
+            return Err(std::io::Error::other("Writer is not available"));
+        };
+
+        self.current_position = new_pos;
+
+        Ok(new_pos)
     }
 }
 
@@ -149,6 +163,8 @@ pub struct AsyncFileSystemWriter {
     accumulated_bytes: i64,
     modified: Option<SystemTime>,
     allocation_in_progress: Option<Pin<Box<dyn Future<Output = bool> + Send>>>,
+    current_position: u64,
+    highest_position: u64,
 }
 
 impl AsyncFileSystemWriter {
@@ -193,13 +209,14 @@ impl AsyncFileSystemWriter {
             accumulated_bytes: 0,
             modified,
             allocation_in_progress: None,
+            current_position: 0,
+            highest_position: 0,
         })
     }
 
     /// Skip Disk Limit Checks
     pub fn ignorant(mut self) -> Self {
         self.ignorant = true;
-
         self
     }
 
@@ -255,20 +272,30 @@ impl AsyncWrite for AsyncFileSystemWriter {
             Poll::Pending => return Poll::Pending,
         }
 
-        let size = buf.len() as i64;
-        self.accumulated_bytes += size;
+        let result = Pin::new(self.writer.as_mut().unwrap()).poll_write(cx, buf);
 
-        if self.accumulated_bytes >= ALLOCATION_THRESHOLD {
-            self.start_allocation();
+        if let Poll::Ready(Ok(written)) = &result {
+            let written = *written as u64;
+            self.current_position += written;
 
-            match self.poll_allocation(cx) {
-                Poll::Ready(Ok(())) => {}
-                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-                Poll::Pending => return Poll::Pending,
+            if self.current_position > self.highest_position {
+                let additional_space = (self.current_position - self.highest_position) as i64;
+                self.accumulated_bytes += additional_space;
+                self.highest_position = self.current_position;
+
+                if self.accumulated_bytes >= ALLOCATION_THRESHOLD {
+                    self.start_allocation();
+
+                    match self.poll_allocation(cx) {
+                        Poll::Ready(Ok(())) => {}
+                        Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                        Poll::Pending => return Poll::Pending,
+                    }
+                }
             }
         }
 
-        Pin::new(self.writer.as_mut().unwrap()).poll_write(cx, buf)
+        result
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
@@ -328,7 +355,13 @@ impl AsyncSeek for AsyncFileSystemWriter {
             Poll::Pending => return Poll::Pending,
         }
 
-        Pin::new(self.writer.as_mut().unwrap()).poll_complete(cx)
+        let result = Pin::new(self.writer.as_mut().unwrap()).poll_complete(cx);
+
+        if let Poll::Ready(Ok(new_pos)) = &result {
+            self.current_position = *new_pos;
+        }
+
+        result
     }
 }
 

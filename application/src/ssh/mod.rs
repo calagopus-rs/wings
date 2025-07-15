@@ -6,6 +6,7 @@ use std::{
 };
 
 mod auth;
+mod exec;
 mod sftp;
 mod shell;
 
