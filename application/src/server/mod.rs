@@ -53,7 +53,7 @@ pub struct InnerServer {
     restoring: AtomicBool,
     pub transferring: AtomicBool,
 
-    restarting: AtomicBool,
+    pub restarting: AtomicBool,
     stopping: AtomicBool,
     last_crash: Mutex<Option<std::time::Instant>>,
     crash_handled: AtomicBool,
@@ -666,6 +666,17 @@ impl Server {
                 .to_string(),
         )
         .await
+    }
+
+    pub fn get_daemon_error(&self, message: &str) -> websocket::WebsocketMessage {
+        websocket::WebsocketMessage::new(
+            websocket::WebsocketEvent::ServerDaemonMessage,
+            &[ansi_term::Style::new()
+                .bold()
+                .on(ansi_term::Color::Red)
+                .paint(message)
+                .to_string()],
+        )
     }
 
     pub async fn pull_image(

@@ -1,6 +1,5 @@
 use crate::server::backup::InternalBackup;
 use cap_std::fs::{Metadata, PermissionsExt};
-use ignore::WalkBuilder;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},

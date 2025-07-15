@@ -74,6 +74,13 @@ impl ShellSession {
             Some("power") => match segments.next() {
                 Some("start") => {
                     if self.has_permission(Permission::ControlStart).await {
+                        if self.server.state.get_state()
+                            != crate::server::state::ServerState::Offline
+                        {
+                            writeln("Server is already online.").await;
+                            return;
+                        }
+
                         if let Err(err) = self.server.start(&self.state.docker, None).await {
                             tracing::error!(
                                 server = %self.server.uuid,
@@ -101,6 +108,15 @@ impl ShellSession {
                 }
                 Some("restart") => {
                     if self.has_permission(Permission::ControlRestart).await {
+                        if self
+                            .server
+                            .restarting
+                            .load(std::sync::atomic::Ordering::SeqCst)
+                        {
+                            writeln("Server is already restarting.").await;
+                            return;
+                        }
+
                         if let Err(err) = self.server.restart(&self.state.docker, None).await {
                             tracing::error!(
                                 server = %self.server.uuid,
@@ -129,6 +145,15 @@ impl ShellSession {
                 }
                 Some("stop") => {
                     if self.has_permission(Permission::ControlStop).await {
+                        if matches!(
+                            self.server.state.get_state(),
+                            crate::server::state::ServerState::Offline
+                                | crate::server::state::ServerState::Stopping
+                        ) {
+                            writeln("Server is already offline or stopping.").await;
+                            return;
+                        }
+
                         if let Err(err) = self.server.stop(&self.state.docker, None).await {
                             tracing::error!(
                                 server = %self.server.uuid,
@@ -156,6 +181,13 @@ impl ShellSession {
                 }
                 Some("kill") => {
                     if self.has_permission(Permission::ControlStop).await {
+                        if self.server.state.get_state()
+                            == crate::server::state::ServerState::Offline
+                        {
+                            writeln("Server is already offline.").await;
+                            return;
+                        }
+
                         if let Err(err) = self.server.kill(&self.state.docker).await {
                             tracing::error!(
                                 server = %self.server.uuid,

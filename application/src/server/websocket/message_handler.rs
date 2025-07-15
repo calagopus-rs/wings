@@ -72,6 +72,16 @@ pub async fn handle_message(
                         return Ok(());
                     }
 
+                    if server.state.get_state() != crate::server::state::ServerState::Offline {
+                        super::send_message(
+                            sender,
+                            server.get_daemon_error("Server is already running or starting."),
+                        )
+                        .await;
+
+                        return Ok(());
+                    }
+
                     if let Err(err) = server.start(&state.docker, None).await {
                         tracing::error!(
                             server = %server.uuid,
@@ -80,7 +90,7 @@ pub async fn handle_message(
                         );
 
                         server.log_daemon_error("An unexpected error occurred while starting the server. Please contact an Administrator.")
-                                .await;
+                            .await;
                     } else {
                         server
                             .activity
@@ -108,6 +118,16 @@ pub async fn handle_message(
                         return Ok(());
                     }
 
+                    if server.restarting.load(std::sync::atomic::Ordering::SeqCst) {
+                        super::send_message(
+                            sender,
+                            server.get_daemon_error("Server is already restarting."),
+                        )
+                        .await;
+
+                        return Ok(());
+                    }
+
                     if let Err(err) = server.restart(&state.docker, None).await {
                         tracing::error!(
                             server = %server.uuid,
@@ -115,8 +135,11 @@ pub async fn handle_message(
                             err
                         );
 
-                        server.log_daemon_error("An unexpected error occurred while restarting the server. Please contact an Administrator.")
-                                .await;
+                        super::send_message(
+                            sender,
+                            server.get_daemon_error("An unexpected error occurred while restarting the server. Please contact an Administrator.")
+                        )
+                        .await;
                     } else {
                         server
                             .activity
@@ -144,6 +167,20 @@ pub async fn handle_message(
                         return Ok(());
                     }
 
+                    if matches!(
+                        server.state.get_state(),
+                        crate::server::state::ServerState::Offline
+                            | crate::server::state::ServerState::Stopping
+                    ) {
+                        super::send_message(
+                            sender,
+                            server.get_daemon_error("Server is already offline or stopping."),
+                        )
+                        .await;
+
+                        return Ok(());
+                    }
+
                     if let Err(err) = server.stop(&state.docker, None).await {
                         tracing::error!(
                             server = %server.uuid,
@@ -151,8 +188,11 @@ pub async fn handle_message(
                             err
                         );
 
-                        server.log_daemon_error("An unexpected error occurred while stopping the server. Please contact an Administrator.")
-                                .await;
+                        super::send_message(
+                            sender,
+                            server.get_daemon_error("An unexpected error occurred while stopping the server. Please contact an Administrator.")
+                        )
+                        .await;
                     } else {
                         server
                             .activity
@@ -180,6 +220,16 @@ pub async fn handle_message(
                         return Ok(());
                     }
 
+                    if server.state.get_state() == crate::server::state::ServerState::Offline {
+                        super::send_message(
+                            sender,
+                            server.get_daemon_error("Server is already offline."),
+                        )
+                        .await;
+
+                        return Ok(());
+                    }
+
                     if let Err(err) = server.kill(&state.docker).await {
                         tracing::error!(
                             server = %server.uuid,
@@ -187,8 +237,11 @@ pub async fn handle_message(
                             err
                         );
 
-                        server.log_daemon_error("An unexpected error occurred while killing the server. Please contact an Administrator.")
-                                .await;
+                        super::send_message(
+                            sender,
+                            server.get_daemon_error("An unexpected error occurred while killing the server. Please contact an Administrator.")
+                        )
+                        .await;
                     } else {
                         server
                             .activity
