@@ -24,6 +24,7 @@ pub mod installation;
 pub mod manager;
 pub mod permissions;
 pub mod resources;
+pub mod script;
 pub mod state;
 pub mod transfer;
 pub mod websocket;
@@ -683,6 +684,7 @@ impl Server {
         &self,
         client: &Arc<bollard::Docker>,
         image: &str,
+        quiet: bool,
     ) -> Result<(), bollard::errors::Error> {
         tracing::info!(
             server = %self.uuid,
@@ -690,10 +692,12 @@ impl Server {
             "pulling image"
         );
 
-        self.log_daemon_with_prelude(
-            "Pulling Docker container image, this could take a few minutes to complete...",
-        )
-        .await;
+        if !quiet {
+            self.log_daemon_with_prelude(
+                "Pulling Docker container image, this could take a few minutes to complete...",
+            )
+            .await;
+        }
 
         if !image.ends_with("~") {
             let mut registry_auth = None;
@@ -741,8 +745,10 @@ impl Server {
                             err
                         );
 
-                        self.log_daemon_error(&format!("failed to pull image: {err}"))
-                            .await;
+                        if !quiet {
+                            self.log_daemon_error(&format!("failed to pull image: {err}"))
+                                .await;
+                        }
 
                         if let Ok(images) = client
                             .list_images(Some(bollard::image::ListImagesOptions {
@@ -770,8 +776,16 @@ impl Server {
             }
         }
 
-        self.log_daemon_with_prelude("Finished pulling Docker container image")
-            .await;
+        if !quiet {
+            self.log_daemon_with_prelude("Finished pulling Docker container image")
+                .await;
+        }
+
+        tracing::info!(
+            server = %self.uuid,
+            image = %image,
+            "finished pulling image"
+        );
 
         Ok(())
     }
@@ -844,6 +858,7 @@ impl Server {
                     self.pull_image(
                         client,
                         &self.configuration.read().await.container.image,
+                        false,
                     )
                     .await?;
 

@@ -1,0 +1,216 @@
+use super::configuration::string_to_option;
+use crate::server::installation::InstallationScript;
+use anyhow::Context;
+use futures_util::StreamExt;
+use std::{
+    collections::HashMap, fs::Permissions, os::unix::fs::PermissionsExt, path::Path, sync::Arc,
+};
+
+async fn container_config(
+    server: &super::Server,
+    script: &InstallationScript,
+) -> tokio::io::Result<bollard::container::Config<String>> {
+    let labels = HashMap::from([
+        ("Service".to_string(), "Pterodactyl".to_string()),
+        ("ContainerType".to_string(), "script_runner".to_string()),
+    ]);
+
+    let mut resources = server
+        .configuration
+        .read()
+        .await
+        .convert_container_resources(&server.config);
+
+    if resources.memory_reservation.is_some_and(|m| {
+        m > 0 && m < server.config.docker.installer_limits.memory as i64 * 1024 * 1024
+    }) {
+        resources.memory = None;
+        resources.memory_reservation =
+            Some(server.config.docker.installer_limits.memory as i64 * 1024 * 1024);
+    }
+
+    if resources
+        .cpu_quota
+        .is_some_and(|c| c > 0 && c < server.config.docker.installer_limits.cpu as i64 * 1000)
+    {
+        resources.cpu_quota = Some(server.config.docker.installer_limits.cpu as i64 * 1000);
+    }
+
+    let tmp_dir = Path::new(&server.config.system.tmp_directory).join(server.uuid.to_string());
+    tokio::fs::create_dir_all(&tmp_dir).await?;
+    tokio::fs::write(
+        tmp_dir.join("script.sh"),
+        script.script.replace("\r\n", "\n"),
+    )
+    .await?;
+    tokio::fs::set_permissions(&tmp_dir, Permissions::from_mode(0o755)).await?;
+
+    Ok(bollard::container::Config {
+        host_config: Some(bollard::secret::HostConfig {
+            memory: resources.memory,
+            memory_reservation: resources.memory_reservation,
+            memory_swap: resources.memory_swap,
+            cpu_quota: resources.cpu_quota,
+            cpu_period: resources.cpu_period,
+            cpu_shares: resources.cpu_shares,
+            cpuset_cpus: resources.cpuset_cpus,
+            pids_limit: resources.pids_limit,
+            blkio_weight: resources.blkio_weight,
+            oom_kill_disable: resources.oom_kill_disable,
+
+            mounts: Some(vec![
+                bollard::models::Mount {
+                    typ: Some(bollard::secret::MountTypeEnum::BIND),
+                    source: Some(server.filesystem.base()),
+                    target: Some("/mnt/server".to_string()),
+                    ..Default::default()
+                },
+                bollard::models::Mount {
+                    typ: Some(bollard::secret::MountTypeEnum::BIND),
+                    source: Some(tmp_dir.to_string_lossy().to_string()),
+                    target: Some("/mnt/script".to_string()),
+                    ..Default::default()
+                },
+            ]),
+            network_mode: Some(server.config.docker.network.mode.clone()),
+            dns: Some(server.config.docker.network.dns.clone()),
+            tmpfs: Some(HashMap::from([(
+                "/tmp".to_string(),
+                format!("rw,exec,nosuid,size={}M", server.config.docker.tmpfs_size),
+            )])),
+            log_config: Some(bollard::secret::HostConfigLogConfig {
+                typ: serde_json::to_value(&server.config.docker.log_config.r#type)
+                    .unwrap()
+                    .as_str()
+                    .map(|s| s.to_string()),
+                config: Some(server.config.docker.log_config.config.clone()),
+            }),
+            userns_mode: string_to_option(&server.config.docker.userns_mode),
+            auto_remove: Some(true),
+            ..Default::default()
+        }),
+        cmd: Some(vec![
+            script.entrypoint.clone(),
+            "/mnt/script/script.sh".to_string(),
+        ]),
+        hostname: Some("script".to_string()),
+        image: Some(script.container_image.clone()),
+        env: Some(
+            server
+                .configuration
+                .read()
+                .await
+                .environment(&server.config),
+        ),
+        labels: Some(labels),
+        attach_stdout: Some(true),
+        attach_stderr: Some(true),
+        tty: Some(false),
+        ..Default::default()
+    })
+}
+
+pub async fn script_server(
+    server: &super::Server,
+    client: &Arc<bollard::Docker>,
+    script: InstallationScript,
+) -> Result<(String, String), anyhow::Error> {
+    if let Err(err) = server
+        .pull_image(client, &script.container_image, true)
+        .await
+        .context("Failed to pull installation container image")
+    {
+        return Err(err);
+    }
+
+    let container = match client
+        .create_container(
+            Some(bollard::container::CreateContainerOptions {
+                name: format!(
+                    "{}_script_runner_{}",
+                    server.uuid,
+                    chrono::Utc::now().timestamp()
+                ),
+                ..Default::default()
+            }),
+            match container_config(server, &script).await {
+                Ok(config) => config,
+                Err(err) => {
+                    return Err(err.into());
+                }
+            },
+        )
+        .await
+        .context("Failed to create installation container")
+    {
+        Ok(container) => container,
+        Err(err) => {
+            return Err(err);
+        }
+    };
+
+    let start_thread = async {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+        if let Err(err) = client.start_container::<String>(&container.id, None).await {
+            tracing::error!(
+                server = %server.uuid,
+                "failed to start script runner container: {:#?}",
+                err
+            );
+
+            return Err(err);
+        }
+
+        Ok(())
+    };
+
+    let mut output_thread = Box::pin(async {
+        let mut stream = client
+            .attach_container::<String>(
+                &container.id,
+                Some(bollard::container::AttachContainerOptions {
+                    stream: Some(true),
+                    stdout: Some(true),
+                    stderr: Some(true),
+                    ..Default::default()
+                }),
+            )
+            .await?;
+
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+
+        while let Some(Ok(output)) = stream.output.next().await {
+            match output {
+                bollard::container::LogOutput::StdOut { message } => {
+                    stdout.push_str(&String::from_utf8_lossy(&message));
+                }
+                bollard::container::LogOutput::StdErr { message } => {
+                    stderr.push_str(&String::from_utf8_lossy(&message));
+                }
+                _ => {}
+            }
+        }
+
+        Ok((stdout, stderr))
+    });
+
+    tokio::select! {
+        result = start_thread => {
+            if let Err(err) = result {
+                return Err(err.into());
+            } else {
+                return output_thread.await;
+            }
+        },
+        output = &mut output_thread => {
+            tracing::debug!(
+                server = %server.uuid,
+                "script runner container has exited"
+            );
+
+            return output;
+        }
+    }
+}

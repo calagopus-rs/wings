@@ -10,8 +10,9 @@ use std::{
     sync::{Arc, atomic::Ordering},
 };
 use tokio::{io::AsyncWriteExt, sync::Mutex};
+use utoipa::ToSchema;
 
-#[derive(Deserialize, Serialize, Clone)]
+#[derive(ToSchema, Deserialize, Serialize, Clone)]
 pub struct InstallationScript {
     pub container_image: String,
     pub entrypoint: String,
@@ -333,7 +334,7 @@ pub async fn install_server(
     *container_script.lock().await = Some(script.clone());
 
     if let Err(err) = server
-        .pull_image(client, &script.container_image)
+        .pull_image(client, &script.container_image, false)
         .await
         .context("Failed to pull installation container image")
     {
