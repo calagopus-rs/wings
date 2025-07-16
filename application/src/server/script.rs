@@ -2,6 +2,7 @@ use super::configuration::string_to_option;
 use crate::server::installation::InstallationScript;
 use anyhow::Context;
 use futures_util::StreamExt;
+use rand::distr::SampleString;
 use std::{
     collections::HashMap, fs::Permissions, os::unix::fs::PermissionsExt, path::Path, sync::Arc,
 };
@@ -126,7 +127,7 @@ pub async fn script_server(
                 name: format!(
                     "{}_script_runner_{}",
                     server.uuid,
-                    chrono::Utc::now().timestamp()
+                    rand::distr::Alphanumeric.sample_string(&mut rand::rng(), 8)
                 ),
                 ..Default::default()
             }),
@@ -147,7 +148,7 @@ pub async fn script_server(
     };
 
     let start_thread = async {
-        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
         if let Err(err) = client.start_container::<String>(&container.id, None).await {
             tracing::error!(
