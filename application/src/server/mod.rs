@@ -184,12 +184,19 @@ impl Server {
                     let client_clone = Arc::clone(&client);
                     let server_clone = server.clone();
                     tokio::spawn(async move {
-                        server_clone
+                        if let Err(err) = server_clone
                             .stop_with_kill_timeout(
                                 &client_clone,
                                 std::time::Duration::from_secs(30),
                             )
-                            .await;
+                            .await
+                        {
+                            tracing::error!(
+                                server = %server_clone.uuid,
+                                "failed to stop server: {:#?}",
+                                err
+                            );
+                        }
                     });
                 }
 
@@ -1100,13 +1107,42 @@ impl Server {
         Ok(())
     }
 
+    pub async fn restart_with_kill_timeout(
+        &self,
+        client: &Arc<bollard::Docker>,
+        aquire_timeout: Option<std::time::Duration>,
+        timeout: std::time::Duration,
+    ) -> Result<(), anyhow::Error> {
+        if self.restarting.load(Ordering::Relaxed) {
+            return Err(anyhow::anyhow!("server is already restarting"));
+        }
+
+        tracing::info!(
+            server = %self.uuid,
+            "restarting server with kill timeout {}s",
+            timeout.as_secs()
+        );
+
+        if self.state.get_state() != state::ServerState::Offline {
+            if self.state.get_state() != state::ServerState::Stopping {
+                self.stop_with_kill_timeout(client, timeout).await?;
+            }
+
+            self.restarting.store(true, Ordering::Relaxed);
+        } else {
+            self.start(client, aquire_timeout).await?;
+        }
+
+        Ok(())
+    }
+
     pub async fn stop_with_kill_timeout(
         &self,
         client: &Arc<bollard::Docker>,
         timeout: std::time::Duration,
-    ) {
+    ) -> Result<(), anyhow::Error> {
         if self.state.get_state() == state::ServerState::Offline {
-            return;
+            return Ok(());
         }
 
         tracing::info!(
@@ -1115,12 +1151,20 @@ impl Server {
             timeout.as_secs()
         );
 
+        self.log_daemon(format!(
+            "Killing server after {} seconds...",
+            timeout.as_secs()
+        ))
+        .await;
+
         let mut stream = client.wait_container::<String>(
             &self.container.read().await.as_ref().unwrap().docker_id,
             None,
         );
 
-        self.stop(client, None).await.ok();
+        if self.state.get_state() != state::ServerState::Stopping {
+            self.stop(client, None).await?;
+        }
 
         if tokio::time::timeout(timeout, stream.next()).await.is_err() {
             tracing::info!(
@@ -1128,8 +1172,10 @@ impl Server {
                 "kill timeout reached, killing server"
             );
 
-            self.kill(client).await.ok();
+            self.kill(client).await?;
         }
+
+        Ok(())
     }
 
     pub async fn destroy_container(&self, client: &bollard::Docker) {

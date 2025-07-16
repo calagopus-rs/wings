@@ -44,7 +44,17 @@ mod post {
                     }
                 }
                 crate::models::ServerPowerAction::Stop => {
-                    if let Err(err) = server.stop(&state.docker, aquire_timeout).await {
+                    let auto_kill = server.configuration.read().await.auto_kill;
+                    if let Err(err) = if auto_kill.enabled && auto_kill.seconds > 0 {
+                        server
+                            .stop_with_kill_timeout(
+                                &state.docker,
+                                std::time::Duration::from_secs(auto_kill.seconds),
+                            )
+                            .await
+                    } else {
+                        server.stop(&state.docker, aquire_timeout).await
+                    } {
                         tracing::error!(
                             server = %server.uuid,
                             "failed to stop server: {:#?}",
@@ -53,10 +63,21 @@ mod post {
                     }
                 }
                 crate::models::ServerPowerAction::Restart => {
-                    if let Err(err) = server.restart(&state.docker, aquire_timeout).await {
+                    let auto_kill = server.configuration.read().await.auto_kill;
+                    if let Err(err) = if auto_kill.enabled && auto_kill.seconds > 0 {
+                        server
+                            .restart_with_kill_timeout(
+                                &state.docker,
+                                aquire_timeout,
+                                std::time::Duration::from_secs(auto_kill.seconds),
+                            )
+                            .await
+                    } else {
+                        server.restart(&state.docker, None).await
+                    } {
                         tracing::error!(
                             server = %server.uuid,
-                            "failed to restart server: {:#?}",
+                            "failed to auto kill server: {:#?}",
                             err
                         );
                     }

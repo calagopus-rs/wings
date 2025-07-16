@@ -303,9 +303,25 @@ impl InternalBackup {
         }
 
         server.restoring.store(true, Ordering::SeqCst);
-        server
+        if let Err(err) = server
             .stop_with_kill_timeout(client, std::time::Duration::from_secs(30))
-            .await;
+            .await
+        {
+            tracing::error!(
+                server = %server.uuid,
+                "failed to stop server before restoring backup: {:#?}",
+                err
+            );
+
+            server.restoring.store(false, Ordering::SeqCst);
+            server
+                .config
+                .client
+                .set_backup_restore_status(self.uuid, false)
+                .await?;
+
+            return Err(err);
+        }
 
         tracing::info!(
             server = %server.uuid,
@@ -402,7 +418,7 @@ impl InternalBackup {
 
                 Ok(())
             }
-            Err(e) => {
+            Err(err) => {
                 progress_task.abort();
 
                 server.restoring.store(false, Ordering::SeqCst);
@@ -412,7 +428,7 @@ impl InternalBackup {
                     .set_backup_restore_status(self.uuid, false)
                     .await?;
 
-                Err(e)
+                Err(err)
             }
         }
     }

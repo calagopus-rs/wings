@@ -117,7 +117,18 @@ impl ShellSession {
                             return;
                         }
 
-                        if let Err(err) = self.server.restart(&self.state.docker, None).await {
+                        let auto_kill = self.server.configuration.read().await.auto_kill;
+                        if let Err(err) = if auto_kill.enabled && auto_kill.seconds > 0 {
+                            self.server
+                                .restart_with_kill_timeout(
+                                    &self.state.docker,
+                                    None,
+                                    std::time::Duration::from_secs(auto_kill.seconds),
+                                )
+                                .await
+                        } else {
+                            self.server.restart(&self.state.docker, None).await
+                        } {
                             tracing::error!(
                                 server = %self.server.uuid,
                                 "failed to restart server: {:#?}",
@@ -154,7 +165,17 @@ impl ShellSession {
                             return;
                         }
 
-                        if let Err(err) = self.server.stop(&self.state.docker, None).await {
+                        let auto_kill = self.server.configuration.read().await.auto_kill;
+                        if let Err(err) = if auto_kill.enabled && auto_kill.seconds > 0 {
+                            self.server
+                                .stop_with_kill_timeout(
+                                    &self.state.docker,
+                                    std::time::Duration::from_secs(auto_kill.seconds),
+                                )
+                                .await
+                        } else {
+                            self.server.stop(&self.state.docker, None).await
+                        } {
                             tracing::error!(
                                 server = %self.server.uuid,
                                 "failed to stop server: {:#?}",

@@ -1,6 +1,6 @@
 [package]
 name = "wings-rs"
-version = "0.16.2"
+version = "0.16.3"
 edition = "2024"
 
 [dependencies]

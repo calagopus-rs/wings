@@ -115,13 +115,10 @@ pub async fn script_server(
     client: &Arc<bollard::Docker>,
     script: InstallationScript,
 ) -> Result<(String, String), anyhow::Error> {
-    if let Err(err) = server
+    server
         .pull_image(client, &script.container_image, true)
         .await
-        .context("Failed to pull installation container image")
-    {
-        return Err(err);
-    }
+        .context("Failed to pull installation container image")?;
 
     let container = match client
         .create_container(
@@ -199,9 +196,9 @@ pub async fn script_server(
     tokio::select! {
         result = start_thread => {
             if let Err(err) = result {
-                return Err(err.into());
+                Err(err.into())
             } else {
-                return output_thread.await;
+                output_thread.await
             }
         },
         output = &mut output_thread => {
@@ -210,7 +207,7 @@ pub async fn script_server(
                 "script runner container has exited"
             );
 
-            return output;
+            output
         }
     }
 }

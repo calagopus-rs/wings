@@ -33,7 +33,8 @@ mod post {
 
         server
             .stop_with_kill_timeout(&state.docker, std::time::Duration::from_secs(30))
-            .await;
+            .await
+            .unwrap();
         server.sync_configuration(&state.docker).await;
 
         tokio::spawn(async move {

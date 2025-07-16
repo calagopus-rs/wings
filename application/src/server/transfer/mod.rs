@@ -128,9 +128,19 @@ impl OutgoingServerTransfer {
 
         let old_task = self.task.replace(tokio::spawn(async move {
             if server.state.get_state() != super::state::ServerState::Offline {
-                server
+                if let Err(err) = server
                     .stop_with_kill_timeout(&client, std::time::Duration::from_secs(15))
-                    .await;
+                    .await
+                {
+                    tracing::error!(
+                        server = %server.uuid,
+                        "failed to stop server: {:#?}",
+                        err
+                    );
+
+                    Self::transfer_failure(&server).await;
+                    return;
+                }
             }
 
             Self::log(&server, "Preparing to stream server data to destination...");

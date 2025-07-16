@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_default::DefaultFromSerde;
 use std::{collections::HashMap, path::PathBuf};
 use utoipa::ToSchema;
 
@@ -79,6 +80,16 @@ nestify::nest! {
         #[schema(inline)]
         pub container: #[derive(ToSchema, Deserialize, Serialize)] pub struct ServerConfigurationContainer {
             pub image: String,
+            pub timezone: Option<String>,
+        },
+
+        #[serde(default)]
+        #[schema(inline)]
+        pub auto_kill: #[derive(ToSchema, Deserialize, Serialize, DefaultFromSerde, Clone, Copy)] pub struct ServerConfigurationAutoKill {
+            #[serde(default)]
+            pub enabled: bool,
+            #[serde(default)]
+            pub seconds: u64,
         },
     }
 }
@@ -265,13 +276,15 @@ impl ServerConfiguration {
         let mut environment = self.environment.clone();
         environment.reserve(5);
 
-        if !environment.contains_key("TZ") {
-            environment.insert(
-                "TZ".to_string(),
-                serde_json::Value::String(config.system.timezone.clone()),
-            );
-        }
-
+        environment.insert(
+            "TZ".to_string(),
+            serde_json::Value::String(
+                self.container
+                    .timezone
+                    .clone()
+                    .unwrap_or_else(|| config.system.timezone.clone()),
+            ),
+        );
         environment.insert(
             "STARTUP".to_string(),
             serde_json::Value::from(self.invocation.clone()),
