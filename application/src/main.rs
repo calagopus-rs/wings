@@ -450,8 +450,6 @@ async fn main() {
                 maximum_packet_size: 64 * 1024,
                 keepalive_interval: Some(std::time::Duration::from_secs(60)),
                 max_auth_attempts: 6,
-                channel_buffer_size: 1024,
-                event_buffer_size: 1024,
                 keys: vec![key],
                 ..Default::default()
             };

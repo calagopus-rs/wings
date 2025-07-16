@@ -988,6 +988,10 @@ impl russh_sftp::server::Handler for SftpSession {
         .map_err(|_| StatusCode::Failure)?
         .map_err(|_| StatusCode::Failure)?;
 
+        if data.is_empty() {
+            return Err(StatusCode::Eof);
+        }
+
         Ok(Data { id, data })
     }
 
