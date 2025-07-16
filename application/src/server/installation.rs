@@ -108,7 +108,7 @@ async fn container_config(
             "/mnt/install/install.sh".to_string(),
         ]),
         hostname: Some("installer".to_string()),
-        image: Some(script.container_image.clone()),
+        image: Some(script.container_image.trim_end_matches('~').to_string()),
         env: Some(
             server
                 .configuration
@@ -538,7 +538,10 @@ pub async fn attach_install_container(
                 .as_ref()
                 .is_some_and(|names| names.iter().any(|name| name.contains("installer")))
             {
-                if container.state == Some("Running".to_string()) {
+                if container
+                    .state
+                    .is_some_and(|s| s.to_lowercase() == "running")
+                {
                     tracing::info!(
                         server = %server.uuid,
                         "attaching to existing installation container {}",

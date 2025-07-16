@@ -94,7 +94,7 @@ async fn container_config(
             "/mnt/script/script.sh".to_string(),
         ]),
         hostname: Some("script".to_string()),
-        image: Some(script.container_image.clone()),
+        image: Some(script.container_image.trim_end_matches('~').to_string()),
         env: Some(
             server
                 .configuration
@@ -147,7 +147,7 @@ pub async fn script_server(
     };
 
     let start_thread = async {
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
 
         if let Err(err) = client.start_container::<String>(&container.id, None).await {
             tracing::error!(
