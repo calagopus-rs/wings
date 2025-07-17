@@ -6,7 +6,7 @@ use std::{
 };
 use tokio::sync::Mutex;
 
-#[derive(Debug, Serialize, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ActivityEvent {
     #[serde(rename = "server:power.start")]
     PowerStart,
@@ -41,7 +41,7 @@ pub enum ActivityEvent {
 
 impl ActivityEvent {
     #[inline]
-    pub fn is_sftp_event(&self) -> bool {
+    pub fn is_sftp_event(self) -> bool {
         matches!(
             self,
             ActivityEvent::SftpWrite
@@ -109,64 +109,56 @@ impl ActivityManager {
                         > = HashMap::new();
 
                         for (idx, activity) in activities.iter().enumerate() {
-                            if activity.event.is_sftp_event() {
-                                if let Some(metadata) = &activity.metadata {
-                                    if metadata.get("files").is_some() {
-                                        let key = (activity.event.clone(), activity.user);
+                            if activity.event.is_sftp_event()
+                                && let Some(metadata) = &activity.metadata
+                                && metadata.get("files").is_some()
+                            {
+                                let key = (activity.event, activity.user);
+                                let mut found_match = false;
 
-                                        let mut found_match = false;
-
-                                        for ((event_type, user), (existing, indices)) in
-                                            &mut sftp_events
-                                        {
-                                            if *event_type == activity.event
-                                                && *user == activity.user
-                                            {
-                                                let duration = activity
-                                                    .timestamp
-                                                    .signed_duration_since(existing.timestamp);
-                                                if duration.num_seconds().abs() <= 60 {
-                                                    indices.push(idx);
-                                                    found_match = true;
-                                                    break;
-                                                }
-                                            }
+                                for ((event_type, user), (existing, indices)) in &mut sftp_events {
+                                    if *event_type == activity.event && *user == activity.user {
+                                        let duration = activity
+                                            .timestamp
+                                            .signed_duration_since(existing.timestamp);
+                                        if duration.num_seconds().abs() <= 60 {
+                                            indices.push(idx);
+                                            found_match = true;
+                                            break;
                                         }
-
-                                        if !found_match {
-                                            sftp_events.insert(key, (activity.clone(), vec![idx]));
-                                        }
-
-                                        continue;
                                     }
                                 }
+
+                                if !found_match {
+                                    sftp_events.insert(key, (activity.clone(), vec![idx]));
+                                }
+
+                                continue;
                             }
 
                             merged_activities.push_back(activity.clone());
                         }
 
-                        for (_, (mut base_activity, indices)) in sftp_events {
+                        for (mut base_activity, indices) in sftp_events.into_values() {
                             if indices.len() > 1 {
                                 let mut all_files = Vec::new();
 
                                 for idx in indices {
-                                    if let Some(activity) = activities.get(idx) {
-                                        if let Some(metadata) = &activity.metadata {
-                                            if let Some(files) = metadata.get("files") {
-                                                if let Some(files_array) = files.as_array() {
-                                                    for file in files_array {
-                                                        all_files.push(file.clone());
-                                                    }
-                                                }
-                                            }
+                                    if let Some(activity) = activities.get(idx)
+                                        && let Some(metadata) = &activity.metadata
+                                        && let Some(files) = metadata.get("files")
+                                        && let Some(files_array) = files.as_array()
+                                    {
+                                        for file in files_array {
+                                            all_files.push(file.clone());
                                         }
                                     }
                                 }
 
-                                if let Some(metadata) = &mut base_activity.metadata {
-                                    if let Some(files) = metadata.get_mut("files") {
-                                        *files = serde_json::Value::Array(all_files);
-                                    }
+                                if let Some(metadata) = &mut base_activity.metadata
+                                    && let Some(files) = metadata.get_mut("files")
+                                {
+                                    *files = serde_json::Value::Array(all_files);
                                 }
                             }
 
@@ -205,7 +197,7 @@ impl ActivityManager {
                         {
                             tracing::error!(
                                 server = %server,
-                                "failed to send {} activities to remote: {}",
+                                "failed to send {} activities to remote: {:#?}",
                                 len,
                                 err
                             );
@@ -216,6 +208,7 @@ impl ActivityManager {
         }
     }
 
+    #[inline]
     pub async fn log_activity(&self, activity: Activity) {
         self.activities.lock().await.push_back(activity);
     }
