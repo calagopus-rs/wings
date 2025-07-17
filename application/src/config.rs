@@ -98,9 +98,6 @@ fn system_activity_send_count() -> usize {
 fn system_check_permissions_on_boot() -> bool {
     true
 }
-fn system_enable_log_rotate() -> bool {
-    true
-}
 fn system_websocket_log_count() -> usize {
     150
 }
@@ -380,8 +377,6 @@ nestify::nest! {
             pub activity_send_count: usize,
             #[serde(default = "system_check_permissions_on_boot")]
             pub check_permissions_on_boot: bool,
-            #[serde(default = "system_enable_log_rotate")]
-            pub enable_log_rotate: bool,
             #[serde(default = "system_websocket_log_count")]
             pub websocket_log_count: usize,
 
