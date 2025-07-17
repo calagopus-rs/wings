@@ -119,76 +119,74 @@ impl Container {
                 async move {
                     let mut prev_cpu = (0, 0);
 
-                    loop {
-                        let mut stats_stream = client.stats(
-                            &docker_id,
-                            Some(bollard::container::StatsOptions {
-                                stream: false,
-                                one_shot: true,
-                            }),
+                    let mut stats_stream = client.stats(
+                        &docker_id,
+                        Some(bollard::container::StatsOptions {
+                            stream: true,
+                            one_shot: false,
+                        }),
+                    );
+
+                    while let Some(Ok(stats)) = stats_stream.next().await {
+                        let (disk_usage, _) = tokio::join!(
+                            server.filesystem.limiter_usage(),
+                            tokio::time::sleep(std::time::Duration::from_millis(500)),
                         );
 
-                        while let Some(Ok(stats)) = stats_stream.next().await {
-                            let (disk_usage, _) = tokio::join!(
-                                server.filesystem.limiter_usage(),
-                                tokio::time::sleep(std::time::Duration::from_millis(500)),
-                            );
+                        let mut usage = resource_usage.write().await;
 
-                            let mut usage = resource_usage.write().await;
+                        usage.memory_bytes = stats.memory_stats.usage.unwrap_or(0);
+                        usage.memory_limit_bytes = stats.memory_stats.limit.unwrap_or(0);
+                        usage.disk_bytes = disk_usage;
+                        usage.state = server.state.get_state();
 
-                            usage.memory_bytes = stats.memory_stats.usage.unwrap_or(0);
-                            usage.memory_limit_bytes = stats.memory_stats.limit.unwrap_or(0);
-                            usage.disk_bytes = disk_usage;
-                            usage.state = server.state.get_state();
+                        if let Some(networks) = stats.networks {
+                            if let Some(network) = networks.values().next() {
+                                usage.network.rx_bytes = network.rx_bytes;
+                                usage.network.tx_bytes = network.tx_bytes;
+                            }
+                        }
 
-                            if let Some(networks) = stats.networks {
-                                if let Some(network) = networks.values().next() {
-                                    usage.network.rx_bytes = network.rx_bytes;
-                                    usage.network.tx_bytes = network.tx_bytes;
+                        // TODO: This requires urgent refactoring to handle multiple CPUs correctly (and fix podman support)
+                        usage.cpu_absolute = {
+                            let cpu_delta = stats
+                                .cpu_stats
+                                .cpu_usage
+                                .total_usage
+                                .saturating_sub(prev_cpu.0)
+                                as f64;
+                            let system_delta = stats
+                                .cpu_stats
+                                .system_cpu_usage
+                                .unwrap_or(0)
+                                .saturating_sub(prev_cpu.1)
+                                as f64;
+
+                            let cpus = stats.cpu_stats.online_cpus.unwrap_or_else(|| {
+                                stats
+                                    .cpu_stats
+                                    .cpu_usage
+                                    .percpu_usage
+                                    .unwrap_or_default()
+                                    .len() as u64
+                            }) as f64;
+
+                            let mut percent = 0.0;
+                            if system_delta > 0.0 && cpu_delta > 0.0 {
+                                percent = (cpu_delta / system_delta) * 100.0;
+
+                                if cpus > 0.0 {
+                                    percent *= cpus;
                                 }
                             }
 
-                            // TODO: This requires urgent refactoring to handle multiple CPUs correctly (and fix podman support)
-                            usage.cpu_absolute = {
-                                let cpu_delta = stats
-                                    .cpu_stats
-                                    .cpu_usage
-                                    .total_usage
-                                    .saturating_sub(prev_cpu.0)
-                                    as f64;
-                                let system_delta = stats
-                                    .cpu_stats
-                                    .system_cpu_usage
-                                    .unwrap_or(0)
-                                    .saturating_sub(prev_cpu.1)
-                                    as f64;
+                            (percent * 1000.0).round() / 1000.0
+                        };
 
-                                let cpus = stats.cpu_stats.online_cpus.unwrap_or_else(|| {
-                                    stats
-                                        .cpu_stats
-                                        .cpu_usage
-                                        .percpu_usage
-                                        .unwrap_or_default()
-                                        .len() as u64
-                                }) as f64;
-
-                                let mut percent = 0.0;
-                                if system_delta > 0.0 && cpu_delta > 0.0 {
-                                    percent = (cpu_delta / system_delta) * 100.0;
-
-                                    if cpus > 0.0 {
-                                        percent *= cpus;
-                                    }
-                                }
-
-                                (percent * 1000.0).round() / 1000.0
-                            };
-
-                            prev_cpu = (
-                                stats.cpu_stats.cpu_usage.total_usage,
-                                stats.cpu_stats.system_cpu_usage.unwrap_or(0),
-                            );
-                        }
+                        prev_cpu = (
+                            stats.cpu_stats.cpu_usage.total_usage,
+                            stats.cpu_stats.system_cpu_usage.unwrap_or(0),
+                        );
                     }
                 }
             }),

@@ -256,6 +256,9 @@ impl Server {
                                 server
                                     .stopping
                                     .store(false, Ordering::Relaxed);
+                                if server.config.docker.delete_container_on_stop {
+                                    server.destroy_container(&client).await;
+                                }
                             } else if server.config.system.crash_detection.enabled
                                 && !server
                                     .crash_handled
@@ -277,6 +280,10 @@ impl Server {
                                         server = %server.uuid,
                                         "container exited cleanly, not restarting due to crash detection settings"
                                     );
+                                    if server.config.docker.delete_container_on_stop {
+                                        server.destroy_container(&client).await;
+                                    }
+
                                     return;
                                 }
 
@@ -306,11 +313,15 @@ impl Server {
                                         );
 
                                         server.log_daemon_with_prelude(
-                                        &format!(
-                                            "Aborting automatic restart, last crash occurred less than {} seconds ago.",
-                                            server.config.system.crash_detection.timeout
-                                        ),
-                                    ).await;
+                                            &format!(
+                                                "Aborting automatic restart, last crash occurred less than {} seconds ago.",
+                                                server.config.system.crash_detection.timeout
+                                            ),
+                                        ).await;
+                                        if server.config.docker.delete_container_on_stop {
+                                            server.destroy_container(&client).await;
+                                        }
+
                                         return;
                                     } else {
                                         tracing::debug!(
@@ -537,6 +548,18 @@ impl Server {
                     tracing::debug!(
                         server = %self.uuid,
                         "installer container found, skipping attachment"
+                    );
+
+                    continue;
+                }
+
+                if container
+                    .state
+                    .is_none_or(|s| s.to_lowercase() != "running")
+                {
+                    tracing::debug!(
+                        server = %self.uuid,
+                        "container is not running, skipping attachment"
                     );
 
                     continue;

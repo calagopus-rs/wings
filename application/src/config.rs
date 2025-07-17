@@ -13,7 +13,9 @@ use std::{
     sync::Arc,
 };
 use tracing_appender::non_blocking::WorkerGuard;
-use tracing_subscriber::fmt::writer::MakeWriterExt;
+use tracing_subscriber::{
+    fmt::writer::MakeWriterExt, layer::SubscriberExt, util::SubscriberInitExt,
+};
 
 fn app_name() -> String {
     "Pterodactyl".to_string()
@@ -174,6 +176,9 @@ fn system_backup_zfs_restore_threads() -> usize {
 
 fn docker_socket() -> String {
     "/var/run/docker.sock".to_string()
+}
+fn docker_delete_container_on_stop() -> bool {
+    true
 }
 
 fn docker_network_interface() -> String {
@@ -508,6 +513,8 @@ nestify::nest! {
             pub socket: String,
             #[serde(default)]
             pub server_name_in_container_name: bool,
+            #[serde(default = "docker_delete_container_on_stop")]
+            pub delete_container_on_stop: bool,
 
             #[serde(default)]
             pub network: #[derive(Deserialize, Serialize, DefaultFromSerde)] #[serde(default)] pub struct DockerNetwork {
@@ -736,22 +743,34 @@ impl Config {
             config.unsafe_mut().debug = true;
         }
 
-        tracing::subscriber::set_global_default(
-            tracing_subscriber::fmt()
-                .with_timer(tracing_subscriber::fmt::time::ChronoLocal::rfc_3339())
-                .with_writer(std::io::stdout.and(file_appender))
-                .with_target(false)
-                .with_level(true)
-                .with_file(true)
-                .with_line_number(true)
-                .with_max_level(if config.debug {
-                    tracing::Level::DEBUG
-                } else {
-                    tracing::Level::INFO
-                })
-                .finish(),
-        )
-        .unwrap();
+        let tracing_layer = tracing_subscriber::fmt::layer()
+            .with_timer(tracing_subscriber::fmt::time::ChronoLocal::rfc_3339())
+            .with_writer(
+                std::io::stdout
+                    .and(file_appender)
+                    .with_max_level(if config.debug {
+                        tracing::Level::DEBUG
+                    } else {
+                        tracing::Level::INFO
+                    })
+                    .with_filter(|metadata| {
+                        metadata
+                            .module_path()
+                            .is_some_and(|f| !f.contains("index.crates.io"))
+                    }),
+            )
+            .with_target(false)
+            .with_level(true)
+            .with_file(true)
+            .with_line_number(true);
+
+        #[cfg(debug_assertions)]
+        tracing_subscriber::registry()
+            .with(console_subscriber::spawn())
+            .with(tracing_layer)
+            .init();
+        #[cfg(not(debug_assertions))]
+        tracing_subscriber::registry().with(tracing_layer).init();
 
         Ok((Arc::new(config), guard))
     }
