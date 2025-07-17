@@ -121,7 +121,7 @@ pub async fn script_server(
         .await
         .context("Failed to pull installation container image")?;
 
-    let container = match client
+    let container = client
         .create_container(
             Some(bollard::container::CreateContainerOptions {
                 name: format!(
@@ -131,21 +131,10 @@ pub async fn script_server(
                 ),
                 ..Default::default()
             }),
-            match container_config(server, &script).await {
-                Ok(config) => config,
-                Err(err) => {
-                    return Err(err.into());
-                }
-            },
+            container_config(server, &script).await?,
         )
         .await
-        .context("Failed to create installation container")
-    {
-        Ok(container) => container,
-        Err(err) => {
-            return Err(err);
-        }
-    };
+        .context("Failed to create installation container")?;
 
     let start_thread = async {
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;

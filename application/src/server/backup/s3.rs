@@ -1,6 +1,9 @@
 use crate::{
     remote::backups::RawServerBackup,
-    server::transfer::counting_reader::{AsyncCountingReader, CountingReader},
+    server::transfer::{
+        counting_reader::{AsyncCountingReader, CountingReader},
+        counting_writer::CountingWriter,
+    },
 };
 use futures::{StreamExt, TryStreamExt};
 use ignore::WalkBuilder;
@@ -46,16 +49,24 @@ struct BoundedReader {
     file: tokio::fs::File,
     size: u64,
     position: u64,
+
+    bytes_written: Arc<AtomicU64>,
 }
 
 impl BoundedReader {
-    async fn new(file: &mut tokio::fs::File, offset: u64, size: u64) -> Self {
+    async fn new_with_bytes_written(
+        file: &mut tokio::fs::File,
+        offset: u64,
+        size: u64,
+        bytes_written: Arc<AtomicU64>,
+    ) -> Self {
         file.seek(std::io::SeekFrom::Start(offset)).await.unwrap();
 
         Self {
             file: file.try_clone().await.unwrap(),
             size,
             position: 0,
+            bytes_written,
         }
     }
 }
@@ -83,6 +94,8 @@ impl AsyncRead for BoundedReader {
         match Pin::new(&mut Box::pin(read_future)).poll(cx) {
             Poll::Ready(Ok(bytes_read)) => {
                 this.position += bytes_read as u64;
+                this.bytes_written
+                    .fetch_add(bytes_read as u64, Ordering::Relaxed);
                 buf.put_slice(&temp_buf[..bytes_read]);
 
                 Poll::Ready(Ok(()))
@@ -102,6 +115,7 @@ pub async fn create_backup(
     server: crate::server::Server,
     uuid: uuid::Uuid,
     progress: Arc<AtomicU64>,
+    total: Arc<AtomicU64>,
     overrides: ignore::overrides::Override,
 ) -> Result<RawServerBackup, anyhow::Error> {
     let file_name = get_file_name(&server, uuid);
@@ -110,9 +124,11 @@ pub async fn create_backup(
 
     let compression_level = server.config.system.backups.compression_level;
     tokio::task::spawn_blocking({
+        let progress = Arc::clone(&progress);
         let server = server.clone();
 
         move || -> Result<(), anyhow::Error> {
+            let writer = CountingWriter::new_with_bytes_written(writer, Arc::clone(&total));
             let mut tar = tar::Builder::new(flate2::write::GzEncoder::new(
                 writer,
                 compression_level.flate2_compression_level(),
@@ -231,7 +247,13 @@ pub async fn create_backup(
                 .header("Content-Type", "application/gzip")
                 .body(reqwest::Body::wrap_stream(
                     tokio_util::io::ReaderStream::new(Box::pin(
-                        BoundedReader::new(&mut file, offset, part_size).await,
+                        BoundedReader::new_with_bytes_written(
+                            &mut file,
+                            offset,
+                            part_size,
+                            Arc::clone(&progress),
+                        )
+                        .await,
                     )),
                 ))
                 .send()

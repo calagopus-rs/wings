@@ -422,7 +422,7 @@ impl ShellSession {
                     if !command_history.is_empty()
                         && command_history.last().unwrap() != current_line
                     {
-                        if command_history.len() >= 20 {
+                        if command_history.len() >= 16 {
                             command_history.remove(0);
                         }
                         command_history.push(current_line.clone());
@@ -782,7 +782,7 @@ impl ShellSession {
                 Box::pin(async move {
                     let mut buffer = [0; 1024];
                     let mut current_line = Vec::with_capacity(1024);
-                    let mut command_history: Vec<Vec<u8>> = Vec::with_capacity(20);
+                    let mut command_history: Vec<Vec<u8>> = Vec::with_capacity(16);
                     let mut history_index: Option<usize> = None;
                     let mut escape_sequence = false;
                     let mut cursor_sequence = false;

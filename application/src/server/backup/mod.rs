@@ -137,7 +137,14 @@ impl InternalBackup {
                     .await
             }
             BackupAdapter::S3 => {
-                s3::create_backup(server.clone(), uuid, progress, override_builder.build()?).await
+                s3::create_backup(
+                    server.clone(),
+                    uuid,
+                    progress,
+                    total,
+                    override_builder.build()?,
+                )
+                .await
             }
             BackupAdapter::DdupBak => {
                 ddup_bak::create_backup(server.clone(), uuid, progress, override_builder.build()?)

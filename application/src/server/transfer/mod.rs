@@ -12,6 +12,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use utoipa::ToSchema;
 
 pub mod counting_reader;
+pub mod counting_writer;
 
 #[derive(Clone, Copy, ToSchema, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
