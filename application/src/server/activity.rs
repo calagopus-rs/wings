@@ -1,8 +1,12 @@
 use serde::Serialize;
-use std::{collections::VecDeque, net::IpAddr, sync::Arc};
+use std::{
+    collections::{HashMap, VecDeque},
+    net::IpAddr,
+    sync::Arc,
+};
 use tokio::sync::Mutex;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone, PartialEq, Eq, Hash)]
 pub enum ActivityEvent {
     #[serde(rename = "server:power.start")]
     PowerStart,
@@ -35,6 +39,20 @@ pub enum ActivityEvent {
     FileDecompress,
 }
 
+impl ActivityEvent {
+    #[inline]
+    pub fn is_sftp_event(&self) -> bool {
+        matches!(
+            self,
+            ActivityEvent::SftpWrite
+                | ActivityEvent::SftpCreate
+                | ActivityEvent::SftpCreateDirectory
+                | ActivityEvent::SftpRename
+                | ActivityEvent::SftpDelete
+        )
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct ApiActivity {
     user: Option<uuid::Uuid>,
@@ -46,6 +64,7 @@ pub struct ApiActivity {
     timestamp: chrono::DateTime<chrono::Utc>,
 }
 
+#[derive(Debug, Clone)]
 pub struct Activity {
     pub user: Option<uuid::Uuid>,
     pub event: ActivityEvent,
@@ -78,20 +97,99 @@ impl ActivityManager {
 
                         let mut activities = activities.lock().await;
                         let activities_len = activities.len();
-                        let activities = activities
-                            .drain(..config.system.activity_send_count.min(activities_len))
-                            .collect::<Vec<_>>();
 
-                        if activities.is_empty() {
+                        if activities_len == 0 {
                             continue;
                         }
 
-                        let len = activities.len();
+                        let mut merged_activities = VecDeque::new();
+                        let mut sftp_events: HashMap<
+                            (ActivityEvent, Option<uuid::Uuid>),
+                            (Activity, Vec<usize>),
+                        > = HashMap::new();
+
+                        for (idx, activity) in activities.iter().enumerate() {
+                            if activity.event.is_sftp_event() {
+                                if let Some(metadata) = &activity.metadata {
+                                    if metadata.get("files").is_some() {
+                                        let key = (activity.event.clone(), activity.user);
+
+                                        let mut found_match = false;
+
+                                        for ((event_type, user), (existing, indices)) in
+                                            &mut sftp_events
+                                        {
+                                            if *event_type == activity.event
+                                                && *user == activity.user
+                                            {
+                                                let duration = activity
+                                                    .timestamp
+                                                    .signed_duration_since(existing.timestamp);
+                                                if duration.num_seconds().abs() <= 60 {
+                                                    indices.push(idx);
+                                                    found_match = true;
+                                                    break;
+                                                }
+                                            }
+                                        }
+
+                                        if !found_match {
+                                            sftp_events.insert(key, (activity.clone(), vec![idx]));
+                                        }
+
+                                        continue;
+                                    }
+                                }
+                            }
+
+                            merged_activities.push_back(activity.clone());
+                        }
+
+                        for (_, (mut base_activity, indices)) in sftp_events {
+                            if indices.len() > 1 {
+                                let mut all_files = Vec::new();
+
+                                for idx in indices {
+                                    if let Some(activity) = activities.get(idx) {
+                                        if let Some(metadata) = &activity.metadata {
+                                            if let Some(files) = metadata.get("files") {
+                                                if let Some(files_array) = files.as_array() {
+                                                    for file in files_array {
+                                                        all_files.push(file.clone());
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if let Some(metadata) = &mut base_activity.metadata {
+                                    if let Some(files) = metadata.get_mut("files") {
+                                        *files = serde_json::Value::Array(all_files);
+                                    }
+                                }
+                            }
+
+                            merged_activities.push_back(base_activity);
+                        }
+
+                        *activities = merged_activities;
+
+                        let activities_len = activities.len();
+                        let activities_to_send = activities
+                            .drain(..config.system.activity_send_count.min(activities_len))
+                            .collect::<Vec<_>>();
+
+                        if activities_to_send.is_empty() {
+                            continue;
+                        }
+
+                        let len = activities_to_send.len();
 
                         if let Err(err) = config
                             .client
                             .send_activity(
-                                activities
+                                activities_to_send
                                     .into_iter()
                                     .map(|activity| ApiActivity {
                                         user: activity.user,
