@@ -1,9 +1,11 @@
 use crate::{
-    remote::backups::RawServerBackup,
-    server::transfer::{
+    io::{
         counting_reader::{AsyncCountingReader, CountingReader},
         counting_writer::CountingWriter,
+        limited_reader::AsyncLimitedReader,
+        limited_writer::LimitedWriter,
     },
+    remote::backups::RawServerBackup,
 };
 use futures::{StreamExt, TryStreamExt};
 use ignore::WalkBuilder;
@@ -128,6 +130,10 @@ pub async fn create_backup(
         let server = server.clone();
 
         move || -> Result<(), anyhow::Error> {
+            let writer = LimitedWriter::new_with_bytes_per_second(
+                writer,
+                server.config.system.backups.write_limit * 1024 * 1024,
+            );
             let writer = CountingWriter::new_with_bytes_written(writer, Arc::clone(&total));
             let mut tar = tar::Builder::new(flate2::write::GzEncoder::new(
                 writer,
@@ -246,15 +252,18 @@ pub async fn create_backup(
                 .header("Content-Length", part_size)
                 .header("Content-Type", "application/gzip")
                 .body(reqwest::Body::wrap_stream(
-                    tokio_util::io::ReaderStream::new(Box::pin(
-                        BoundedReader::new_with_bytes_written(
-                            &mut file,
-                            offset,
-                            part_size,
-                            Arc::clone(&progress),
-                        )
-                        .await,
-                    )),
+                    tokio_util::io::ReaderStream::new(
+                        AsyncLimitedReader::new_with_bytes_per_second(
+                            BoundedReader::new_with_bytes_written(
+                                &mut file,
+                                offset,
+                                part_size,
+                                Arc::clone(&progress),
+                            )
+                            .await,
+                            server.config.system.backups.write_limit * 1024 * 1024,
+                        ),
+                    ),
                 ))
                 .send()
                 .await
@@ -333,6 +342,10 @@ pub async fn restore_backup(
     let reader = tokio_util::io::StreamReader::new(Box::pin(
         response.bytes_stream().map_err(std::io::Error::other),
     ));
+    let reader = AsyncLimitedReader::new_with_bytes_per_second(
+        reader,
+        server.config.system.backups.read_limit * 1024 * 1024,
+    );
     let reader = AsyncCountingReader::new_with_bytes_read(reader, progress);
     let reader = BufReader::with_capacity(1024 * 1024, reader);
 

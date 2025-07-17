@@ -1,4 +1,7 @@
-use crate::server::filesystem::archive::CompressionLevel;
+use crate::{
+    io::counting_reader::{AsyncCountingReader, CountingReader},
+    server::filesystem::archive::CompressionLevel,
+};
 use cap_std::fs::PermissionsExt;
 use human_bytes::human_bytes;
 use ignore::WalkBuilder;
@@ -10,9 +13,6 @@ use std::sync::{
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use utoipa::ToSchema;
-
-pub mod counting_reader;
-pub mod counting_writer;
 
 #[derive(Clone, Copy, ToSchema, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -235,7 +235,7 @@ impl OutgoingServerTransfer {
                                 Err(_) => continue,
                             };
 
-                            let reader = counting_reader::CountingReader::new_with_bytes_read(
+                            let reader = CountingReader::new_with_bytes_read(
                                 file,
                                 Arc::clone(&bytes_archived),
                             );
@@ -323,7 +323,7 @@ impl OutgoingServerTransfer {
                                         continue;
                                     }
                                 };
-                                let counting_reader = counting_reader::AsyncCountingReader::new_with_bytes_read(
+                                let counting_reader = AsyncCountingReader::new_with_bytes_read(
                                     match tokio::fs::File::open(&file_name).await {
                                         Ok(file) => file,
                                         Err(err) => {

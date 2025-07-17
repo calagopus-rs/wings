@@ -1,6 +1,11 @@
 use crate::{
+    io::{
+        counting_reader::{AsyncCountingReader, CountingReader},
+        limited_reader::AsyncLimitedReader,
+        limited_writer::LimitedWriter,
+    },
     remote::backups::RawServerBackup,
-    server::transfer::counting_reader::{AsyncCountingReader, CountingReader},
+    server::filesystem::archive::multi_reader::MultiReader,
 };
 use axum::{
     body::Body,
@@ -111,6 +116,10 @@ pub async fn create_backup(
             crate::config::SystemBackupsWingsArchiveFormat::Tar
             | crate::config::SystemBackupsWingsArchiveFormat::TarGz
             | crate::config::SystemBackupsWingsArchiveFormat::TarZstd => {
+                let writer = LimitedWriter::new_with_bytes_per_second(
+                    writer,
+                    server.config.system.backups.write_limit * 1024 * 1024,
+                );
                 let writer: Box<dyn std::io::Write> = match archive_format {
                     crate::config::SystemBackupsWingsArchiveFormat::Tar => Box::new(writer),
                     crate::config::SystemBackupsWingsArchiveFormat::TarGz => {
@@ -193,6 +202,10 @@ pub async fn create_backup(
                 inner.flush()?;
             }
             crate::config::SystemBackupsWingsArchiveFormat::Zip => {
+                let writer = LimitedWriter::new_with_bytes_per_second(
+                    writer,
+                    server.config.system.backups.write_limit * 1024 * 1024,
+                );
                 let mut zip = zip::ZipWriter::new(writer);
 
                 for entry in WalkBuilder::new(&server.filesystem.base_path)
@@ -302,15 +315,19 @@ pub async fn restore_backup(
         | crate::config::SystemBackupsWingsArchiveFormat::TarGz
         | crate::config::SystemBackupsWingsArchiveFormat::TarZstd => {
             total.store(file.metadata().await?.len(), Ordering::SeqCst);
-            let file = AsyncCountingReader::new_with_bytes_read(file, progress);
 
+            let reader = AsyncLimitedReader::new_with_bytes_per_second(
+                file,
+                server.config.system.backups.read_limit * 1024 * 1024,
+            );
+            let reader = AsyncCountingReader::new_with_bytes_read(reader, progress);
             let reader: Box<dyn tokio::io::AsyncRead + Send + Unpin> = match file_format {
-                crate::config::SystemBackupsWingsArchiveFormat::Tar => Box::new(file),
+                crate::config::SystemBackupsWingsArchiveFormat::Tar => Box::new(reader),
                 crate::config::SystemBackupsWingsArchiveFormat::TarGz => Box::new(
-                    async_compression::tokio::bufread::GzipDecoder::new(BufReader::new(file)),
+                    async_compression::tokio::bufread::GzipDecoder::new(BufReader::new(reader)),
                 ),
                 crate::config::SystemBackupsWingsArchiveFormat::TarZstd => Box::new(
-                    async_compression::tokio::bufread::ZstdDecoder::new(BufReader::new(file)),
+                    async_compression::tokio::bufread::ZstdDecoder::new(BufReader::new(reader)),
                 ),
                 _ => unreachable!(),
             };
@@ -400,7 +417,8 @@ pub async fn restore_backup(
             let runtime = tokio::runtime::Handle::current();
 
             tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
-                let mut archive = zip::ZipArchive::new(crate::server::filesystem::archive::multi_reader::MultiReader::new(file)?)?;
+                let reader = MultiReader::new(file)?;
+                let mut archive = zip::ZipArchive::new(reader)?;
                 let entry_index = Arc::new(AtomicUsize::new(0));
 
                 for i in 0..archive.len() {

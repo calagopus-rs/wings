@@ -2,6 +2,7 @@ pub mod commands;
 pub mod config;
 pub mod deserialize;
 pub mod extensions;
+pub mod io;
 pub mod models;
 pub mod remote;
 pub mod routes;

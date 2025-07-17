@@ -153,6 +153,10 @@ pub async fn create_backup(
         .arg(uuid.to_string())
         .arg("--group-by")
         .arg("tags")
+        .arg("--limit-download")
+        .arg((server.config.system.backups.read_limit * 1024).to_string())
+        .arg("--limit-upload")
+        .arg((server.config.system.backups.write_limit * 1024).to_string())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()?;
@@ -237,6 +241,8 @@ pub async fn restore_backup(
         .arg(uuid.to_string())
         .arg("--target")
         .arg(&server.filesystem.base_path)
+        .arg("--limit-download")
+        .arg((server.config.system.backups.read_limit * 1024).to_string())
         .stdout(std::process::Stdio::piped())
         .spawn()?;
 

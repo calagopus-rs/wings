@@ -427,6 +427,9 @@ nestify::nest! {
                 /// MiB/s
                 pub write_limit: u64,
                 #[serde(default)]
+                /// MiB/s
+                pub read_limit: u64,
+                #[serde(default)]
                 pub compression_level: crate::server::filesystem::archive::CompressionLevel,
 
                 #[serde(default)]
