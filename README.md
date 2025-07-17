@@ -114,6 +114,8 @@ docker:
   socket: /var/run/docker.sock
   # whether to add (part) of the server name in the container name
   server_name_in_container_name: false
+  # delete docker containers when a server is stopped/killed/crashes (a lot better for your cpu)
+  delete_container_on_stop: true
 
   network:
     # whether to disable binding to a specific ip
