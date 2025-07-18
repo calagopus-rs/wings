@@ -143,7 +143,6 @@ impl<R: AsyncRead + Unpin> AsyncRead for AsyncLimitedReader<R> {
             return Pin::new(&mut this.inner).poll_read(cx, buf);
         }
 
-        // If we have a pending delay, poll it first
         if let Some(delay) = &mut this.delay_future {
             match delay.as_mut().poll(cx) {
                 Poll::Ready(_) => {
@@ -153,7 +152,6 @@ impl<R: AsyncRead + Unpin> AsyncRead for AsyncLimitedReader<R> {
             }
         }
 
-        // If we need a new delay, create and poll it
         if this.delay_future.is_none() {
             if let Some(delay_duration) = this.calculate_delay() {
                 let delay = Box::pin(tokio::time::sleep(delay_duration));
@@ -162,10 +160,8 @@ impl<R: AsyncRead + Unpin> AsyncRead for AsyncLimitedReader<R> {
             }
         }
 
-        // Track how much was read before
         let filled_before = buf.filled().len();
 
-        // Perform the actual read
         match Pin::new(&mut this.inner).poll_read(cx, buf) {
             Poll::Ready(Ok(())) => {
                 let filled_after = buf.filled().len();
