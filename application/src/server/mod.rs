@@ -175,7 +175,7 @@ impl Server {
 
                 if server.filesystem.is_full().await
                     && server.state.get_state() != state::ServerState::Offline
-                    && !server.stopping.load(Ordering::Relaxed)
+                    && !server.stopping.load(Ordering::SeqCst)
                 {
                     server
                     .log_daemon_with_prelude("Server is exceeding the assigned disk space limit, stopping process now.")
@@ -219,23 +219,23 @@ impl Server {
 
                             tracing::debug!(
                                 server = %server.uuid,
-                                restarting = %server.restarting.load(Ordering::Relaxed),
-                                stopping = %server.stopping.load(Ordering::Relaxed),
-                                crash_handled = %server.crash_handled.load(Ordering::Relaxed),
+                                restarting = %server.restarting.load(Ordering::SeqCst),
+                                stopping = %server.stopping.load(Ordering::SeqCst),
+                                crash_handled = %server.crash_handled.load(Ordering::SeqCst),
                                 "container state changed to {:?}, handling crash",
                                 status
                             );
 
-                            if server.restarting.load(Ordering::Relaxed) {
+                            if server.restarting.load(Ordering::SeqCst) {
                                 server
                                     .crash_handled
-                                    .store(true, Ordering::Relaxed);
+                                    .store(true, Ordering::SeqCst);
                                 server
                                     .restarting
-                                    .store(false, Ordering::Relaxed);
+                                    .store(false, Ordering::SeqCst);
                                 server
                                     .stopping
-                                    .store(false, Ordering::Relaxed);
+                                    .store(false, Ordering::SeqCst);
 
                                 let client = Arc::clone(&client);
                                 let server = server.clone();
@@ -248,25 +248,25 @@ impl Server {
                                         );
                                     }
                                 });
-                            } else if server.stopping.load(Ordering::Relaxed)
+                            } else if server.stopping.load(Ordering::SeqCst)
                             {
                                 server
                                     .crash_handled
-                                    .store(true, Ordering::Relaxed);
+                                    .store(true, Ordering::SeqCst);
                                 server
                                     .stopping
-                                    .store(false, Ordering::Relaxed);
+                                    .store(false, Ordering::SeqCst);
                                 if server.config.docker.delete_container_on_stop {
                                     server.destroy_container(&client).await;
                                 }
                             } else if server.config.system.crash_detection.enabled
                                 && !server
                                     .crash_handled
-                                    .load(Ordering::Relaxed)
+                                    .load(Ordering::SeqCst)
                             {
                                 server
                                     .crash_handled
-                                    .store(true, Ordering::Relaxed);
+                                    .store(true, Ordering::SeqCst);
 
                                 if container_state.exit_code.is_some_and(|code| code == 0)
                                     && !container_state.oom_killed.unwrap_or(false)
@@ -462,7 +462,7 @@ impl Server {
         &self,
         client: &Arc<bollard::Docker>,
     ) -> Result<(), bollard::errors::Error> {
-        self.crash_handled.store(false, Ordering::Relaxed);
+        self.crash_handled.store(false, Ordering::SeqCst);
 
         if self.container.read().await.is_some() {
             return Ok(());
@@ -576,7 +576,7 @@ impl Server {
                     .await?,
                 );
 
-                self.crash_handled.store(true, Ordering::Relaxed);
+                self.crash_handled.store(true, Ordering::SeqCst);
                 self.setup_websocket_sender(Arc::clone(&container), Arc::clone(client))
                     .await;
                 *self.container.write().await = Some(container);
@@ -588,7 +588,7 @@ impl Server {
                         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
                         if server.state.get_state() != state::ServerState::Offline {
-                            server.crash_handled.store(false, Ordering::Relaxed);
+                            server.crash_handled.store(false, Ordering::SeqCst);
                         }
                     }
                 });
@@ -946,7 +946,7 @@ impl Server {
             "killing server"
         );
 
-        self.stopping.store(true, Ordering::Relaxed);
+        self.stopping.store(true, Ordering::SeqCst);
         if client
             .kill_container(
                 &container,
@@ -1097,7 +1097,7 @@ impl Server {
                 "another power action is currently being processed for this server, please try again later"
             ))
         } else {
-            self.stopping.store(true, Ordering::Relaxed);
+            self.stopping.store(true, Ordering::SeqCst);
 
             Ok(())
         }
@@ -1108,7 +1108,7 @@ impl Server {
         client: &Arc<bollard::Docker>,
         aquire_timeout: Option<std::time::Duration>,
     ) -> Result<(), anyhow::Error> {
-        if self.restarting.load(Ordering::Relaxed) {
+        if self.restarting.load(Ordering::SeqCst) {
             return Err(anyhow::anyhow!("server is already restarting"));
         }
 
@@ -1122,7 +1122,7 @@ impl Server {
                 self.stop(client, aquire_timeout).await?;
             }
 
-            self.restarting.store(true, Ordering::Relaxed);
+            self.restarting.store(true, Ordering::SeqCst);
         } else {
             self.start(client, aquire_timeout).await?;
         }
@@ -1136,7 +1136,7 @@ impl Server {
         aquire_timeout: Option<std::time::Duration>,
         timeout: std::time::Duration,
     ) -> Result<(), anyhow::Error> {
-        if self.restarting.load(Ordering::Relaxed) {
+        if self.restarting.load(Ordering::SeqCst) {
             return Err(anyhow::anyhow!("server is already restarting"));
         }
 
@@ -1151,7 +1151,7 @@ impl Server {
                 self.stop_with_kill_timeout(client, timeout).await?;
             }
 
-            self.restarting.store(true, Ordering::Relaxed);
+            self.restarting.store(true, Ordering::SeqCst);
         } else {
             self.start(client, aquire_timeout).await?;
         }
