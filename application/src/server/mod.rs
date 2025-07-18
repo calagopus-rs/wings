@@ -826,20 +826,18 @@ impl Server {
         aquire_timeout: Option<std::time::Duration>,
     ) -> Result<(), anyhow::Error> {
         if self.is_locked_state() {
-            self.log_daemon_error("Server is in a locked state, cannot start the server")
-                .await;
             return Err(anyhow::anyhow!(
-                "server is in a locked state, cannot start the server"
+                "Server is in a locked state, cannot start the server."
             ));
         }
 
         if self.state.get_state() != state::ServerState::Offline {
-            return Err(anyhow::anyhow!("server is already running"));
+            return Err(anyhow::anyhow!("Server is already running."));
         }
 
         if self.filesystem.is_full().await {
             return Err(anyhow::anyhow!(
-                "disk space is full, cannot start the server"
+                "Disk space is full, cannot start the server."
             ));
         }
 
@@ -908,9 +906,6 @@ impl Server {
                             err
                         );
 
-                        self.log_daemon_error(&format!("failed to start container: {err}"))
-                            .await;
-
                         return Err(anyhow::anyhow!(err));
                     }
 
@@ -922,7 +917,7 @@ impl Server {
 
         if !success {
             Err(anyhow::anyhow!(
-                "another power action is currently being processed for this server, please try again later"
+                "Another power action is currently being processed for this server, please try again later."
             ))
         } else {
             Ok(())
@@ -969,11 +964,11 @@ impl Server {
         aquire_timeout: Option<std::time::Duration>,
     ) -> Result<(), anyhow::Error> {
         if self.state.get_state() == state::ServerState::Offline {
-            return Err(anyhow::anyhow!("server is already stopped"));
+            return Err(anyhow::anyhow!("Server is already stopped."));
         }
 
         if self.state.get_state() == state::ServerState::Stopping {
-            return Err(anyhow::anyhow!("server is already stopping"));
+            return Err(anyhow::anyhow!("Server is already stopping."));
         }
 
         let container = match &*self.container.read().await {
@@ -1094,7 +1089,7 @@ impl Server {
 
         if !success {
             Err(anyhow::anyhow!(
-                "another power action is currently being processed for this server, please try again later"
+                "Another power action is currently being processed for this server, please try again later."
             ))
         } else {
             self.stopping.store(true, Ordering::SeqCst);
@@ -1109,7 +1104,7 @@ impl Server {
         aquire_timeout: Option<std::time::Duration>,
     ) -> Result<(), anyhow::Error> {
         if self.restarting.load(Ordering::SeqCst) {
-            return Err(anyhow::anyhow!("server is already restarting"));
+            return Err(anyhow::anyhow!("Server is already restarting."));
         }
 
         tracing::info!(
@@ -1137,7 +1132,7 @@ impl Server {
         timeout: std::time::Duration,
     ) -> Result<(), anyhow::Error> {
         if self.restarting.load(Ordering::SeqCst) {
-            return Err(anyhow::anyhow!("server is already restarting"));
+            return Err(anyhow::anyhow!("Server is already restarting."));
         }
 
         tracing::info!(

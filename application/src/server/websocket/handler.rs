@@ -80,11 +80,7 @@ pub async fn handle_ws(
                         break;
                     }
 
-                    if let Message::Ping(_) = ws_data {
-                        continue;
-                    }
-
-                    if let Message::Pong(_) = ws_data {
+                    if matches!(ws_data, Message::Ping(_) | Message::Pong(_)) {
                         continue;
                     }
 
@@ -246,9 +242,7 @@ pub async fn handle_ws(
                                         }
                                     }
                                 }
-                                Err(RecvError::Closed) => {
-                                    break;
-                                }
+                                Err(RecvError::Closed) => break,
                                 Err(RecvError::Lagged(_)) => {
                                     tracing::debug!(
                                         server = %server.uuid,

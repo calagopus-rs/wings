@@ -82,14 +82,19 @@ impl ShellSession {
                         }
 
                         if let Err(err) = self.server.start(&self.state.docker, None).await {
-                            tracing::error!(
-                                server = %self.server.uuid,
-                                "failed to start server: {:#?}",
-                                err,
-                            );
+                            match err.downcast::<&str>() {
+                                Ok(message) => writeln(message).await,
+                                Err(err) => {
+                                    tracing::error!(
+                                        server = %self.server.uuid,
+                                        "failed to start server: {:#?}",
+                                        err,
+                                    );
 
-                            writeln("An unexpected error occurred while starting the server. Please contact an Administrator.")
-                                    .await;
+                                    writeln("An unexpected error occurred while starting the server. Please contact an Administrator.")
+                                        .await;
+                                }
+                            }
                         } else {
                             self.server
                                 .activity
@@ -129,14 +134,19 @@ impl ShellSession {
                         } else {
                             self.server.restart(&self.state.docker, None).await
                         } {
-                            tracing::error!(
-                                server = %self.server.uuid,
-                                "failed to restart server: {:#?}",
-                                err,
-                            );
+                            match err.downcast::<&str>() {
+                                Ok(message) => writeln(message).await,
+                                Err(err) => {
+                                    tracing::error!(
+                                        server = %self.server.uuid,
+                                        "failed to restart server: {:#?}",
+                                        err,
+                                    );
 
-                            writeln("An unexpected error occurred while restarting the server. Please contact an Administrator.")
-                                    .await;
+                                    writeln("An unexpected error occurred while restarting the server. Please contact an Administrator.")
+                                        .await;
+                                }
+                            }
                         } else {
                             self.server
                                 .activity
@@ -176,14 +186,19 @@ impl ShellSession {
                         } else {
                             self.server.stop(&self.state.docker, None).await
                         } {
-                            tracing::error!(
-                                server = %self.server.uuid,
-                                "failed to stop server: {:#?}",
-                                err,
-                            );
+                            match err.downcast::<&str>() {
+                                Ok(message) => writeln(message).await,
+                                Err(err) => {
+                                    tracing::error!(
+                                        server = %self.server.uuid,
+                                        "failed to stop server: {:#?}",
+                                        err,
+                                    );
 
-                            writeln("An unexpected error occurred while stopping the server. Please contact an Administrator.")
+                                    writeln("An unexpected error occurred while stopping the server. Please contact an Administrator.")
                                         .await;
+                                }
+                            }
                         } else {
                             self.server
                                 .activity

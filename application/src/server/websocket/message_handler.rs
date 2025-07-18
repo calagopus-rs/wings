@@ -83,14 +83,21 @@ pub async fn handle_message(
                     }
 
                     if let Err(err) = server.start(&state.docker, None).await {
-                        tracing::error!(
-                            server = %server.uuid,
-                            "failed to start server: {:#?}",
-                            err,
-                        );
+                        match err.downcast::<&str>() {
+                            Ok(message) => {
+                                super::send_message(sender, server.get_daemon_error(message)).await;
+                            }
+                            Err(err) => {
+                                tracing::error!(
+                                    server = %server.uuid,
+                                    "failed to start server: {:#?}",
+                                    err,
+                                );
 
-                        server.log_daemon_error("An unexpected error occurred while starting the server. Please contact an Administrator.")
-                            .await;
+                                server.log_daemon_error("An unexpected error occurred while starting the server. Please contact an Administrator.")
+                                    .await;
+                            }
+                        }
                     } else {
                         server
                             .activity
@@ -140,17 +147,24 @@ pub async fn handle_message(
                     } else {
                         server.restart(&state.docker, None).await
                     } {
-                        tracing::error!(
-                            server = %server.uuid,
-                            "failed to restart server: {:#?}",
-                            err
-                        );
+                        match err.downcast::<&str>() {
+                            Ok(message) => {
+                                super::send_message(sender, server.get_daemon_error(message)).await;
+                            }
+                            Err(err) => {
+                                tracing::error!(
+                                    server = %server.uuid,
+                                    "failed to restart server: {:#?}",
+                                    err
+                                );
 
-                        super::send_message(
-                            sender,
-                            server.get_daemon_error("An unexpected error occurred while restarting the server. Please contact an Administrator.")
-                        )
-                        .await;
+                                super::send_message(
+                                    sender,
+                                    server.get_daemon_error("An unexpected error occurred while restarting the server. Please contact an Administrator.")
+                                )
+                                .await;
+                            }
+                        }
                     } else {
                         server
                             .activity
@@ -203,17 +217,24 @@ pub async fn handle_message(
                     } else {
                         server.stop(&state.docker, None).await
                     } {
-                        tracing::error!(
-                            server = %server.uuid,
-                            "failed to stop server: {:#?}",
-                            err
-                        );
+                        match err.downcast::<&str>() {
+                            Ok(message) => {
+                                super::send_message(sender, server.get_daemon_error(message)).await;
+                            }
+                            Err(err) => {
+                                tracing::error!(
+                                    server = %server.uuid,
+                                    "failed to stop server: {:#?}",
+                                    err
+                                );
 
-                        super::send_message(
-                            sender,
-                            server.get_daemon_error("An unexpected error occurred while stopping the server. Please contact an Administrator.")
-                        )
-                        .await;
+                                super::send_message(
+                                    sender,
+                                    server.get_daemon_error("An unexpected error occurred while stopping the server. Please contact an Administrator.")
+                                )
+                                .await;
+                            }
+                        }
                     } else {
                         server
                             .activity
