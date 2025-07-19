@@ -1457,8 +1457,8 @@ impl russh_sftp::server::Handler for SftpSession {
                     russh_sftp::protocol::ExtendedReply {
                         id,
                         data: russh_sftp::ser::to_bytes(&LimitsReply {
-                            max_packet_length: 256 * 1024,
-                            max_read_length: 192 * 1024,
+                            max_packet_length: 192 * 1024,
+                            max_read_length: 128 * 1024,
                             max_write_length: 128 * 1024,
                             max_handle_count: HANDLE_LIMIT as u64,
                         })
