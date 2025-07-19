@@ -1,8 +1,7 @@
-use std::{collections::HashMap, sync::Arc};
-
 use hmac::digest::KeyInit;
 use jwt::VerifyWithKey;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
 
 #[derive(Deserialize, Serialize)]
@@ -35,26 +34,25 @@ impl BasePayload {
             return false;
         }
 
-        if let Some(nbf) = self.not_before {
-            if nbf > now {
-                return false;
-            }
+        if let Some(nbf) = self.not_before
+            && nbf > now
+        {
+            return false;
         }
 
         if let Some(iat) = self.issued_at {
-            if iat > now {
+            if iat > now || iat < client.boot_time.timestamp() {
                 return false;
             }
         } else {
             return false;
         }
 
-        if let Some(expired_until) = client.denied_jtokens.read().await.get(&self.jwt_id) {
-            if let Some(expiration) = self.expiration_time {
-                if expiration < expired_until.timestamp() {
-                    return false;
-                }
-            }
+        if let Some(expired_until) = client.denied_jtokens.read().await.get(&self.jwt_id)
+            && let Some(issued) = self.issued_at
+            && issued < expired_until.timestamp()
+        {
+            return false;
         }
 
         true
@@ -65,6 +63,7 @@ type CountingMap = HashMap<String, (u8, chrono::DateTime<chrono::Utc>)>;
 
 pub struct JwtClient {
     pub key: hmac::Hmac<sha2::Sha256>,
+    pub boot_time: chrono::DateTime<chrono::Utc>,
 
     pub denied_jtokens: Arc<RwLock<HashMap<String, chrono::DateTime<chrono::Utc>>>>,
     pub seen_jtoken_ids: Arc<RwLock<CountingMap>>,
@@ -100,6 +99,7 @@ impl JwtClient {
 
         Self {
             key: hmac::Hmac::new_from_slice(key.as_bytes()).unwrap(),
+            boot_time: chrono::Utc::now(),
 
             denied_jtokens,
             seen_jtoken_ids,
@@ -135,11 +135,8 @@ impl JwtClient {
         true
     }
 
-    pub async fn deny(&self, id: &str) {
+    pub async fn deny(&self, id: impl Into<String>) {
         let mut denied = self.denied_jtokens.write().await;
-        denied.insert(
-            id.to_string(),
-            chrono::Utc::now() + chrono::Duration::minutes(15),
-        );
+        denied.insert(id.into(), chrono::Utc::now());
     }
 }
