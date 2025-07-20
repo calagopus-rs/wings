@@ -1,4 +1,6 @@
-use crate::{models::DirectoryEntry, server::backup::restic::get_backup_base_path};
+use crate::{
+    models::DirectoryEntry, restic_configuration, server::backup::restic::get_backup_base_path,
+};
 use serde::Deserialize;
 use std::{
     collections::HashMap,
@@ -64,26 +66,27 @@ async fn get_files_for_backup(
     }
     drop(files);
 
+    let configuration = server.configuration.read().await;
+    let (repository, retry_lock_seconds, args, envs) =
+        restic_configuration!(&configuration, server);
+
     let base_path = get_backup_base_path(server, uuid).await?;
 
     let child = Command::new("restic")
-        .envs(&server.config.system.backups.restic.environment)
+        .envs(envs)
         .arg("--json")
         .arg("--repo")
-        .arg(&server.config.system.backups.restic.repository)
-        .arg("--password-file")
-        .arg(&server.config.system.backups.restic.password_file)
+        .arg(repository)
+        .args(args)
         .arg("--retry-lock")
-        .arg(format!(
-            "{}s",
-            server.config.system.backups.restic.retry_lock_seconds
-        ))
+        .arg(format!("{retry_lock_seconds}s"))
         .arg("ls")
         .arg(format!("latest:{}", base_path.display()))
         .arg("/")
         .arg("--recursive")
         .stdout(std::process::Stdio::piped())
         .spawn()?;
+    drop(configuration);
 
     let mut line_reader = tokio::io::BufReader::new(child.stdout.unwrap()).lines();
     let mut backup_files = Vec::new();
@@ -256,14 +259,16 @@ pub async fn reader(
 
     let full_path = PathBuf::from(&base_path).join(&entry.path);
 
+    let configuration = server.configuration.read().await;
+    let (repository, _, args, envs) = restic_configuration!(&configuration, server);
+
     let child = Command::new("restic")
-        .envs(&server.config.system.backups.restic.environment)
+        .envs(envs)
         .arg("--json")
         .arg("--no-lock")
         .arg("--repo")
-        .arg(&server.config.system.backups.restic.repository)
-        .arg("--password-file")
-        .arg(&server.config.system.backups.restic.password_file)
+        .arg(repository)
+        .args(args)
         .arg("dump")
         .arg("latest")
         .arg(full_path)
@@ -271,6 +276,7 @@ pub async fn reader(
         .arg(uuid.to_string())
         .stdout(std::process::Stdio::piped())
         .spawn()?;
+    drop(configuration);
 
     Ok((Box::new(child.stdout.unwrap()), entry.size.unwrap_or(0)))
 }
@@ -294,14 +300,16 @@ pub async fn directory_reader(
     let full_path = PathBuf::from(&base_path).join(&entry.path);
     let (writer, reader) = tokio::io::duplex(65536);
 
+    let configuration = server.configuration.read().await;
+    let (repository, _, args, envs) = restic_configuration!(&configuration, server);
+
     let child = Command::new("restic")
-        .envs(&server.config.system.backups.restic.environment)
+        .envs(envs)
         .arg("--json")
         .arg("--no-lock")
         .arg("--repo")
-        .arg(&server.config.system.backups.restic.repository)
-        .arg("--password-file")
-        .arg(&server.config.system.backups.restic.password_file)
+        .arg(repository)
+        .args(args)
         .arg("dump")
         .arg(format!("latest:{}", full_path.display()))
         .arg("/")
@@ -309,6 +317,7 @@ pub async fn directory_reader(
         .arg(uuid.to_string())
         .stdout(std::process::Stdio::piped())
         .spawn()?;
+    drop(configuration);
 
     let compression_level = server.config.system.backups.compression_level;
     tokio::spawn(async move {
