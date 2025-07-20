@@ -630,13 +630,14 @@ impl ShellSession {
                     .bold()
                     .paint(format!("[{} Daemon]:", self.state.config.app_name));
 
-                let state_str = serde_json::to_value(self.server.state.get_state()).unwrap();
-                let state_str = state_str.as_str().unwrap();
-
                 writer
                     .make_writer()
                     .write_all(
-                        format!("{prelude} Server marked as {state_str}...\r\n\x1b[2K").as_bytes(),
+                        format!(
+                            "{prelude} Server marked as {}...\r\n\x1b[2K",
+                            self.server.state.get_state().to_str()
+                        )
+                        .as_bytes(),
                     )
                     .await
                     .unwrap_or_default();

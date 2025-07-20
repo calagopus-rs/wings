@@ -28,6 +28,13 @@ opt-level = 3
 [profile.dev]
 debug = false
 
+[profile.release.package."*"]
+opt-level = "s"
+codegen-units = 1
+strip = "symbols"
+
 [profile.release]
 opt-level = "s"
-lto = true
+lto = "fat"
+codegen-units = 1
+strip = "symbols"

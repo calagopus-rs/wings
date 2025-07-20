@@ -13,7 +13,20 @@ pub enum ServerState {
     Running,
 }
 
+impl ServerState {
+    #[inline]
+    pub fn to_str(self) -> &'static str {
+        match self {
+            ServerState::Offline => "offline",
+            ServerState::Starting => "starting",
+            ServerState::Stopping => "stopping",
+            ServerState::Running => "running",
+        }
+    }
+}
+
 impl From<u8> for ServerState {
+    #[inline]
     fn from(value: u8) -> Self {
         match value {
             0 => ServerState::Offline,
@@ -26,6 +39,7 @@ impl From<u8> for ServerState {
 }
 
 impl From<ServerState> for u8 {
+    #[inline]
     fn from(value: ServerState) -> Self {
         match value {
             ServerState::Offline => 0,
@@ -51,6 +65,7 @@ impl ServerStateLock {
         }
     }
 
+    #[inline]
     pub fn set_state(&self, state: ServerState) {
         if self.get_state() == state {
             return;
@@ -58,17 +73,15 @@ impl ServerStateLock {
 
         self.state.store(state.into(), Ordering::SeqCst);
 
-        let state_str = serde_json::to_value(state).unwrap();
-        let state_str = state_str.as_str().unwrap();
-
         self.sender
             .send(super::websocket::WebsocketMessage::new(
                 super::websocket::WebsocketEvent::ServerStatus,
-                &[state_str.to_string()],
+                &[state.to_str().to_string()],
             ))
             .unwrap_or_default();
     }
 
+    #[inline]
     pub fn get_state(&self) -> ServerState {
         ServerState::from(self.state.load(Ordering::SeqCst))
     }
