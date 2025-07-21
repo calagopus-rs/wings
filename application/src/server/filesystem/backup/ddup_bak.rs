@@ -84,7 +84,11 @@ fn ddup_bak_entry_to_directory_entry(
     }
 
     DirectoryEntry {
-        name: path.file_name().unwrap().to_string_lossy().to_string(),
+        name: path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string(),
         created: chrono::DateTime::from_timestamp(0, 0).unwrap(),
         modified: chrono::DateTime::from_timestamp(
             entry
