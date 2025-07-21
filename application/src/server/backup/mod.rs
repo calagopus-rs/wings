@@ -84,6 +84,7 @@ impl InternalBackup {
             }
 
             override_raw.push('\n');
+            ignore_raw.push('\n');
         }
 
         for file in server.configuration.read().await.egg.file_denylist.iter() {
