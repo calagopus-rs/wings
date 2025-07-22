@@ -206,7 +206,7 @@ pub async fn reader(
     server: &crate::server::Server,
     uuid: uuid::Uuid,
     path: PathBuf,
-) -> Result<(Box<dyn tokio::io::AsyncRead + Send>, u64), anyhow::Error> {
+) -> Result<(Box<dyn tokio::io::AsyncRead + Unpin + Send>, u64), anyhow::Error> {
     let (file_format, file_name) =
         crate::server::backup::wings::get_first_file_name(server, uuid).await?;
     if !matches!(
@@ -216,54 +216,55 @@ pub async fn reader(
         return Err(anyhow::anyhow!("This backup does not use the ZIP format"));
     }
 
-    tokio::task::spawn_blocking(
-        move || -> Result<(Box<dyn tokio::io::AsyncRead + Send>, u64), anyhow::Error> {
-            let mut archive = zip::ZipArchive::new(std::fs::File::open(file_name)?)?;
-            let entry = match archive.by_name(&path.to_string_lossy()) {
-                Ok(entry) => entry,
-                Err(_) => {
-                    return Err(anyhow::anyhow!(
-                        "Path not found in archive: {}",
-                        path.display()
-                    ));
-                }
-            };
-
-            if !entry.is_file() {
-                return Err(anyhow::anyhow!("Expected a file entry"));
+    tokio::task::spawn_blocking(move || {
+        let mut archive = zip::ZipArchive::new(std::fs::File::open(file_name)?)?;
+        let entry = match archive.by_name(&path.to_string_lossy()) {
+            Ok(entry) => entry,
+            Err(_) => {
+                return Err(anyhow::anyhow!(
+                    "Path not found in archive: {}",
+                    path.display()
+                ));
             }
+        };
 
-            let size = entry.size();
-            let (async_reader, mut async_writer) = tokio::io::duplex(65536);
-            drop(entry);
+        if !entry.is_file() {
+            return Err(anyhow::anyhow!("Expected a file entry"));
+        }
 
-            tokio::task::spawn_blocking(move || {
-                let runtime = tokio::runtime::Handle::current();
-                let mut entry = archive.by_name(&path.to_string_lossy()).unwrap();
+        let size = entry.size();
+        let (async_reader, mut async_writer) = tokio::io::duplex(crate::BUFFER_SIZE);
+        drop(entry);
 
-                let mut buffer = [0; 8192];
-                loop {
-                    match entry.read(&mut buffer) {
-                        Ok(0) => break,
-                        Ok(n) => {
-                            if runtime
-                                .block_on(async_writer.write_all(&buffer[..n]))
-                                .is_err()
-                            {
-                                break;
-                            }
-                        }
-                        Err(err) => {
-                            tracing::error!("error reading from ddup_bak entry: {:#?}", err);
+        tokio::task::spawn_blocking(move || {
+            let runtime = tokio::runtime::Handle::current();
+            let mut entry = archive.by_name(&path.to_string_lossy()).unwrap();
+
+            let mut buffer = [0; 8192];
+            loop {
+                match entry.read(&mut buffer) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        if runtime
+                            .block_on(async_writer.write_all(&buffer[..n]))
+                            .is_err()
+                        {
                             break;
                         }
                     }
+                    Err(err) => {
+                        tracing::error!("error reading from ddup_bak entry: {:#?}", err);
+                        break;
+                    }
                 }
-            });
+            }
+        });
 
-            Ok((Box::new(async_reader), size))
-        },
-    )
+        Ok((
+            Box::new(async_reader) as Box<dyn tokio::io::AsyncRead + Unpin + Send>,
+            size,
+        ))
+    })
     .await?
 }
 
@@ -281,7 +282,7 @@ pub async fn directory_reader(
         return Err(anyhow::anyhow!("This backup does not use the ZIP format"));
     }
 
-    let (writer, reader) = tokio::io::duplex(65536);
+    let (writer, reader) = tokio::io::duplex(crate::BUFFER_SIZE);
     let compression_level = server.config.system.backups.compression_level;
 
     tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {

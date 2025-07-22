@@ -9,7 +9,7 @@ use std::{
 };
 use tokio::io::{AsyncSeek, AsyncWrite};
 
-const ALLOCATION_THRESHOLD: i64 = 1_024_000; // 1 MB
+const ALLOCATION_THRESHOLD: i64 = 1024 * 1024;
 
 pub struct FileSystemWriter {
     server: crate::server::Server,
@@ -53,10 +53,7 @@ impl FileSystemWriter {
         Ok(Self {
             server,
             parent,
-            writer: Some(BufWriter::with_capacity(
-                ALLOCATION_THRESHOLD as usize,
-                file,
-            )),
+            writer: Some(BufWriter::with_capacity(crate::BUFFER_SIZE, file)),
             ignorant: false,
             accumulated_bytes: 0,
             modified,
@@ -73,11 +70,11 @@ impl FileSystemWriter {
 
     fn allocate_accumulated(&mut self) -> std::io::Result<()> {
         if self.accumulated_bytes > 0 {
-            if !futures::executor::block_on(self.server.filesystem.allocate_in_path_raw(
+            if !self.server.filesystem.allocate_in_path_raw_sync(
                 &self.parent,
                 self.accumulated_bytes,
                 self.ignorant,
-            )) {
+            ) {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::StorageFull,
                     "Failed to allocate space",
@@ -145,12 +142,11 @@ impl Seek for FileSystemWriter {
 
 impl Drop for FileSystemWriter {
     fn drop(&mut self) {
-        if let Some(modified) = self.modified {
-            if let Some(writer) = self.writer.take() {
-                if let Ok(file) = writer.into_inner() {
-                    file.into_std().set_modified(modified).ok();
-                }
-            }
+        if let Some(modified) = self.modified
+            && let Some(writer) = self.writer.take()
+            && let Ok(file) = writer.into_inner()
+        {
+            file.into_std().set_modified(modified).ok();
         }
     }
 }
@@ -202,7 +198,7 @@ impl AsyncFileSystemWriter {
             server,
             parent,
             writer: Some(tokio::io::BufWriter::with_capacity(
-                ALLOCATION_THRESHOLD as usize,
+                crate::BUFFER_SIZE,
                 file,
             )),
             ignorant: false,
@@ -383,14 +379,14 @@ impl Drop for AsyncFileSystemWriter {
             }
         }
 
-        if let Some(modified) = self.modified {
-            if let Some(writer) = self.writer.take() {
-                tokio::spawn(async move {
-                    let file = writer.into_inner().into_std().await;
+        if let Some(modified) = self.modified
+            && let Some(writer) = self.writer.take()
+        {
+            tokio::spawn(async move {
+                let file = writer.into_inner().into_std().await;
 
-                    tokio::task::spawn_blocking(move || file.set_modified(modified));
-                });
-            }
+                tokio::task::spawn_blocking(move || file.set_modified(modified));
+            });
         }
     }
 }

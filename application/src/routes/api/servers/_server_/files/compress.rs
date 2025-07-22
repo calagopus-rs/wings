@@ -130,6 +130,7 @@ mod post {
                                 _ => unreachable!(),
                             },
                             state.config.system.backups.compression_level,
+                            None,
                         )
                         .await
                     }

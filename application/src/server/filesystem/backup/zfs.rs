@@ -93,7 +93,7 @@ pub async fn reader(
     server: &crate::server::Server,
     uuid: uuid::Uuid,
     path: PathBuf,
-) -> Result<(Box<dyn tokio::io::AsyncRead + Send>, u64), anyhow::Error> {
+) -> Result<(Box<dyn tokio::io::AsyncRead + Unpin + Send>, u64), anyhow::Error> {
     let full_path = tokio::fs::canonicalize(get_base_path(server, uuid).join(path)).await?;
 
     if !full_path.starts_with(get_base_path(server, uuid)) {
@@ -117,7 +117,7 @@ pub async fn directory_reader(
         return Err(anyhow::anyhow!("Access to this path is denied"));
     }
 
-    let (reader, writer) = tokio::io::duplex(65535);
+    let (reader, writer) = tokio::io::duplex(crate::BUFFER_SIZE);
 
     let server = server.clone();
     tokio::task::spawn_blocking(move || {

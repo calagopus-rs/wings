@@ -10,7 +10,6 @@ mod get {
     };
     use serde::Deserialize;
     use std::path::Path;
-    use tokio::io::BufReader;
     use utoipa::ToSchema;
 
     #[derive(ToSchema, Deserialize)]
@@ -113,7 +112,10 @@ mod get {
                     return (
                         StatusCode::OK,
                         headers,
-                        Body::from_stream(tokio_util::io::ReaderStream::new(Box::into_pin(reader))),
+                        Body::from_stream(tokio_util::io::ReaderStream::with_capacity(
+                            reader,
+                            crate::BUFFER_SIZE,
+                        )),
                     );
                 }
                 Err(err) => {
@@ -183,7 +185,10 @@ mod get {
         (
             StatusCode::OK,
             headers,
-            Body::from_stream(tokio_util::io::ReaderStream::new(BufReader::new(file))),
+            Body::from_stream(tokio_util::io::ReaderStream::with_capacity(
+                file,
+                crate::BUFFER_SIZE,
+            )),
         )
     }
 }

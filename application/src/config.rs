@@ -238,8 +238,8 @@ fn docker_overhead_default_multiplier() -> f64 {
 fn docker_log_config_type() -> String {
     "local".to_string()
 }
-fn docker_log_config_config() -> HashMap<String, String> {
-    HashMap::from([
+fn docker_log_config_config() -> BTreeMap<String, String> {
+    BTreeMap::from([
         ("max-size".to_string(), "5m".to_string()),
         ("max-file".to_string(), "1".to_string()),
         ("compress".to_string(), "false".to_string()),
@@ -603,7 +603,7 @@ nestify::nest! {
                 #[serde(default = "docker_log_config_type")]
                 pub r#type: String,
                 #[serde(default = "docker_log_config_config")]
-                pub config: HashMap<String, String>,
+                pub config: BTreeMap<String, String>,
             },
         },
 

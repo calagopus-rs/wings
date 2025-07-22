@@ -98,7 +98,16 @@ async fn container_config(
                     .unwrap()
                     .as_str()
                     .map(|s| s.to_string()),
-                config: Some(server.config.docker.log_config.config.clone()),
+                config: Some(
+                    server
+                        .config
+                        .docker
+                        .log_config
+                        .config
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect(),
+                ),
             }),
             userns_mode: string_to_option(&server.config.docker.userns_mode),
             ..Default::default()

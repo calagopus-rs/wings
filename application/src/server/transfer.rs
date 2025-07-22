@@ -1,15 +1,15 @@
 use crate::{
-    io::counting_reader::{AsyncCountingReader, CountingReader},
-    server::filesystem::archive::CompressionLevel,
+    io::counting_reader::AsyncCountingReader, server::filesystem::archive::CompressionLevel,
 };
-use cap_std::fs::PermissionsExt;
 use human_bytes::human_bytes;
-use ignore::WalkBuilder;
 use serde::Deserialize;
 use sha2::Digest;
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
+use std::{
+    path::{Path, PathBuf},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use utoipa::ToSchema;
@@ -154,118 +154,40 @@ impl OutgoingServerTransfer {
                 .ok();
 
             let (mut checksum_writer, checksum_reader) = tokio::io::duplex(256);
-            let (checksummed_writer, mut checksummed_reader) = tokio::io::duplex(65536);
-            let (mut writer, reader) = tokio::io::duplex(65536);
-            let archive_task = tokio::task::spawn_blocking({
+            let (checksummed_writer, mut checksummed_reader) = tokio::io::duplex(crate::BUFFER_SIZE);
+            let (mut writer, reader) = tokio::io::duplex(crate::BUFFER_SIZE);
+            let archive_task = Box::pin({
                 let bytes_archived = Arc::clone(&bytes_archived);
-                let server = Arc::clone(&server);
+                let server = server.clone();
 
-                move || -> Result<(), anyhow::Error> {
-                    let filesystem = server.filesystem.sync_base_dir()?;
-
-                    let writer = tokio_util::io::SyncIoBridge::new(checksummed_writer);
-                    let writer: Box<dyn std::io::Write> = match archive_format {
-                        TransferArchiveFormat::Tar => Box::new(writer),
-                        TransferArchiveFormat::TarGz => Box::new(flate2::write::GzEncoder::new(
-                            writer,
-                            compression_level.flate2_compression_level(),
-                        )),
-                        TransferArchiveFormat::TarZstd => Box::new(
-                            zstd::Encoder::new(writer, compression_level.zstd_compression_level())
-                                .unwrap(),
-                        ),
-                    };
-
-                    let mut tar = tar::Builder::new(writer);
-                    tar.mode(tar::HeaderMode::Complete);
-                    tar.follow_symlinks(false);
-
-                    for entry in WalkBuilder::new(&server.filesystem.base_path)
-                        .git_ignore(false)
-                        .ignore(false)
-                        .git_exclude(false)
-                        .follow_links(false)
-                        .hidden(false)
-                        .build()
-                        .flatten()
-                    {
-                        let path = entry
-                            .path()
-                            .strip_prefix(&server.filesystem.base_path)
-                            .unwrap_or(entry.path());
-
-                        let metadata = match filesystem.symlink_metadata(path) {
-                            Ok(metadata) => metadata,
-                            Err(_) => continue,
-                        };
-
-                        if server
-                            .filesystem
-                            .is_ignored_sync(path, metadata.is_dir())
-                        {
-                            continue;
-                        }
-
-                        let mut header = tar::Header::new_gnu();
-                        header.set_size(0);
-                        header.set_mode(metadata.permissions().mode());
-                        header.set_mtime(
-                            metadata
-                                .modified()
-                                .map(|t| {
-                                    t.into_std()
-                                        .duration_since(std::time::UNIX_EPOCH)
-                                        .unwrap_or_default()
-                                })
-                                .unwrap_or_default()
-                                .as_secs(),
-                        );
-
-                        if metadata.is_dir() {
-                            header.set_entry_type(tar::EntryType::Directory);
-
-                            tar.append_data(&mut header, path, std::io::empty())?;
-                            bytes_archived.fetch_add(
-                                metadata.len(),
-                                Ordering::SeqCst,
-                            );
-                        } else if metadata.is_file() {
-                            let file = match filesystem.open(path) {
-                                Ok(file) => file,
-                                Err(_) => continue,
-                            };
-
-                            let reader = CountingReader::new_with_bytes_read(
-                                file,
-                                Arc::clone(&bytes_archived),
-                            );
-
-                            header.set_size(metadata.len());
-                            header.set_entry_type(tar::EntryType::Regular);
-
-                            tar.append_data(&mut header, path, reader)?;
-                        } else if let Ok(link_target) = filesystem.read_link_contents(path) {
-                            header.set_entry_type(tar::EntryType::Symlink);
-
-                            tar.append_link(&mut header, path, link_target)?;
-                            bytes_archived.fetch_add(
-                                metadata.len(),
-                                Ordering::SeqCst,
-                            );
-                        }
+                async move {
+                    let mut directory = server.filesystem.read_dir("").await?;
+                    let mut sources = Vec::new();
+                    while let Some(Ok((_, name))) = directory.next_entry().await {
+                        sources.push(PathBuf::from(name));
                     }
 
-                    let mut inner = tar.into_inner()?;
-                    inner.flush()?;
-
-                    Ok(())
+                    crate::server::filesystem::archive::Archive::create_tar(
+                        server,
+                        checksummed_writer,
+                        Path::new(""),
+                        sources,
+                        match archive_format {
+                            TransferArchiveFormat::Tar => crate::server::filesystem::archive::CompressionType::None,
+                            TransferArchiveFormat::TarGz => crate::server::filesystem::archive::CompressionType::Gz,
+                            TransferArchiveFormat::TarZstd => crate::server::filesystem::archive::CompressionType::Zstd,
+                        },
+                        compression_level,
+                        Some(Arc::clone(&bytes_archived))
+                    )
+                    .await
                 }
             });
 
             let checksum_task = Box::pin(async move {
                 let mut hasher = sha2::Sha256::new();
 
-                let mut buffer = [0; 8192];
+                let mut buffer = vec![0; crate::BUFFER_SIZE];
                 loop {
                     let bytes_read = checksummed_reader.read(&mut buffer).await?;
                     if bytes_read == 0 {
@@ -287,7 +209,7 @@ impl OutgoingServerTransfer {
                 .part(
                     "archive",
                     reqwest::multipart::Part::stream(reqwest::Body::wrap_stream(
-                        tokio_util::io::ReaderStream::new(Box::pin(reader)),
+                        tokio_util::io::ReaderStream::with_capacity(reader, crate::BUFFER_SIZE),
                     ))
                     .file_name(format!("archive.{}", archive_format.extension()))
                     .mime_str("application/x-tar")
@@ -296,7 +218,7 @@ impl OutgoingServerTransfer {
                 .part(
                     "checksum",
                     reqwest::multipart::Part::stream(reqwest::Body::wrap_stream(
-                        tokio_util::io::ReaderStream::new(Box::pin(checksum_reader)),
+                        tokio_util::io::ReaderStream::with_capacity(checksum_reader, 256),
                     ))
                     .file_name("checksum")
                     .mime_str("text/plain")
@@ -323,7 +245,7 @@ impl OutgoingServerTransfer {
                                         continue;
                                     }
                                 };
-                                let counting_reader = AsyncCountingReader::new_with_bytes_read(
+                                let reader = AsyncCountingReader::new_with_bytes_read(
                                     match tokio::fs::File::open(&file_name).await {
                                         Ok(file) => file,
                                         Err(err) => {
@@ -347,7 +269,7 @@ impl OutgoingServerTransfer {
                                 form = form.part(
                                     format!("backup-{}", backup.uuid),
                                     reqwest::multipart::Part::stream(reqwest::Body::wrap_stream(
-                                        tokio_util::io::ReaderStream::new(Box::pin(counting_reader)),
+                                        tokio_util::io::ReaderStream::with_capacity(reader, crate::BUFFER_SIZE),
                                     ))
                                     .file_name(file_name.file_name().unwrap_or_default().to_string_lossy().to_string())
                                     .mime_str("backup/wings")
@@ -430,17 +352,6 @@ impl OutgoingServerTransfer {
 
             let (archive, checksum, _) = tokio::join!(archive_task, checksum_task, response);
             progress_task.abort();
-
-            if let Ok(Err(err)) = archive {
-                tracing::error!(
-                    server = %server.uuid,
-                    "failed to create transfer archive: {}",
-                    err
-                );
-
-                Self::transfer_failure(&server).await;
-                return;
-            }
 
             if let Err(err) = archive {
                 tracing::error!(

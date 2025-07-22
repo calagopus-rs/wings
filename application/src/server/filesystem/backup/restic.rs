@@ -249,7 +249,7 @@ pub async fn reader(
     server: &crate::server::Server,
     uuid: uuid::Uuid,
     path: PathBuf,
-) -> Result<(Box<dyn tokio::io::AsyncRead + Send>, u64), anyhow::Error> {
+) -> Result<(Box<dyn tokio::io::AsyncRead + Unpin + Send>, u64), anyhow::Error> {
     let files = get_files_for_backup(server, uuid).await?;
     let base_path = get_backup_base_path(server, uuid).await?;
 
@@ -302,7 +302,7 @@ pub async fn directory_reader(
     }
 
     let full_path = PathBuf::from(&base_path).join(&entry.path);
-    let (writer, reader) = tokio::io::duplex(65536);
+    let (writer, reader) = tokio::io::duplex(crate::BUFFER_SIZE);
 
     let configuration = server.configuration.read().await;
     let (repository, _, args, envs) = restic_configuration!(&configuration, server);

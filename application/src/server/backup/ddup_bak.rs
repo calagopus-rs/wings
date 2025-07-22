@@ -254,7 +254,7 @@ pub async fn download_backup(
     let repository = get_repository(server).await;
     let archive = repository.get_archive(&uuid.to_string())?;
 
-    let (writer, reader) = tokio::io::duplex(65536);
+    let (writer, reader) = tokio::io::duplex(crate::BUFFER_SIZE);
 
     tokio::task::spawn_blocking(move || {
         let writer = tokio_util::io::SyncIoBridge::new(writer);

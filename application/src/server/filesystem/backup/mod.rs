@@ -46,7 +46,7 @@ pub async fn reader(
     backup: InternalBackup,
     server: &crate::server::Server,
     path: &Path,
-) -> Result<(Box<dyn tokio::io::AsyncRead + Send>, u64), anyhow::Error> {
+) -> Result<(Box<dyn tokio::io::AsyncRead + Unpin + Send>, u64), anyhow::Error> {
     let path = super::Filesystem::resolve_path(path);
 
     match backup.adapter {

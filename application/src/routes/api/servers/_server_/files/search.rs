@@ -106,9 +106,7 @@ mod post {
                                 Err(_) => return WalkState::Continue,
                             };
 
-                            if runtime
-                                .block_on(server.filesystem.is_ignored(path, metadata.is_dir()))
-                            {
+                            if server.filesystem.is_ignored_sync(path, metadata.is_dir()) {
                                 return WalkState::Continue;
                             }
 

@@ -194,6 +194,7 @@ impl ExecSession {
                                     }
                                 },
                                 self.state.config.system.backups.compression_level,
+                                None,
                             )
                             .await?;
 

@@ -123,7 +123,7 @@ mod post {
                                     "failed to read multipart field: {err}"
                                 ))
                             }));
-                        let reader: Box<dyn tokio::io::AsyncRead + Send> =
+                        let reader: Box<dyn tokio::io::AsyncRead + Unpin + Send> =
                             match TransferArchiveFormat::from_str(&file_name)
                                 .unwrap_or(TransferArchiveFormat::TarGz)
                             {
@@ -136,7 +136,7 @@ mod post {
                                 ),
                             };
 
-                        let mut archive = tokio_tar::Archive::new(Box::into_pin(reader));
+                        let mut archive = tokio_tar::Archive::new(reader);
                         let mut entries = archive.entries()?;
 
                         while let Some(Ok(mut entry)) = entries.next().await {

@@ -1,3 +1,4 @@
+use crate::io::counting_reader::AsyncCountingReader;
 use cap_std::fs::PermissionsExt as _;
 use chrono::{Datelike, Timelike};
 use futures::StreamExt;
@@ -9,7 +10,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, RwLock,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
 };
 use tokio::{
@@ -737,6 +738,7 @@ impl Archive {
         sources: Vec<PathBuf>,
         compression_type: CompressionType,
         compression_level: CompressionLevel,
+        bytes_archived: Option<Arc<AtomicU64>>,
     ) -> Result<(), anyhow::Error> {
         let writer: Box<dyn AsyncWrite + Send + Unpin> = match compression_type {
             CompressionType::None => Box::new(destination),
@@ -807,6 +809,9 @@ impl Archive {
                 archive
                     .append_data(&mut header, relative, tokio::io::empty())
                     .await?;
+                if let Some(bytes_archived) = &bytes_archived {
+                    bytes_archived.fetch_add(source_metadata.len(), Ordering::SeqCst);
+                }
 
                 let mut walker =
                     crate::server::filesystem::walker::AsyncWalkDir::new(server.clone(), source)
@@ -847,13 +852,25 @@ impl Archive {
                         archive
                             .append_data(&mut header, relative, tokio::io::empty())
                             .await?;
+                        if let Some(bytes_archived) = &bytes_archived {
+                            bytes_archived.fetch_add(metadata.len(), Ordering::SeqCst);
+                        }
                     } else if metadata.is_file() {
                         let file = server.filesystem.open(&path).await?;
+                        let reader: Box<dyn AsyncRead + Send + Unpin> = match &bytes_archived {
+                            Some(bytes_archived) => {
+                                Box::new(AsyncCountingReader::new_with_bytes_read(
+                                    file,
+                                    Arc::clone(bytes_archived),
+                                ))
+                            }
+                            None => Box::new(file),
+                        };
 
                         header.set_size(metadata.len());
                         header.set_entry_type(tokio_tar::EntryType::Regular);
 
-                        archive.append_data(&mut header, relative, file).await?;
+                        archive.append_data(&mut header, relative, reader).await?;
                     } else if let Ok(link_target) =
                         server.filesystem.read_link_contents(&path).await
                     {
@@ -863,20 +880,26 @@ impl Archive {
                             archive
                                 .append_data(&mut header, relative, tokio::io::empty())
                                 .await?;
+                            if let Some(bytes_archived) = &bytes_archived {
+                                bytes_archived.fetch_add(source_metadata.len(), Ordering::SeqCst);
+                            }
                         }
                     }
                 }
             } else if source_metadata.is_file() {
+                let file = server.filesystem.open(&source).await?;
+                let reader: Box<dyn AsyncRead + Send + Unpin> = match &bytes_archived {
+                    Some(bytes_archived) => Box::new(AsyncCountingReader::new_with_bytes_read(
+                        file,
+                        Arc::clone(bytes_archived),
+                    )),
+                    None => Box::new(file),
+                };
+
                 header.set_size(source_metadata.len());
                 header.set_entry_type(tokio_tar::EntryType::Regular);
 
-                archive
-                    .append_data(
-                        &mut header,
-                        relative,
-                        server.filesystem.open(&source).await?,
-                    )
-                    .await?;
+                archive.append_data(&mut header, relative, reader).await?;
             } else if let Ok(link_target) = server.filesystem.read_link_contents(&source).await {
                 header.set_entry_type(tokio_tar::EntryType::Symlink);
 
@@ -884,6 +907,9 @@ impl Archive {
                     archive
                         .append_data(&mut header, relative, tokio::io::empty())
                         .await?;
+                    if let Some(bytes_archived) = &bytes_archived {
+                        bytes_archived.fetch_add(source_metadata.len(), Ordering::SeqCst);
+                    }
                 }
             }
         }

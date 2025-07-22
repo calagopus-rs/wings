@@ -158,7 +158,7 @@ mod get {
             );
         }
 
-        let (writer, reader) = tokio::io::duplex(65536);
+        let (writer, reader) = tokio::io::duplex(crate::BUFFER_SIZE);
 
         tokio::spawn({
             let path = path.clone();
@@ -191,6 +191,7 @@ mod get {
                     names,
                     crate::server::filesystem::archive::CompressionType::Gz,
                     state.config.system.backups.compression_level,
+                    None,
                 )
                 .await
                 .ok();

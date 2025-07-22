@@ -310,7 +310,7 @@ pub async fn download_backup(
         ));
     }
 
-    let (writer, reader) = tokio::io::duplex(65536);
+    let (writer, reader) = tokio::io::duplex(crate::BUFFER_SIZE);
 
     let server = server.clone();
     tokio::task::spawn_blocking(move || {

@@ -444,7 +444,7 @@ pub async fn download_backup(
         .spawn()?;
     drop(configuration);
 
-    let (reader, writer) = tokio::io::duplex(65536);
+    let (reader, writer) = tokio::io::duplex(crate::BUFFER_SIZE);
 
     let compression_level = server.config.system.backups.compression_level;
     tokio::spawn(async move {

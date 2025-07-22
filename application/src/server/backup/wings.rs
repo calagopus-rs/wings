@@ -590,8 +590,9 @@ pub async fn download_backup(
     Ok((
         StatusCode::OK,
         headers,
-        Body::from_stream(tokio_util::io::ReaderStream::new(
-            tokio::io::BufReader::new(file),
+        Body::from_stream(tokio_util::io::ReaderStream::with_capacity(
+            file,
+            crate::BUFFER_SIZE,
         )),
     ))
 }

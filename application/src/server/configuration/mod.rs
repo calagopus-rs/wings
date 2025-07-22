@@ -411,7 +411,15 @@ impl ServerConfiguration {
                 )])),
                 log_config: Some(bollard::secret::HostConfigLogConfig {
                     typ: Some(config.docker.log_config.r#type.clone()),
-                    config: Some(config.docker.log_config.config.clone()),
+                    config: Some(
+                        config
+                            .docker
+                            .log_config
+                            .config
+                            .iter()
+                            .map(|(k, v)| (k.clone(), v.clone()))
+                            .collect(),
+                    ),
                 }),
                 security_opt: Some(vec![
                     "no-new-privileges".to_string(),

@@ -270,58 +270,59 @@ pub async fn reader(
     server: &crate::server::Server,
     uuid: uuid::Uuid,
     path: PathBuf,
-) -> Result<(Box<dyn tokio::io::AsyncRead + Send>, u64), anyhow::Error> {
+) -> Result<(Box<dyn tokio::io::AsyncRead + Unpin + Send>, u64), anyhow::Error> {
     let repository = get_repository(server).await;
 
-    tokio::task::spawn_blocking(
-        move || -> Result<(Box<dyn tokio::io::AsyncRead + Send>, u64), anyhow::Error> {
-            let archive = repository.get_archive(&uuid.to_string())?;
-            let entry = match archive.find_archive_entry(&path) {
-                Some(entry) => entry,
-                None => {
-                    return Err(anyhow::anyhow!(
-                        "Path not found in archive: {}",
-                        path.display()
-                    ));
-                }
-            };
+    tokio::task::spawn_blocking(move || {
+        let archive = repository.get_archive(&uuid.to_string())?;
+        let entry = match archive.find_archive_entry(&path) {
+            Some(entry) => entry,
+            None => {
+                return Err(anyhow::anyhow!(
+                    "Path not found in archive: {}",
+                    path.display()
+                ));
+            }
+        };
 
-            let size = match entry {
-                ddup_bak::archive::entries::Entry::File(file) => file.size_real,
-                _ => {
-                    return Err(anyhow::anyhow!("Expected a file entry"));
-                }
-            };
+        let size = match entry {
+            ddup_bak::archive::entries::Entry::File(file) => file.size_real,
+            _ => {
+                return Err(anyhow::anyhow!("Expected a file entry"));
+            }
+        };
 
-            let mut reader = repository.entry_reader(entry.clone())?;
-            let (async_reader, mut async_writer) = tokio::io::duplex(65536);
+        let mut reader = repository.entry_reader(entry.clone())?;
+        let (async_reader, mut async_writer) = tokio::io::duplex(crate::BUFFER_SIZE);
 
-            tokio::task::spawn_blocking(move || {
-                let runtime = tokio::runtime::Handle::current();
+        tokio::task::spawn_blocking(move || {
+            let runtime = tokio::runtime::Handle::current();
 
-                let mut buffer = [0; 8192];
-                loop {
-                    match reader.read(&mut buffer) {
-                        Ok(0) => break,
-                        Ok(n) => {
-                            if runtime
-                                .block_on(async_writer.write_all(&buffer[..n]))
-                                .is_err()
-                            {
-                                break;
-                            }
-                        }
-                        Err(err) => {
-                            tracing::error!("error reading from ddup_bak entry: {:#?}", err);
+            let mut buffer = [0; 8192];
+            loop {
+                match reader.read(&mut buffer) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        if runtime
+                            .block_on(async_writer.write_all(&buffer[..n]))
+                            .is_err()
+                        {
                             break;
                         }
                     }
+                    Err(err) => {
+                        tracing::error!("error reading from ddup_bak entry: {:#?}", err);
+                        break;
+                    }
                 }
-            });
+            }
+        });
 
-            Ok((Box::new(async_reader), size))
-        },
-    )
+        Ok((
+            Box::new(async_reader) as Box<dyn tokio::io::AsyncRead + Unpin + Send>,
+            size,
+        ))
+    })
     .await?
 }
 
@@ -332,7 +333,7 @@ pub async fn directory_reader(
 ) -> Result<tokio::io::DuplexStream, anyhow::Error> {
     let repository = get_repository(server).await;
 
-    let (writer, reader) = tokio::io::duplex(65536);
+    let (writer, reader) = tokio::io::duplex(crate::BUFFER_SIZE);
     let compression_level = server.config.system.backups.compression_level;
 
     tokio::task::spawn_blocking(move || {

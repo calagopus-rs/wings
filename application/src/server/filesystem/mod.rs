@@ -740,7 +740,7 @@ impl Filesystem {
     ///
     /// - `path`: The path to allocate space for
     /// - `size`: The amount of space to allocate (positive) or deallocate (negative)
-    ///  - `ignorant`: If `true`, ignores disk limit checks
+    /// - `ignorant`: If `true`, ignores disk limit checks
     ///
     /// Returns `true` if allocation was successful, `false` if it would exceed disk limit
     pub async fn allocate_in_path_raw(&self, path: &[String], delta: i64, ignorant: bool) -> bool {
@@ -772,6 +772,47 @@ impl Filesystem {
         }
 
         self.disk_usage.write().await.update_size(path, delta);
+
+        true
+    }
+
+    /// Allocates (or deallocates) space for a path in the filesystem.
+    /// Updates both the disk_usage map for directories and the cached total.
+    ///
+    /// - `path`: The path to allocate space for
+    /// - `size`: The amount of space to allocate (positive) or deallocate (negative)
+    /// - `ignorant`: If `true`, ignores disk limit checks
+    ///
+    /// Returns `true` if allocation was successful, `false` if it would exceed disk limit
+    pub fn allocate_in_path_raw_sync(&self, path: &[String], delta: i64, ignorant: bool) -> bool {
+        if delta == 0 {
+            return true;
+        }
+
+        if delta > 0 && !ignorant {
+            let current_usage = self.disk_usage_cached.load(Ordering::Relaxed) as i64;
+
+            if self.disk_limit() != 0 && current_usage + delta > self.disk_limit() {
+                return false;
+            }
+        }
+
+        if delta > 0 {
+            self.disk_usage_cached
+                .fetch_add(delta as u64, Ordering::Relaxed);
+        } else {
+            let abs_size = delta.unsigned_abs();
+            let current = self.disk_usage_cached.load(Ordering::Relaxed);
+
+            if current >= abs_size {
+                self.disk_usage_cached
+                    .fetch_sub(abs_size, Ordering::Relaxed);
+            } else {
+                self.disk_usage_cached.store(0, Ordering::Relaxed);
+            }
+        }
+
+        self.disk_usage.blocking_write().update_size(path, delta);
 
         true
     }
