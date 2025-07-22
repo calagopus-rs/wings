@@ -121,7 +121,10 @@ mod get {
                     return (
                         StatusCode::OK,
                         headers,
-                        Body::from_stream(tokio_util::io::ReaderStream::new(Box::pin(reader))),
+                        Body::from_stream(tokio_util::io::ReaderStream::with_capacity(
+                            reader,
+                            crate::BUFFER_SIZE,
+                        )),
                     );
                 }
                 Err(err) => {
@@ -201,8 +204,9 @@ mod get {
         (
             StatusCode::OK,
             headers,
-            Body::from_stream(tokio_util::io::ReaderStream::new(
-                tokio::io::BufReader::new(reader),
+            Body::from_stream(tokio_util::io::ReaderStream::with_capacity(
+                reader,
+                crate::BUFFER_SIZE,
             )),
         )
     }

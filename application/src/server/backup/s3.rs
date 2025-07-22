@@ -252,7 +252,7 @@ pub async fn create_backup(
                 .header("Content-Length", part_size)
                 .header("Content-Type", "application/gzip")
                 .body(reqwest::Body::wrap_stream(
-                    tokio_util::io::ReaderStream::new(
+                    tokio_util::io::ReaderStream::with_capacity(
                         AsyncLimitedReader::new_with_bytes_per_second(
                             BoundedReader::new_with_bytes_written(
                                 &mut file,
@@ -263,6 +263,7 @@ pub async fn create_backup(
                             .await,
                             server.config.system.backups.write_limit * 1024 * 1024,
                         ),
+                        crate::BUFFER_SIZE,
                     ),
                 ))
                 .send()
