@@ -120,7 +120,7 @@ pub async fn create_backup(
                     writer,
                     server.config.system.backups.write_limit * 1024 * 1024,
                 );
-                let writer: Box<dyn std::io::Write> = match archive_format {
+                let writer: Box<dyn std::io::Write + 'static> = match archive_format {
                     crate::config::SystemBackupsWingsArchiveFormat::Tar => Box::new(writer),
                     crate::config::SystemBackupsWingsArchiveFormat::TarGz => {
                         Box::new(flate2::write::GzEncoder::new(
@@ -197,9 +197,19 @@ pub async fn create_backup(
                     }
                 }
 
-                tar.finish()?;
-                let mut inner = tar.into_inner()?;
-                inner.flush()?;
+                if let Ok(inner) = tar.into_inner() {
+                    let mut inner = Box::new(inner) as Box<dyn std::any::Any + 'static>;
+
+                    if let Some(inner) = inner
+                        .downcast_mut::<Box<flate2::write::GzEncoder<LimitedWriter<std::fs::File>>>>()
+                    {
+                        inner.try_finish()?;
+                    } else if let Some(inner) = inner
+                        .downcast_mut::<Box<zstd::Encoder<LimitedWriter<std::fs::File>>>>()
+                    {
+                        inner.do_finish()?;
+                    }
+                }
             }
             crate::config::SystemBackupsWingsArchiveFormat::Zip => {
                 let writer = LimitedWriter::new_with_bytes_per_second(

@@ -367,9 +367,11 @@ pub async fn download_backup(
             }
         }
 
-        tar.finish().ok();
-        let mut inner = tar.into_inner().unwrap();
-        inner.flush().unwrap();
+        if let Ok(inner) = tar.into_inner()
+            && let Ok(mut inner) = inner.finish()
+        {
+            inner.flush().ok();
+        }
     });
 
     let mut headers = HeaderMap::with_capacity(2);
