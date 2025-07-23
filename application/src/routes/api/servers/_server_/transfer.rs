@@ -18,7 +18,7 @@ mod post {
         compression_level: Option<crate::server::filesystem::archive::CompressionLevel>,
         #[serde(deserialize_with = "crate::deserialize::deserialize_defaultable")]
         backups: Vec<uuid::Uuid>,
-        #[serde(deserialize_with = "crate::deserialize::deserialize_defaultable")]
+        #[serde(default)]
         delete_backups: bool,
     }
 

@@ -131,6 +131,15 @@ mod post {
                                 TransferArchiveFormat::TarGz => Box::new(
                                     async_compression::tokio::bufread::GzipDecoder::new(reader),
                                 ),
+                                TransferArchiveFormat::TarXz => Box::new(
+                                    async_compression::tokio::bufread::XzDecoder::new(reader),
+                                ),
+                                TransferArchiveFormat::TarBz2 => Box::new(
+                                    async_compression::tokio::bufread::BzDecoder::new(reader),
+                                ),
+                                TransferArchiveFormat::TarLz4 => Box::new(
+                                    async_compression::tokio::bufread::Lz4Decoder::new(reader),
+                                ),
                                 TransferArchiveFormat::TarZstd => Box::new(
                                     async_compression::tokio::bufread::ZstdDecoder::new(reader),
                                 ),

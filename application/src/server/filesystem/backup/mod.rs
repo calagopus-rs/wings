@@ -2,7 +2,7 @@ use crate::{
     models::DirectoryEntry,
     server::backup::{BackupAdapter, InternalBackup},
 };
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 mod btrfs;
 mod ddup_bak;
@@ -57,6 +57,32 @@ pub async fn reader(
         BackupAdapter::Restic => restic::reader(server, backup.uuid, path).await,
         _ => Err(anyhow::anyhow!(
             "This backup adapter does not support reading files"
+        )),
+    }
+}
+
+pub async fn files_reader(
+    backup: InternalBackup,
+    server: &crate::server::Server,
+    path: &Path,
+    file_paths: Vec<PathBuf>,
+) -> Result<tokio::io::DuplexStream, anyhow::Error> {
+    let path = super::Filesystem::resolve_path(path);
+    let file_paths = file_paths
+        .into_iter()
+        .map(|p| super::Filesystem::resolve_path(&p))
+        .collect::<Vec<_>>();
+
+    match backup.adapter {
+        BackupAdapter::Wings => wings::files_reader(server, backup.uuid, path, file_paths).await,
+        BackupAdapter::DdupBak => {
+            ddup_bak::files_reader(server, backup.uuid, path, file_paths).await
+        }
+        BackupAdapter::Btrfs => btrfs::files_reader(server, backup.uuid, path, file_paths).await,
+        BackupAdapter::Zfs => zfs::files_reader(server, backup.uuid, path, file_paths).await,
+        BackupAdapter::Restic => restic::files_reader(server, backup.uuid, path, file_paths).await,
+        _ => Err(anyhow::anyhow!(
+            "This backup adapter does not support reading multiple files"
         )),
     }
 }

@@ -129,6 +129,108 @@ pub async fn reader(
     Ok((Box::new(file), metadata.len()))
 }
 
+pub async fn files_reader(
+    server: &crate::server::Server,
+    uuid: uuid::Uuid,
+    path: PathBuf,
+    file_paths: Vec<PathBuf>,
+) -> Result<tokio::io::DuplexStream, anyhow::Error> {
+    let full_path = tokio::fs::canonicalize(get_subvolume_path(server, uuid).join(path)).await?;
+    let ignored_path = get_ignored(server, uuid);
+
+    if !full_path.starts_with(get_subvolume_path(server, uuid)) {
+        return Err(anyhow::anyhow!("Access to this path is denied"));
+    }
+
+    let mut ignore_builder = GitignoreBuilder::new(get_subvolume_path(server, uuid));
+
+    for line in tokio::fs::read_to_string(&ignored_path)
+        .await
+        .unwrap_or_default()
+        .lines()
+    {
+        ignore_builder.add_line(None, line).ok();
+    }
+
+    let ignore = ignore_builder.build()?;
+    let (reader, writer) = tokio::io::duplex(crate::BUFFER_SIZE);
+
+    let server = server.clone();
+    tokio::task::spawn_blocking(move || {
+        let writer = tokio_util::io::SyncIoBridge::new(writer);
+        let writer = flate2::write::GzEncoder::new(
+            writer,
+            server
+                .config
+                .system
+                .backups
+                .compression_level
+                .flate2_compression_level(),
+        );
+
+        let mut tar = tar::Builder::new(writer);
+        tar.mode(tar::HeaderMode::Complete);
+        tar.follow_symlinks(false);
+
+        for file_path in file_paths {
+            let path = match std::fs::canonicalize(full_path.join(&file_path)) {
+                Ok(path) => path,
+                Err(_) => continue,
+            };
+            if !path.starts_with(&full_path) {
+                continue;
+            }
+
+            let metadata = match std::fs::symlink_metadata(&path) {
+                Ok(metadata) => metadata,
+                Err(_) => continue,
+            };
+
+            if ignore.matched(&file_path, metadata.is_dir()).is_ignore() {
+                continue;
+            }
+
+            if metadata.is_dir() {
+                for entry in WalkBuilder::new(&path)
+                    .git_ignore(false)
+                    .ignore(false)
+                    .git_exclude(false)
+                    .follow_links(false)
+                    .hidden(false)
+                    .build()
+                    .flatten()
+                {
+                    let path = entry.path().strip_prefix(&path).unwrap_or(entry.path());
+                    if path.display().to_string().is_empty() {
+                        continue;
+                    }
+
+                    let metadata = match entry.metadata() {
+                        Ok(metadata) => metadata,
+                        Err(_) => continue,
+                    };
+
+                    if ignore.matched(path, metadata.is_dir()).is_ignore() {
+                        continue;
+                    }
+
+                    if metadata.is_dir() {
+                        tar.append_dir(path, entry.path()).ok();
+                    } else {
+                        tar.append_path_with_name(entry.path(), path).ok();
+                    }
+                }
+            } else {
+                tar.append_path_with_name(&path, file_path).ok();
+            }
+        }
+
+        tar.finish().ok();
+    });
+
+    Ok(reader)
+}
+
 pub async fn directory_reader(
     server: &crate::server::Server,
     uuid: uuid::Uuid,

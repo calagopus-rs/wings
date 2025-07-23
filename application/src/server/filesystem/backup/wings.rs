@@ -268,6 +268,107 @@ pub async fn reader(
     .await?
 }
 
+pub async fn files_reader(
+    server: &crate::server::Server,
+    uuid: uuid::Uuid,
+    path: PathBuf,
+    file_paths: Vec<PathBuf>,
+) -> Result<tokio::io::DuplexStream, anyhow::Error> {
+    let (file_format, file_name) =
+        crate::server::backup::wings::get_first_file_name(server, uuid).await?;
+    if !matches!(
+        file_format,
+        crate::config::SystemBackupsWingsArchiveFormat::Zip
+    ) {
+        return Err(anyhow::anyhow!("This backup does not use the ZIP format"));
+    }
+
+    let (writer, reader) = tokio::io::duplex(crate::BUFFER_SIZE);
+    let compression_level = server.config.system.backups.compression_level;
+
+    tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
+        let writer = tokio_util::io::SyncIoBridge::new(writer);
+        let writer =
+            flate2::write::GzEncoder::new(writer, compression_level.flate2_compression_level());
+
+        let mut tar = tar::Builder::new(writer);
+        tar.mode(tar::HeaderMode::Complete);
+
+        let mut archive = zip::ZipArchive::new(std::fs::File::open(file_name)?)?;
+
+        for i in 0..archive.len() {
+            let entry = archive.by_index(i)?;
+            let name = match entry.enclosed_name() {
+                Some(name) => name,
+                None => continue,
+            };
+
+            let name = match name.strip_prefix(&path) {
+                Ok(name) => name,
+                Err(_) => continue,
+            };
+
+            if !file_paths.iter().any(|p| name.starts_with(p)) {
+                continue;
+            }
+
+            if name.components().count() == 0 {
+                continue;
+            }
+
+            if entry.is_dir() {
+                let mut entry_header = tar::Header::new_gnu();
+                if let Some(mode) = entry.unix_mode() {
+                    entry_header.set_mode(mode);
+                }
+
+                entry_header.set_mtime(
+                    crate::server::filesystem::archive::zip_entry_get_modified_time(&entry)
+                        .map(|dt| dt.elapsed().unwrap_or_default().as_secs())
+                        .unwrap_or_default(),
+                );
+                entry_header.set_entry_type(tar::EntryType::Directory);
+
+                tar.append_data(&mut entry_header, name, std::io::empty())?;
+            } else if entry.is_file() {
+                let mut entry_header = tar::Header::new_gnu();
+                if let Some(mode) = entry.unix_mode() {
+                    entry_header.set_mode(mode);
+                }
+
+                entry_header.set_mtime(
+                    crate::server::filesystem::archive::zip_entry_get_modified_time(&entry)
+                        .map(|dt| dt.elapsed().unwrap_or_default().as_secs())
+                        .unwrap_or_default(),
+                );
+                entry_header.set_entry_type(tar::EntryType::Regular);
+                entry_header.set_size(entry.size());
+
+                tar.append_data(&mut entry_header, name, entry)?;
+            } else if entry.is_symlink() && (1..=2048).contains(&entry.size()) {
+                let mut entry_header = tar::Header::new_gnu();
+                if let Some(mode) = entry.unix_mode() {
+                    entry_header.set_mode(mode);
+                }
+
+                entry_header.set_mtime(
+                    crate::server::filesystem::archive::zip_entry_get_modified_time(&entry)
+                        .map(|dt| dt.elapsed().unwrap_or_default().as_secs())
+                        .unwrap_or_default(),
+                );
+                entry_header.set_entry_type(tar::EntryType::Symlink);
+
+                let link_name = std::io::read_to_string(entry)?;
+                tar.append_link(&mut entry_header, name, link_name)?;
+            }
+        }
+
+        Ok(())
+    });
+
+    Ok(reader)
+}
+
 pub async fn directory_reader(
     server: &crate::server::Server,
     uuid: uuid::Uuid,

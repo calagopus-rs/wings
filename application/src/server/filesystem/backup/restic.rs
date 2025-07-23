@@ -1,6 +1,7 @@
 use crate::{
     models::DirectoryEntry, restic_configuration, server::backup::restic::get_backup_base_path,
 };
+use futures::StreamExt;
 use serde::Deserialize;
 use std::{
     collections::HashMap,
@@ -279,10 +280,170 @@ pub async fn reader(
         .arg("--tag")
         .arg(uuid.to_string())
         .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
         .spawn()?;
     drop(configuration);
 
     Ok((Box::new(child.stdout.unwrap()), entry.size.unwrap_or(0)))
+}
+
+pub async fn files_reader(
+    server: &crate::server::Server,
+    uuid: uuid::Uuid,
+    path: PathBuf,
+    file_paths: Vec<PathBuf>,
+) -> Result<tokio::io::DuplexStream, anyhow::Error> {
+    let files = get_files_for_backup(server, uuid).await?;
+    let base_path = get_backup_base_path(server, uuid).await?;
+
+    let path = if path.components().count() > 0 {
+        let entry = files
+            .iter()
+            .find(|e| e.path == path)
+            .ok_or_else(|| anyhow::anyhow!("Path not found in archive: {}", path.display()))?;
+        if !matches!(entry.r#type, ResticEntryType::Dir) {
+            return Err(anyhow::anyhow!("Expected a directory entry"));
+        }
+
+        &entry.path
+    } else {
+        &PathBuf::from("")
+    };
+
+    let full_path = PathBuf::from(&base_path).join(path);
+    let (writer, reader) = tokio::io::duplex(crate::BUFFER_SIZE);
+
+    let compression_level = server.config.system.backups.compression_level;
+    tokio::spawn({
+        let server = server.clone();
+
+        async move {
+            let writer = async_compression::tokio::write::GzipEncoder::with_quality(
+                writer,
+                async_compression::Level::Precise(
+                    compression_level.flate2_compression_level().level() as i32,
+                ),
+            );
+            let mut archive = tokio_tar::Builder::new(writer);
+
+            for file_path in file_paths {
+                let path = full_path.join(&file_path);
+                let entry = match files.iter().find(|e| e.path == file_path) {
+                    Some(entry) => entry,
+                    None => continue,
+                };
+
+                let relative = match path.strip_prefix(&full_path) {
+                    Ok(path) => path,
+                    Err(_) => continue,
+                };
+
+                let mut header = tokio_tar::Header::new_gnu();
+                header.set_size(0);
+                header.set_mode(entry.mode);
+                header.set_mtime(entry.mtime.timestamp() as u64);
+
+                match entry.r#type {
+                    ResticEntryType::Dir => {
+                        header.set_entry_type(tokio_tar::EntryType::Directory);
+
+                        if archive
+                            .append_data(&mut header, relative, tokio::io::empty())
+                            .await
+                            .is_ok()
+                        {
+                            let configuration = server.configuration.read().await;
+                            let (repository, _, args, envs) =
+                                restic_configuration!(&configuration, server);
+
+                            let child = match Command::new("restic")
+                                .envs(envs)
+                                .arg("--json")
+                                .arg("--no-lock")
+                                .arg("--repo")
+                                .arg(repository)
+                                .args(args)
+                                .arg("dump")
+                                .arg(format!("latest:{}", path.display()))
+                                .arg("/")
+                                .arg("--tag")
+                                .arg(uuid.to_string())
+                                .stdout(std::process::Stdio::piped())
+                                .spawn()
+                            {
+                                Ok(child) => child,
+                                Err(_) => continue,
+                            };
+                            drop(configuration);
+
+                            let mut subtar = tokio_tar::Archive::new(child.stdout.unwrap());
+                            let mut entries = match subtar.entries() {
+                                Ok(entries) => entries,
+                                Err(_) => continue,
+                            };
+
+                            while let Some(Ok(entry)) = entries.next().await {
+                                let mut header = entry.header().clone();
+
+                                match archive
+                                    .append_data(
+                                        &mut header,
+                                        relative.join(entry.path().unwrap()),
+                                        entry,
+                                    )
+                                    .await
+                                {
+                                    Ok(_) => {}
+                                    Err(_) => break,
+                                }
+                            }
+                        }
+                    }
+                    ResticEntryType::File => {
+                        let configuration = server.configuration.read().await;
+                        let (repository, _, args, envs) =
+                            restic_configuration!(&configuration, server);
+
+                        let child = match Command::new("restic")
+                            .envs(envs)
+                            .arg("--json")
+                            .arg("--no-lock")
+                            .arg("--repo")
+                            .arg(repository)
+                            .args(args)
+                            .arg("dump")
+                            .arg("latest")
+                            .arg(&path)
+                            .arg("--tag")
+                            .arg(uuid.to_string())
+                            .stdout(std::process::Stdio::piped())
+                            .stderr(std::process::Stdio::null())
+                            .spawn()
+                        {
+                            Ok(child) => child,
+                            Err(_) => continue,
+                        };
+                        drop(configuration);
+
+                        header.set_size(entry.size.unwrap_or(0));
+                        header.set_entry_type(tokio_tar::EntryType::Regular);
+
+                        archive
+                            .append_data(&mut header, relative, child.stdout.unwrap())
+                            .await
+                            .ok();
+                    }
+                    _ => continue,
+                }
+            }
+
+            if let Ok(mut inner) = archive.into_inner().await {
+                inner.shutdown().await.ok();
+            }
+        }
+    });
+
+    Ok(reader)
 }
 
 pub async fn directory_reader(
@@ -320,6 +481,7 @@ pub async fn directory_reader(
         .arg("--tag")
         .arg(uuid.to_string())
         .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
         .spawn()?;
     drop(configuration);
 

@@ -21,6 +21,9 @@ pub enum TransferArchiveFormat {
     Tar,
     #[default]
     TarGz,
+    TarXz,
+    TarBz2,
+    TarLz4,
     TarZstd,
 }
 
@@ -29,6 +32,9 @@ impl TransferArchiveFormat {
         match self {
             TransferArchiveFormat::Tar => "tar",
             TransferArchiveFormat::TarGz => "tar.gz",
+            TransferArchiveFormat::TarXz => "tar.xz",
+            TransferArchiveFormat::TarBz2 => "tar.bz2",
+            TransferArchiveFormat::TarLz4 => "tar.lz4",
             TransferArchiveFormat::TarZstd => "tar.zst",
         }
     }
@@ -42,6 +48,12 @@ impl std::str::FromStr for TransferArchiveFormat {
             Ok(TransferArchiveFormat::Tar)
         } else if s.ends_with(".tar.gz") {
             Ok(TransferArchiveFormat::TarGz)
+        } else if s.ends_with(".tar.xz") {
+            Ok(TransferArchiveFormat::TarXz)
+        } else if s.ends_with(".tar.bz2") {
+            Ok(TransferArchiveFormat::TarBz2)
+        } else if s.ends_with(".tar.lz4") {
+            Ok(TransferArchiveFormat::TarLz4)
         } else if s.ends_with(".tar.zst") {
             Ok(TransferArchiveFormat::TarZstd)
         } else {
@@ -175,6 +187,9 @@ impl OutgoingServerTransfer {
                         match archive_format {
                             TransferArchiveFormat::Tar => crate::server::filesystem::archive::CompressionType::None,
                             TransferArchiveFormat::TarGz => crate::server::filesystem::archive::CompressionType::Gz,
+                            TransferArchiveFormat::TarXz => crate::server::filesystem::archive::CompressionType::Xz,
+                            TransferArchiveFormat::TarBz2 => crate::server::filesystem::archive::CompressionType::Bz2,
+                            TransferArchiveFormat::TarLz4 => crate::server::filesystem::archive::CompressionType::Lz4,
                             TransferArchiveFormat::TarZstd => crate::server::filesystem::archive::CompressionType::Zstd,
                         },
                         compression_level,

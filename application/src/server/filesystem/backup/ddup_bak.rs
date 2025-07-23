@@ -326,6 +326,82 @@ pub async fn reader(
     .await?
 }
 
+pub async fn files_reader(
+    server: &crate::server::Server,
+    uuid: uuid::Uuid,
+    path: PathBuf,
+    file_paths: Vec<PathBuf>,
+) -> Result<tokio::io::DuplexStream, anyhow::Error> {
+    let repository = get_repository(server).await;
+
+    let (writer, reader) = tokio::io::duplex(crate::BUFFER_SIZE);
+    let compression_level = server.config.system.backups.compression_level;
+
+    tokio::task::spawn_blocking(move || {
+        let writer = tokio_util::io::SyncIoBridge::new(writer);
+        let writer =
+            flate2::write::GzEncoder::new(writer, compression_level.flate2_compression_level());
+        let mut tar = tar::Builder::new(writer);
+        tar.mode(tar::HeaderMode::Complete);
+
+        let exit_early = &mut false;
+        let archive = repository.get_archive(&uuid.to_string())?;
+
+        for file_path in file_paths {
+            let path = path.join(&file_path);
+
+            match archive.find_archive_entry(&path) {
+                Some(entry) => {
+                    let entry = match entry {
+                        ddup_bak::archive::entries::Entry::Directory(dir) => dir,
+                        _ => {
+                            *exit_early = true;
+                            return Err(anyhow::anyhow!("Expected a directory entry"));
+                        }
+                    };
+
+                    for entry in entry.entries.iter() {
+                        if *exit_early {
+                            break;
+                        }
+
+                        tar_recursive_convert_entries(entry, exit_early, &repository, &mut tar, "");
+                    }
+
+                    if !*exit_early {
+                        tar.finish().unwrap();
+                    }
+                }
+                None => {
+                    if path.components().count() == 0 {
+                        for entry in archive.entries() {
+                            if *exit_early {
+                                break;
+                            }
+
+                            tar_recursive_convert_entries(
+                                entry,
+                                exit_early,
+                                &repository,
+                                &mut tar,
+                                "",
+                            );
+                        }
+
+                        if !*exit_early {
+                            tar.finish().unwrap();
+                        }
+                    }
+                }
+            };
+        }
+
+        Ok(())
+    });
+
+    Ok(reader)
+}
+
 pub async fn directory_reader(
     server: &crate::server::Server,
     uuid: uuid::Uuid,
@@ -344,8 +420,8 @@ pub async fn directory_reader(
         tar.mode(tar::HeaderMode::Complete);
 
         let exit_early = &mut false;
-
         let archive = repository.get_archive(&uuid.to_string())?;
+
         match archive.find_archive_entry(&path) {
             Some(entry) => {
                 let entry = match entry {
@@ -369,16 +445,18 @@ pub async fn directory_reader(
                 }
             }
             None => {
-                for entry in archive.entries() {
-                    if *exit_early {
-                        break;
+                if path.components().count() == 0 {
+                    for entry in archive.entries() {
+                        if *exit_early {
+                            break;
+                        }
+
+                        tar_recursive_convert_entries(entry, exit_early, &repository, &mut tar, "");
                     }
 
-                    tar_recursive_convert_entries(entry, exit_early, &repository, &mut tar, "");
-                }
-
-                if !*exit_early {
-                    tar.finish().unwrap();
+                    if !*exit_early {
+                        tar.finish().unwrap();
+                    }
                 }
             }
         };
