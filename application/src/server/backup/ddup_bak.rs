@@ -4,7 +4,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
 };
 use ddup_bak::archive::entries::Entry;
-use ignore::WalkBuilder;
+use ignore::{WalkBuilder, overrides::OverrideBuilder};
 use sha1::Digest;
 use std::{
     io::Write,
@@ -56,18 +56,57 @@ pub async fn create_backup(
     server: crate::server::Server,
     uuid: uuid::Uuid,
     progress: Arc<AtomicU64>,
-    overrides: ignore::overrides::Override,
+    total: Arc<AtomicU64>,
+    ignore: ignore::gitignore::Gitignore,
+    ignore_raw: String,
 ) -> Result<RawServerBackup, anyhow::Error> {
     let repository = get_repository(&server).await;
     let path = repository.archive_path(&uuid.to_string());
 
-    let size = tokio::task::spawn_blocking(move || -> Result<u64, anyhow::Error> {
+    let total_task = {
+        let server = server.clone();
+        let ignore = ignore.clone();
+
+        async move {
+            let ignored = [ignore];
+
+            let mut walker = crate::server::filesystem::walker::AsyncWalkDir::new(
+                server.clone(),
+                PathBuf::from(""),
+            )
+            .await?
+            .with_ignored(&ignored);
+            while let Some(Ok((_, path))) = walker.next_entry().await {
+                let metadata = match server.filesystem.symlink_metadata(&path).await {
+                    Ok(metadata) => metadata,
+                    Err(_) => continue,
+                };
+
+                total.fetch_add(metadata.len(), Ordering::Relaxed);
+            }
+
+            Ok::<(), anyhow::Error>(())
+        }
+    };
+
+    let archive_task = tokio::task::spawn_blocking(move || -> Result<u64, anyhow::Error> {
+        let mut override_builder = OverrideBuilder::new(&server.filesystem.base_path);
+
+        for line in ignore_raw.lines() {
+            if let Some(line) = line.trim().strip_prefix('!') {
+                override_builder.add(line).ok();
+            } else {
+                override_builder.add(&format!("!{}", line.trim())).ok();
+            }
+        }
+
         let archive = repository.create_archive(
             &uuid.to_string(),
             Some(
                 WalkBuilder::new(&server.filesystem.base_path)
-                    .overrides(overrides)
-                    .add_custom_ignore_filename(".pteroignore")
+                    .overrides(override_builder.build()?)
+                    .ignore(false)
+                    .git_ignore(false)
                     .follow_links(false)
                     .git_global(false)
                     .hidden(false)
@@ -113,8 +152,14 @@ pub async fn create_backup(
         }
 
         Ok(archive.into_entries().into_iter().map(recursive_size).sum())
-    })
-    .await??;
+    });
+
+    let size = match tokio::join!(total_task, archive_task) {
+        (Ok(()), Ok(Ok(size))) => size,
+        (Err(err), _) => return Err(err),
+        (_, Err(err)) => return Err(err.into()),
+        (_, Ok(Err(err))) => return Err(err),
+    };
 
     let mut sha1 = sha1::Sha1::new();
     let mut file = tokio::fs::File::open(path).await?;

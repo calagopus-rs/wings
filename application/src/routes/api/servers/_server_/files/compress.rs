@@ -100,6 +100,8 @@ mod post {
             let file_name = file_name.clone();
 
             async move {
+                let ignored = server.filesystem.get_ignored().await;
+
                 match data.format {
                     ArchiveFormat::Tar
                     | ArchiveFormat::TarGz
@@ -131,6 +133,7 @@ mod post {
                             },
                             state.config.system.backups.compression_level,
                             None,
+                            &[ignored],
                         )
                         .await
                     }
@@ -154,6 +157,8 @@ mod post {
                             writer,
                             root,
                             data.files.into_iter().map(PathBuf::from).collect(),
+                            None,
+                            vec![ignored],
                         )
                         .await
                     }

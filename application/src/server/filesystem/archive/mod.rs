@@ -1,11 +1,11 @@
-use crate::io::counting_reader::AsyncCountingReader;
+use crate::io::counting_reader::{AsyncCountingReader, CountingReader};
 use cap_std::fs::PermissionsExt as _;
 use chrono::{Datelike, Timelike};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::{
     fs::Permissions,
-    io::{Seek, SeekFrom, Write},
+    io::{Read, Seek, SeekFrom, Write},
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     sync::{
@@ -731,6 +731,7 @@ impl Archive {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_tar(
         server: crate::server::Server,
         destination: impl AsyncWrite + Unpin + Send + 'static,
@@ -739,6 +740,7 @@ impl Archive {
         compression_type: CompressionType,
         compression_level: CompressionLevel,
         bytes_archived: Option<Arc<AtomicU64>>,
+        ignored: &[ignore::gitignore::Gitignore],
     ) -> Result<(), anyhow::Error> {
         let writer: Box<dyn AsyncWrite + Send + Unpin> = match compression_type {
             CompressionType::None => Box::new(destination),
@@ -768,7 +770,7 @@ impl Archive {
         };
         let mut archive = tokio_tar::Builder::new(writer);
 
-        for source in sources {
+        'sources: for source in sources {
             let source = base.join(source);
 
             let relative = match source.strip_prefix(base) {
@@ -780,12 +782,14 @@ impl Archive {
                 Ok(metadata) => metadata,
                 Err(_) => continue,
             };
-            if server
-                .filesystem
-                .is_ignored(&source, source_metadata.is_dir())
-                .await
-            {
-                continue;
+
+            for ignored in ignored {
+                if ignored
+                    .matched(&source, source_metadata.is_dir())
+                    .is_ignore()
+                {
+                    continue 'sources;
+                }
             }
 
             let mut header = tokio_tar::Header::new_gnu();
@@ -815,16 +819,13 @@ impl Archive {
 
                 let mut walker =
                     crate::server::filesystem::walker::AsyncWalkDir::new(server.clone(), source)
-                        .await?;
-                while let Some(Ok((is_dir, path))) = walker.next_entry().await {
+                        .await?
+                        .with_ignored(ignored);
+                while let Some(Ok((_, path))) = walker.next_entry().await {
                     let relative = match path.strip_prefix(base) {
                         Ok(path) => path,
                         Err(_) => continue,
                     };
-
-                    if server.filesystem.is_ignored(&path, is_dir).await {
-                        continue;
-                    }
 
                     let metadata = match server.filesystem.symlink_metadata(&path).await {
                         Ok(metadata) => metadata,
@@ -925,6 +926,8 @@ impl Archive {
         destination: impl Write + Seek + Send + 'static,
         base: PathBuf,
         sources: Vec<PathBuf>,
+        bytes_archived: Option<Arc<AtomicU64>>,
+        ignored: Vec<ignore::gitignore::Gitignore>,
     ) -> Result<(), anyhow::Error> {
         let abort = Arc::new(AtomicBool::new(false));
 
@@ -943,7 +946,7 @@ impl Archive {
             let is_aborted = || abort.load(Ordering::Relaxed);
             let mut archive = zip::ZipWriter::new(destination);
 
-            for source in sources {
+            'sources: for source in sources {
                 let source = base.join(&source);
                 let source = server.filesystem.relative_path(&source);
 
@@ -956,11 +959,14 @@ impl Archive {
                     Ok(metadata) => metadata,
                     Err(_) => continue,
                 };
-                if server
-                    .filesystem
-                    .is_ignored_sync(&source, source_metadata.is_dir())
-                {
-                    continue;
+
+                for ignored in &ignored {
+                    if ignored
+                        .matched(&source, source_metadata.is_dir())
+                        .is_ignore()
+                    {
+                        continue 'sources;
+                    }
                 }
 
                 if is_aborted() {
@@ -997,18 +1003,18 @@ impl Archive {
 
                 if source_metadata.is_dir() {
                     archive.add_directory(relative.to_string_lossy(), options)?;
+                    if let Some(bytes_archived) = &bytes_archived {
+                        bytes_archived.fetch_add(source_metadata.len(), Ordering::SeqCst);
+                    }
 
                     let mut walker =
-                        crate::server::filesystem::walker::WalkDir::new(server.clone(), source)?;
-                    while let Some(Ok((is_dir, path))) = walker.next_entry() {
+                        crate::server::filesystem::walker::WalkDir::new(server.clone(), source)?
+                            .with_ignored(&ignored);
+                    while let Some(Ok((_, path))) = walker.next_entry() {
                         let relative = match path.strip_prefix(&base) {
                             Ok(path) => path,
                             Err(_) => continue,
                         };
-
-                        if server.filesystem.is_ignored_sync(&path, is_dir) {
-                            continue;
-                        }
 
                         let metadata = match filesystem.symlink_metadata(&path) {
                             Ok(metadata) => metadata,
@@ -1050,36 +1056,55 @@ impl Archive {
 
                         if metadata.is_dir() {
                             archive.add_directory(relative.to_string_lossy(), options)?;
+                            if let Some(bytes_archived) = &bytes_archived {
+                                bytes_archived.fetch_add(metadata.len(), Ordering::SeqCst);
+                            }
                         } else if metadata.is_file() {
-                            let mut file = match filesystem.open(&path) {
-                                Ok(file) => file,
-                                Err(_) => continue,
+                            let file = filesystem.open(&path)?;
+                            let mut reader: Box<dyn Read + Send> = match &bytes_archived {
+                                Some(bytes_archived) => {
+                                    Box::new(CountingReader::new_with_bytes_read(
+                                        file,
+                                        Arc::clone(bytes_archived),
+                                    ))
+                                }
+                                None => Box::new(file),
                             };
 
                             archive.start_file(relative.to_string_lossy(), options)?;
-                            std::io::copy(&mut file, &mut archive)?;
+                            std::io::copy(&mut reader, &mut archive)?;
                         } else if let Ok(link_target) = filesystem.read_link_contents(&path) {
                             archive.add_symlink(
                                 relative.to_string_lossy(),
                                 link_target.to_string_lossy(),
                                 options,
                             )?;
+                            if let Some(bytes_archived) = &bytes_archived {
+                                bytes_archived.fetch_add(source_metadata.len(), Ordering::SeqCst);
+                            }
                         }
                     }
                 } else if source_metadata.is_file() {
-                    let mut file = match filesystem.open(&source) {
-                        Ok(file) => file,
-                        Err(_) => continue,
+                    let file = filesystem.open(&source)?;
+                    let mut reader: Box<dyn Read + Send> = match &bytes_archived {
+                        Some(bytes_archived) => Box::new(CountingReader::new_with_bytes_read(
+                            file,
+                            Arc::clone(bytes_archived),
+                        )),
+                        None => Box::new(file),
                     };
 
                     archive.start_file(relative.to_string_lossy(), options)?;
-                    std::io::copy(&mut file, &mut archive)?;
+                    std::io::copy(&mut reader, &mut archive)?;
                 } else if let Ok(link_target) = filesystem.read_link_contents(&source) {
                     archive.add_symlink(
                         relative.to_string_lossy(),
                         link_target.to_string_lossy(),
                         options,
                     )?;
+                    if let Some(bytes_archived) = &bytes_archived {
+                        bytes_archived.fetch_add(source_metadata.len(), Ordering::SeqCst);
+                    }
                 }
             }
 

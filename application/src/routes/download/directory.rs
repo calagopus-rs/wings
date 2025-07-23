@@ -187,6 +187,7 @@ mod get {
                     names.push(PathBuf::from(name));
                 }
 
+                let ignored = server.filesystem.get_ignored().await;
                 crate::server::filesystem::archive::Archive::create_tar(
                     server,
                     writer,
@@ -195,6 +196,7 @@ mod get {
                     crate::server::filesystem::archive::CompressionType::Gz,
                     state.config.system.backups.compression_level,
                     None,
+                    &[ignored],
                 )
                 .await
                 .ok();

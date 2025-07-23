@@ -15,118 +15,126 @@ use std::{
 use tokio::process::Command;
 
 #[inline]
-fn get_backup_path(server: &crate::server::Server, uuid: uuid::Uuid) -> PathBuf {
+pub fn get_backup_path(server: &crate::server::Server, uuid: uuid::Uuid) -> PathBuf {
     Path::new(&server.config.system.backup_directory)
         .join("btrfs")
         .join(uuid.to_string())
 }
 
 #[inline]
-fn get_subvolume_path(server: &crate::server::Server, uuid: uuid::Uuid) -> PathBuf {
+pub fn get_subvolume_path(server: &crate::server::Server, uuid: uuid::Uuid) -> PathBuf {
     get_backup_path(server, uuid).join("subvolume")
 }
 
 #[inline]
-fn get_ignored(server: &crate::server::Server, uuid: uuid::Uuid) -> PathBuf {
+pub fn get_ignored(server: &crate::server::Server, uuid: uuid::Uuid) -> PathBuf {
     get_backup_path(server, uuid).join("ignored")
 }
 
 pub async fn create_backup(
     server: crate::server::Server,
     uuid: uuid::Uuid,
-    overrides: ignore::overrides::Override,
-    overrides_raw: String,
+    ignore: ignore::gitignore::Gitignore,
+    ignore_raw: String,
 ) -> Result<RawServerBackup, anyhow::Error> {
     let subvolume_path = get_subvolume_path(&server, uuid);
     let ignored_path = get_ignored(&server, uuid);
 
     tokio::fs::create_dir_all(get_backup_path(&server, uuid)).await?;
 
-    let output = Command::new("btrfs")
-        .arg("subvolume")
-        .arg("snapshot")
-        .args(if server.config.system.backups.btrfs.create_read_only {
-            &["-r"]
-        } else {
-            &[] as &[&str]
-        })
-        .arg(&server.filesystem.base_path)
-        .arg(&subvolume_path)
-        .output()
-        .await?;
+    let total_task = {
+        let server = server.clone();
+        let ignore = ignore.clone();
 
-    if !output.status.success() {
-        return Err(anyhow::anyhow!(
-            "Failed to create Btrfs subvolume snapshot for {}: {}",
-            server.filesystem.base_path.display(),
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
+        async move {
+            let ignored = [ignore];
 
-    let output = Command::new("btrfs")
-        .arg("subvolume")
-        .arg("show")
-        .arg(&subvolume_path)
-        .output()
-        .await?;
+            let mut walker = crate::server::filesystem::walker::AsyncWalkDir::new(
+                server.clone(),
+                PathBuf::from(""),
+            )
+            .await?
+            .with_ignored(&ignored);
+            let mut total = 0;
+            while let Some(Ok((_, path))) = walker.next_entry().await {
+                let metadata = match server.filesystem.symlink_metadata(&path).await {
+                    Ok(metadata) => metadata,
+                    Err(_) => continue,
+                };
 
-    let mut generation = None;
-    let mut uuid = None;
-    if output.status.success() {
-        let output_str = String::from_utf8_lossy(&output.stdout);
-        for line in output_str.lines() {
-            let mut whitespace = line.split_whitespace();
+                total += metadata.len();
+            }
 
-            if let Some(label) = whitespace.next() {
-                match label {
-                    "Generation:" => {
-                        if let Some(parsed_generation) = whitespace.next() {
-                            if let Ok(parsed_generation) = parsed_generation.parse::<u64>() {
-                                generation = Some(parsed_generation);
+            Ok::<u64, anyhow::Error>(total)
+        }
+    };
+
+    let snapshot_task = async {
+        let output = Command::new("btrfs")
+            .arg("subvolume")
+            .arg("snapshot")
+            .args(if server.config.system.backups.btrfs.create_read_only {
+                &["-r"]
+            } else {
+                &[] as &[&str]
+            })
+            .arg(&server.filesystem.base_path)
+            .arg(&subvolume_path)
+            .output()
+            .await?;
+
+        if !output.status.success() {
+            return Err(anyhow::anyhow!(
+                "Failed to create Btrfs subvolume snapshot for {}: {}",
+                server.filesystem.base_path.display(),
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+
+        let output = Command::new("btrfs")
+            .arg("subvolume")
+            .arg("show")
+            .arg(&subvolume_path)
+            .output()
+            .await?;
+
+        let mut generation = None;
+        let mut uuid = None;
+        if output.status.success() {
+            let output_str = String::from_utf8_lossy(&output.stdout);
+            for line in output_str.lines() {
+                let mut whitespace = line.split_whitespace();
+
+                if let Some(label) = whitespace.next() {
+                    match label {
+                        "Generation:" => {
+                            if let Some(parsed_generation) = whitespace.next() {
+                                if let Ok(parsed_generation) = parsed_generation.parse::<u64>() {
+                                    generation = Some(parsed_generation);
+                                }
+
+                                break;
                             }
-
-                            break;
                         }
-                    }
-                    "UUID:" => {
-                        if let Some(parsed_uuid) = whitespace.next() {
-                            if let Ok(parsed_uuid) = uuid::Uuid::parse_str(parsed_uuid) {
-                                uuid = Some(parsed_uuid);
+                        "UUID:" => {
+                            if let Some(parsed_uuid) = whitespace.next() {
+                                if let Ok(parsed_uuid) = uuid::Uuid::parse_str(parsed_uuid) {
+                                    uuid = Some(parsed_uuid);
+                                }
                             }
                         }
+                        _ => {}
                     }
-                    _ => {}
                 }
             }
         }
-    }
 
-    tokio::fs::write(&ignored_path, overrides_raw).await?;
+        tokio::fs::write(&ignored_path, ignore_raw).await?;
 
-    let total_size = tokio::task::spawn_blocking(move || {
-        WalkBuilder::new(&subvolume_path)
-            .overrides(overrides)
-            .git_ignore(false)
-            .ignore(false)
-            .git_exclude(false)
-            .follow_links(false)
-            .hidden(false)
-            .build()
-            .flatten()
-            .fold(0u64, |acc, entry| {
-                let metadata = match entry.metadata() {
-                    Ok(metadata) => metadata,
-                    Err(_) => return acc,
-                };
+        Ok::<_, anyhow::Error>((generation, uuid))
+    };
 
-                if metadata.is_file() {
-                    acc + metadata.len()
-                } else {
-                    acc
-                }
-            })
-    })
-    .await?;
+    let (total_size, (generation, uuid)) = tokio::try_join!(total_task, snapshot_task)?;
 
     Ok(RawServerBackup {
         checksum: format!(
@@ -157,7 +165,11 @@ pub async fn restore_backup(
         .unwrap_or_default()
         .lines()
     {
-        override_builder.add(line).ok();
+        if let Some(line) = line.trim().strip_prefix('!') {
+            override_builder.add(line).ok();
+        } else {
+            override_builder.add(&format!("!{}", line.trim())).ok();
+        }
     }
 
     let total_thread = tokio::task::spawn_blocking({
@@ -312,6 +324,20 @@ pub async fn download_backup(
 
     let (writer, reader) = tokio::io::duplex(crate::BUFFER_SIZE);
 
+    let mut override_builder = OverrideBuilder::new(&subvolume_path);
+
+    for line in tokio::fs::read_to_string(&ignored_path)
+        .await
+        .unwrap_or_default()
+        .lines()
+    {
+        if let Some(line) = line.trim().strip_prefix('!') {
+            override_builder.add(line).ok();
+        } else {
+            override_builder.add(&format!("!{}", line.trim())).ok();
+        }
+    }
+
     let server = server.clone();
     tokio::task::spawn_blocking(move || {
         let writer = tokio_util::io::SyncIoBridge::new(writer);
@@ -320,12 +346,6 @@ pub async fn download_backup(
         let mut tar = tar::Builder::new(writer);
         tar.mode(tar::HeaderMode::Complete);
         tar.follow_symlinks(false);
-
-        let mut override_builder = OverrideBuilder::new(&subvolume_path);
-
-        for line in std::fs::read_to_string(&ignored_path).unwrap().lines() {
-            override_builder.add(line).ok();
-        }
 
         for entry in WalkBuilder::new(&subvolume_path)
             .overrides(override_builder.build().unwrap())

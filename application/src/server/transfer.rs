@@ -178,7 +178,8 @@ impl OutgoingServerTransfer {
                             TransferArchiveFormat::TarZstd => crate::server::filesystem::archive::CompressionType::Zstd,
                         },
                         compression_level,
-                        Some(Arc::clone(&bytes_archived))
+                        Some(Arc::clone(&bytes_archived)),
+                        &[]
                     )
                     .await
                 }

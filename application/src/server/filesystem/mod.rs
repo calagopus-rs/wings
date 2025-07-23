@@ -3,14 +3,15 @@ use cap_std::fs::{Metadata, PermissionsExt};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
+    pin::Pin,
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering},
+        atomic::{AtomicI64, AtomicU64, Ordering},
     },
 };
 use tokio::{
     io::AsyncReadExt,
-    sync::{RwLock, RwLockReadGuard},
+    sync::{Mutex, RwLock, RwLockReadGuard},
 };
 
 pub mod archive;
@@ -122,7 +123,7 @@ impl ReadDir {
 
 pub struct Filesystem {
     uuid: uuid::Uuid,
-    checker_abort: Arc<AtomicBool>,
+    disk_checker: Mutex<Option<tokio::task::JoinHandle<()>>>,
     config: Arc<crate::config::Config>,
 
     pub base_path: PathBuf,
@@ -131,7 +132,7 @@ pub struct Filesystem {
     disk_limit: AtomicI64,
     disk_usage_cached: Arc<AtomicU64>,
     disk_usage: Arc<RwLock<usage::DiskUsage>>,
-    disk_ignored: Arc<RwLock<ignore::overrides::Override>>,
+    disk_ignored: Arc<RwLock<ignore::gitignore::Gitignore>>,
 
     pub pulls: RwLock<HashMap<uuid::Uuid, Arc<RwLock<pull::Download>>>>,
 }
@@ -140,113 +141,21 @@ impl Filesystem {
     pub fn new(
         uuid: uuid::Uuid,
         disk_limit: u64,
-        check_interval: u64,
         config: Arc<crate::config::Config>,
         deny_list: &[String],
     ) -> Self {
         let base_path = Path::new(&config.system.data_directory).join(uuid.to_string());
         let disk_usage = Arc::new(RwLock::new(usage::DiskUsage::default()));
         let disk_usage_cached = Arc::new(AtomicU64::new(0));
-        let mut disk_ignored = ignore::overrides::OverrideBuilder::new(&base_path);
+        let mut disk_ignored = ignore::gitignore::GitignoreBuilder::new("/");
 
         for entry in deny_list {
-            disk_ignored.add(entry).ok();
+            disk_ignored.add_line(None, entry).ok();
         }
-
-        let checker_abort = Arc::new(AtomicBool::new(false));
-        std::thread::spawn({
-            let disk_usage = Arc::clone(&disk_usage);
-            let disk_usage_cached = Arc::clone(&disk_usage_cached);
-            let checker_abort = Arc::clone(&checker_abort);
-            let disable_directory_size = config.api.disable_directory_size;
-            let base_path = base_path.clone();
-
-            move || {
-                loop {
-                    if checker_abort.load(Ordering::Relaxed) {
-                        break;
-                    }
-
-                    tracing::debug!(
-                        path = %base_path.display(),
-                        "checking disk usage"
-                    );
-
-                    let mut tmp_disk_usage = usage::DiskUsage::default();
-
-                    fn recursive_size(
-                        path: &Path,
-                        relative_path: &[String],
-                        disk_usage: &mut usage::DiskUsage,
-                        disable_directory_size: bool,
-                    ) -> u64 {
-                        let mut total_size = 0;
-                        let metadata = match path.symlink_metadata() {
-                            Ok(metadata) => metadata,
-                            Err(_) => return 0,
-                        };
-
-                        total_size += metadata.len();
-
-                        if metadata.is_dir() {
-                            if let Ok(entries) = path.read_dir() {
-                                for entry in entries.flatten() {
-                                    let path = entry.path();
-                                    let metadata = match path.symlink_metadata() {
-                                        Ok(metadata) => metadata,
-                                        Err(_) => continue,
-                                    };
-
-                                    let file_name = entry.file_name().to_string_lossy().to_string();
-                                    let mut new_path = relative_path.to_vec();
-                                    new_path.push(file_name);
-
-                                    total_size += metadata.len();
-
-                                    if metadata.is_dir() {
-                                        let size = recursive_size(
-                                            &path,
-                                            &new_path,
-                                            disk_usage,
-                                            disable_directory_size,
-                                        );
-                                        if !disable_directory_size {
-                                            disk_usage.update_size(&new_path, size as i64);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        total_size
-                    }
-
-                    let total_size = recursive_size(
-                        &base_path,
-                        &[],
-                        &mut tmp_disk_usage,
-                        disable_directory_size,
-                    );
-                    let total_entry_size =
-                        tmp_disk_usage.entries.values().map(|e| e.size).sum::<u64>();
-
-                    *disk_usage.blocking_write() = tmp_disk_usage;
-                    disk_usage_cached.store(total_size + total_entry_size, Ordering::Relaxed);
-
-                    tracing::debug!(
-                        path = %base_path.display(),
-                        "{} bytes disk usage",
-                        disk_usage_cached.load(Ordering::Relaxed)
-                    );
-
-                    std::thread::sleep(std::time::Duration::from_secs(check_interval));
-                }
-            }
-        });
 
         Self {
             uuid,
-            checker_abort,
+            disk_checker: Mutex::new(None),
             config: Arc::clone(&config),
 
             base_path,
@@ -262,9 +171,9 @@ impl Filesystem {
     }
 
     pub async fn update_ignored(&self, deny_list: &[String]) {
-        let mut disk_ignored = ignore::overrides::OverrideBuilder::new(&self.base_path);
+        let mut disk_ignored = ignore::gitignore::GitignoreBuilder::new("");
         for entry in deny_list {
-            disk_ignored.add(entry).ok();
+            disk_ignored.add_line(None, entry).ok();
         }
 
         *self.disk_ignored.write().await = disk_ignored.build().unwrap();
@@ -275,14 +184,17 @@ impl Filesystem {
             .read()
             .await
             .matched(path, is_dir)
-            .is_whitelist()
+            .is_ignore()
+    }
+
+    pub async fn get_ignored(&self) -> ignore::gitignore::Gitignore {
+        self.disk_ignored.read().await.clone()
     }
 
     pub fn is_ignored_sync(&self, path: &Path, is_dir: bool) -> bool {
         self.disk_ignored
             .blocking_read()
             .matched(path, is_dir)
-            .invert()
             .is_ignore()
     }
 
@@ -872,7 +784,133 @@ impl Filesystem {
         .unwrap()
     }
 
-    pub async fn setup(&self) {
+    pub async fn setup_disk_checker(&self, server: &crate::server::Server) {
+        self.disk_checker.lock().await.replace(tokio::task::spawn({
+            let check_interval = self.config.system.disk_check_interval;
+            let disable_directory_size = self.config.api.disable_directory_size;
+            let server = server.clone();
+
+            async move {
+                loop {
+                    let run_inner = async || -> Result<(), anyhow::Error> {
+                        tracing::debug!(
+                            path = %server.filesystem.base_path.display(),
+                            "checking disk usage"
+                        );
+
+                        let mut tmp_disk_usage = usage::DiskUsage::default();
+
+                        fn recursive_size<'a>(
+                            server: &'a crate::server::Server,
+                            path: &'a Path,
+                            relative_path: &'a [String],
+                            disk_usage: &'a mut usage::DiskUsage,
+                            disable_directory_size: bool,
+                        ) -> Pin<Box<dyn Future<Output = u64> + Send + 'a>>
+                        {
+                            Box::pin(async move {
+                                let mut total_size = 0;
+                                let metadata = match server.filesystem.symlink_metadata(path).await
+                                {
+                                    Ok(metadata) => metadata,
+                                    Err(_) => return 0,
+                                };
+
+                                total_size += metadata.len();
+
+                                if metadata.is_dir() {
+                                    if let Ok(mut entries) = server.filesystem.read_dir(path).await
+                                    {
+                                        while let Some(Ok((is_dir, file_name))) =
+                                            entries.next_entry().await
+                                        {
+                                            let sub_path = path.join(&file_name);
+                                            let metadata = match server
+                                                .filesystem
+                                                .symlink_metadata(&sub_path)
+                                                .await
+                                            {
+                                                Ok(metadata) => metadata,
+                                                Err(_) => continue,
+                                            };
+
+                                            let mut new_path = relative_path.to_vec();
+                                            new_path.push(file_name);
+
+                                            total_size += metadata.len();
+
+                                            if is_dir {
+                                                let size = recursive_size(
+                                                    server,
+                                                    &sub_path,
+                                                    &new_path,
+                                                    disk_usage,
+                                                    disable_directory_size,
+                                                )
+                                                .await;
+
+                                                if !disable_directory_size {
+                                                    disk_usage.update_size(&new_path, size as i64);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                total_size
+                            })
+                        }
+
+                        let total_size = recursive_size(
+                            &server,
+                            &server.filesystem.base_path,
+                            &[],
+                            &mut tmp_disk_usage,
+                            disable_directory_size,
+                        )
+                        .await;
+
+                        let total_entry_size =
+                            tmp_disk_usage.entries.values().map(|e| e.size).sum::<u64>();
+
+                        *server.filesystem.disk_usage.write().await = tmp_disk_usage;
+                        server
+                            .filesystem
+                            .disk_usage_cached
+                            .store(total_size + total_entry_size, Ordering::Relaxed);
+
+                        tracing::debug!(
+                            path = %server.filesystem.base_path.display(),
+                            "{} bytes disk usage",
+                            server.filesystem.disk_usage_cached.load(Ordering::Relaxed)
+                        );
+
+                        Ok(())
+                    };
+
+                    match run_inner().await {
+                        Ok(_) => {
+                            tracing::debug!(
+                                path = %server.filesystem.base_path.display(),
+                                "disk usage check completed successfully"
+                            );
+                        }
+                        Err(err) => {
+                            tracing::error!(
+                                path = %server.filesystem.base_path.display(),
+                                "disk usage check failed: {}",
+                                err
+                            );
+                        }
+                    }
+
+                    tokio::time::sleep(std::time::Duration::from_secs(check_interval)).await;
+                }
+            }
+        }));
+    }
+
+    pub async fn setup(&self, server: &crate::server::Server) {
         if let Err(err) = limiter::setup(self).await {
             tracing::error!(
                 path = %self.base_path.display(),
@@ -908,6 +946,7 @@ impl Filesystem {
             {
                 Ok(dir) => {
                     *self.base_dir.write().await = Some(Arc::new(dir));
+                    self.setup_disk_checker(server).await;
                 }
                 Err(err) => {
                     tracing::error!(
@@ -920,7 +959,7 @@ impl Filesystem {
         }
     }
 
-    pub async fn attach(&self) {
+    pub async fn attach(&self, server: &crate::server::Server) {
         if let Err(err) = limiter::attach(self).await {
             tracing::error!(
                 path = %self.base_path.display(),
@@ -934,6 +973,7 @@ impl Filesystem {
             {
                 Ok(dir) => {
                     *self.base_dir.write().await = Some(Arc::new(dir));
+                    self.setup_disk_checker(server).await;
                 }
                 Err(err) => {
                     tracing::error!(
@@ -947,7 +987,9 @@ impl Filesystem {
     }
 
     pub async fn destroy(&self) {
-        self.checker_abort.store(true, Ordering::Relaxed);
+        if let Some(disk_checker) = self.disk_checker.lock().await.take() {
+            disk_checker.abort();
+        }
 
         if let Err(err) = limiter::destroy(self).await {
             tracing::error!(
@@ -1162,11 +1204,5 @@ impl Filesystem {
             symlink_destination_metadata.map(cap_std::fs::Metadata::from_just_metadata),
         )
         .await
-    }
-}
-
-impl Drop for Filesystem {
-    fn drop(&mut self) {
-        self.checker_abort.store(true, Ordering::Relaxed);
     }
 }

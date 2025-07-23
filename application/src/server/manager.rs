@@ -49,7 +49,7 @@ impl Manager {
             let server = Server::new(s.settings, s.process_configuration, Arc::clone(&config));
             let state = states.remove(&server.uuid).unwrap_or_default();
 
-            server.filesystem.attach().await;
+            server.filesystem.attach(&server).await;
 
             if let Some((reinstall, container_script)) = installing.remove(&server.uuid) {
                 tokio::spawn({
@@ -187,7 +187,7 @@ impl Manager {
             Arc::clone(&self.config),
         );
 
-        server.filesystem.setup().await;
+        server.filesystem.setup(&server).await;
 
         if install_server {
             tokio::spawn({

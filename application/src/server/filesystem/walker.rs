@@ -1,35 +1,49 @@
 use std::path::PathBuf;
 
-pub struct AsyncWalkDir {
+pub struct AsyncWalkDir<'a> {
     server: crate::server::Server,
     stack: Vec<(PathBuf, super::AsyncReadDir)>,
+    ignored: &'a [ignore::gitignore::Gitignore],
 }
 
-impl AsyncWalkDir {
+impl<'a> AsyncWalkDir<'a> {
     pub async fn new(server: crate::server::Server, path: PathBuf) -> Result<Self, anyhow::Error> {
         let read_dir = server.filesystem.read_dir(&path).await?;
 
         Ok(Self {
             server,
             stack: vec![(path, read_dir)],
+            ignored: &[],
         })
     }
 
+    pub fn with_ignored(mut self, ignored: &'a [ignore::gitignore::Gitignore]) -> Self {
+        self.ignored = ignored;
+        self
+    }
+
     pub async fn next_entry(&mut self) -> Option<Result<(bool, PathBuf), anyhow::Error>> {
-        while let Some((path, read_dir)) = self.stack.last_mut() {
+        'stack: while let Some((parent_path, read_dir)) = self.stack.last_mut() {
             match read_dir.next_entry().await {
                 Some(Ok((is_dir, name))) => {
-                    let path = path.join(name);
+                    let full_path = parent_path.join(&name);
 
-                    if is_dir {
-                        let new_read_dir = match self.server.filesystem.read_dir(&path).await {
-                            Ok(dir) => dir,
-                            Err(e) => return Some(Err(e)),
-                        };
-                        self.stack.push((path.clone(), new_read_dir));
+                    let should_ignore = self
+                        .ignored
+                        .iter()
+                        .any(|ignored| ignored.matched(&full_path, is_dir).is_ignore());
+                    if should_ignore {
+                        continue 'stack;
                     }
 
-                    return Some(Ok((is_dir, path)));
+                    if is_dir {
+                        match self.server.filesystem.read_dir(&full_path).await {
+                            Ok(dir) => self.stack.push((full_path.clone(), dir)),
+                            Err(e) => return Some(Err(e)),
+                        };
+                    }
+
+                    return Some(Ok((is_dir, full_path)));
                 }
                 Some(Err(err)) => return Some(Err(err.into())),
                 None => {
@@ -42,36 +56,50 @@ impl AsyncWalkDir {
     }
 }
 
-pub struct WalkDir {
+pub struct WalkDir<'a> {
     server: crate::server::Server,
     stack: Vec<(PathBuf, super::ReadDir)>,
+    ignored: &'a [ignore::gitignore::Gitignore],
 }
 
-impl WalkDir {
+impl<'a> WalkDir<'a> {
     pub fn new(server: crate::server::Server, path: PathBuf) -> Result<Self, anyhow::Error> {
         let read_dir = server.filesystem.read_dir_sync(&path)?;
 
         Ok(Self {
             server,
             stack: vec![(path, read_dir)],
+            ignored: &[],
         })
     }
 
+    pub fn with_ignored(mut self, ignored: &'a [ignore::gitignore::Gitignore]) -> Self {
+        self.ignored = ignored;
+        self
+    }
+
     pub fn next_entry(&mut self) -> Option<Result<(bool, PathBuf), anyhow::Error>> {
-        while let Some((path, read_dir)) = self.stack.last_mut() {
+        'stack: while let Some((parent_path, read_dir)) = self.stack.last_mut() {
             match read_dir.next_entry() {
                 Some(Ok((is_dir, name))) => {
-                    let path = path.join(name);
+                    let full_path = parent_path.join(&name);
 
-                    if is_dir {
-                        let new_read_dir = match self.server.filesystem.read_dir_sync(&path) {
-                            Ok(dir) => dir,
-                            Err(e) => return Some(Err(e)),
-                        };
-                        self.stack.push((path.clone(), new_read_dir));
+                    let should_ignore = self
+                        .ignored
+                        .iter()
+                        .any(|ignored| ignored.matched(&full_path, is_dir).is_ignore());
+                    if should_ignore {
+                        continue 'stack;
                     }
 
-                    return Some(Ok((is_dir, path)));
+                    if is_dir {
+                        match self.server.filesystem.read_dir_sync(&full_path) {
+                            Ok(dir) => self.stack.push((full_path.clone(), dir)),
+                            Err(e) => return Some(Err(e)),
+                        };
+                    }
+
+                    return Some(Ok((is_dir, full_path)));
                 }
                 Some(Err(err)) => return Some(Err(err.into())),
                 None => {

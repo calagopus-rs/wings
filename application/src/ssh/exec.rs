@@ -195,6 +195,7 @@ impl ExecSession {
                                 },
                                 self.state.config.system.backups.compression_level,
                                 None,
+                                &[self.server.filesystem.get_ignored().await],
                             )
                             .await?;
 

@@ -1,14 +1,9 @@
-use crate::models::DirectoryEntry;
-use ignore::WalkBuilder;
+use crate::{
+    models::DirectoryEntry,
+    server::backup::btrfs::{get_ignored, get_subvolume_path},
+};
+use ignore::{WalkBuilder, gitignore::GitignoreBuilder};
 use std::path::{Path, PathBuf};
-
-#[inline]
-fn get_base_path(server: &crate::server::Server, uuid: uuid::Uuid) -> PathBuf {
-    Path::new(&server.config.system.backup_directory)
-        .join("btrfs")
-        .join(uuid.to_string())
-        .join("subvolume")
-}
 
 pub async fn list(
     server: &crate::server::Server,
@@ -18,13 +13,25 @@ pub async fn list(
     page: usize,
     is_ignored: impl Fn(&Path, bool) -> bool + Send + Sync + 'static,
 ) -> Result<(usize, Vec<DirectoryEntry>), anyhow::Error> {
-    let full_path = tokio::fs::canonicalize(get_base_path(server, uuid).join(path)).await?;
+    let full_path = tokio::fs::canonicalize(get_subvolume_path(server, uuid).join(path)).await?;
+    let ignored_path = get_ignored(server, uuid);
 
-    if !full_path.starts_with(get_base_path(server, uuid)) {
+    if !full_path.starts_with(get_subvolume_path(server, uuid)) {
         return Err(anyhow::anyhow!("Access to this path is denied"));
     }
 
+    let mut ignore_builder = GitignoreBuilder::new(get_subvolume_path(server, uuid));
+
+    for line in tokio::fs::read_to_string(&ignored_path)
+        .await
+        .unwrap_or_default()
+        .lines()
+    {
+        ignore_builder.add_line(None, line).ok();
+    }
+
     let mut directory = tokio::fs::read_dir(&full_path).await?;
+    let ignore = ignore_builder.build()?;
 
     let mut directory_entries = Vec::new();
     let mut other_entries = Vec::new();
@@ -32,12 +39,12 @@ pub async fn list(
     while let Ok(Some(entry)) = directory.next_entry().await {
         let is_dir = entry.file_type().await.is_ok_and(|ft| ft.is_dir());
         let path = entry.path();
-        let path = match path.strip_prefix(get_base_path(server, uuid)) {
+        let path = match path.strip_prefix(get_subvolume_path(server, uuid)) {
             Ok(path) => path,
             Err(_) => continue,
         };
 
-        if is_ignored(path, is_dir) || server.filesystem.is_ignored(path, is_dir).await {
+        if is_ignored(path, is_dir) || ignore.matched(path, is_dir).is_ignore() {
             continue;
         }
 
@@ -94,9 +101,25 @@ pub async fn reader(
     uuid: uuid::Uuid,
     path: PathBuf,
 ) -> Result<(Box<dyn tokio::io::AsyncRead + Unpin + Send>, u64), anyhow::Error> {
-    let full_path = tokio::fs::canonicalize(get_base_path(server, uuid).join(path)).await?;
+    let full_path = tokio::fs::canonicalize(get_subvolume_path(server, uuid).join(path)).await?;
+    let ignored_path = get_ignored(server, uuid);
 
-    if !full_path.starts_with(get_base_path(server, uuid)) {
+    if !full_path.starts_with(get_subvolume_path(server, uuid)) {
+        return Err(anyhow::anyhow!("Access to this path is denied"));
+    }
+
+    let mut ignore_builder = GitignoreBuilder::new(get_subvolume_path(server, uuid));
+
+    for line in tokio::fs::read_to_string(&ignored_path)
+        .await
+        .unwrap_or_default()
+        .lines()
+    {
+        ignore_builder.add_line(None, line).ok();
+    }
+
+    let ignore = ignore_builder.build()?;
+    if ignore.matched(&full_path, full_path.is_dir()).is_ignore() {
         return Err(anyhow::anyhow!("Access to this path is denied"));
     }
 
@@ -111,12 +134,24 @@ pub async fn directory_reader(
     uuid: uuid::Uuid,
     path: PathBuf,
 ) -> Result<tokio::io::DuplexStream, anyhow::Error> {
-    let full_path = tokio::fs::canonicalize(get_base_path(server, uuid).join(path)).await?;
+    let full_path = tokio::fs::canonicalize(get_subvolume_path(server, uuid).join(path)).await?;
+    let ignored_path = get_ignored(server, uuid);
 
-    if !full_path.starts_with(get_base_path(server, uuid)) {
+    if !full_path.starts_with(get_subvolume_path(server, uuid)) {
         return Err(anyhow::anyhow!("Access to this path is denied"));
     }
 
+    let mut ignore_builder = GitignoreBuilder::new(get_subvolume_path(server, uuid));
+
+    for line in tokio::fs::read_to_string(&ignored_path)
+        .await
+        .unwrap_or_default()
+        .lines()
+    {
+        ignore_builder.add_line(None, line).ok();
+    }
+
+    let ignore = ignore_builder.build()?;
     let (reader, writer) = tokio::io::duplex(crate::BUFFER_SIZE);
 
     let server = server.clone();
@@ -155,15 +190,10 @@ pub async fn directory_reader(
 
             let metadata = match entry.metadata() {
                 Ok(metadata) => metadata,
-                Err(_) => {
-                    continue;
-                }
+                Err(_) => continue,
             };
 
-            if server
-                .filesystem
-                .is_ignored_sync(entry.path(), metadata.is_dir())
-            {
+            if ignore.matched(path, metadata.is_dir()).is_ignore() {
                 continue;
             }
 

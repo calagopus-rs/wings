@@ -27,15 +27,25 @@ fn get_snapshot_name(uuid: uuid::Uuid) -> String {
 }
 
 #[inline]
-fn get_ignored(server: &crate::server::Server, uuid: uuid::Uuid) -> PathBuf {
+pub fn get_snapshot_path(server: &crate::server::Server, uuid: uuid::Uuid) -> PathBuf {
+    server
+        .filesystem
+        .base_path
+        .join(".zfs")
+        .join("snapshot")
+        .join(get_snapshot_name(uuid))
+}
+
+#[inline]
+pub fn get_ignored(server: &crate::server::Server, uuid: uuid::Uuid) -> PathBuf {
     get_backup_path(server, uuid).join("ignored")
 }
 
 pub async fn create_backup(
     server: crate::server::Server,
     uuid: uuid::Uuid,
-    overrides: ignore::overrides::Override,
-    overrides_raw: String,
+    ignore: ignore::gitignore::Gitignore,
+    ignore_raw: String,
 ) -> Result<RawServerBackup, anyhow::Error> {
     let backup_path = get_backup_path(&server, uuid);
     let ignored_path = get_ignored(&server, uuid);
@@ -43,71 +53,74 @@ pub async fn create_backup(
 
     tokio::fs::create_dir_all(&backup_path).await?;
 
-    let output = Command::new("zfs")
-        .arg("list")
-        .arg("-o")
-        .arg("name")
-        .arg("-H")
-        .arg(&server.filesystem.base_path)
-        .output()
-        .await?;
+    let total_task = {
+        let server = server.clone();
+        let ignore = ignore.clone();
 
-    if !output.status.success() {
-        return Err(anyhow::anyhow!(
-            "Failed to get ZFS dataset name for {}: {}",
-            server.filesystem.base_path.display(),
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
+        async move {
+            let ignored = [ignore];
 
-    let dataset_name = String::from_utf8_lossy(&output.stdout).trim().to_string();
-
-    let output = Command::new("zfs")
-        .arg("snapshot")
-        .arg(format!("{dataset_name}@{snapshot_name}"))
-        .output()
-        .await?;
-
-    if !output.status.success() {
-        return Err(anyhow::anyhow!(
-            "Failed to create ZFS snapshot for {}: {}",
-            server.filesystem.base_path.display(),
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-
-    tokio::fs::write(&ignored_path, overrides_raw).await?;
-    tokio::fs::write(backup_path.join("dataset"), &dataset_name).await?;
-
-    let snapshot_path = format!(
-        "{}/.zfs/snapshot/{}",
-        server.filesystem.base_path.display(),
-        snapshot_name
-    );
-    let total_size = tokio::task::spawn_blocking(move || {
-        WalkBuilder::new(&snapshot_path)
-            .overrides(overrides)
-            .git_ignore(false)
-            .ignore(false)
-            .git_exclude(false)
-            .follow_links(false)
-            .hidden(false)
-            .build()
-            .flatten()
-            .fold(0u64, |acc, entry| {
-                let metadata = match entry.metadata() {
+            let mut walker = crate::server::filesystem::walker::AsyncWalkDir::new(
+                server.clone(),
+                PathBuf::from(""),
+            )
+            .await?
+            .with_ignored(&ignored);
+            let mut total = 0;
+            while let Some(Ok((_, path))) = walker.next_entry().await {
+                let metadata = match server.filesystem.symlink_metadata(&path).await {
                     Ok(metadata) => metadata,
-                    Err(_) => return acc,
+                    Err(_) => continue,
                 };
 
-                if metadata.is_file() {
-                    acc + metadata.len()
-                } else {
-                    acc
-                }
-            })
-    })
-    .await?;
+                total += metadata.len();
+            }
+
+            Ok::<u64, anyhow::Error>(total)
+        }
+    };
+
+    let dataset_task = async {
+        let output = Command::new("zfs")
+            .arg("list")
+            .arg("-o")
+            .arg("name")
+            .arg("-H")
+            .arg(&server.filesystem.base_path)
+            .output()
+            .await?;
+
+        if !output.status.success() {
+            return Err(anyhow::anyhow!(
+                "Failed to get ZFS dataset name for {}: {}",
+                server.filesystem.base_path.display(),
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+
+        let dataset_name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+        let output = Command::new("zfs")
+            .arg("snapshot")
+            .arg(format!("{dataset_name}@{snapshot_name}"))
+            .output()
+            .await?;
+
+        if !output.status.success() {
+            return Err(anyhow::anyhow!(
+                "Failed to create ZFS snapshot for {}: {}",
+                server.filesystem.base_path.display(),
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+
+        tokio::fs::write(&ignored_path, ignore_raw).await?;
+        tokio::fs::write(backup_path.join("dataset"), &dataset_name).await?;
+
+        Ok::<_, anyhow::Error>(dataset_name)
+    };
+
+    let (total_size, dataset_name) = tokio::try_join!(total_task, dataset_task)?;
 
     Ok(RawServerBackup {
         checksum: dataset_name,
@@ -125,13 +138,7 @@ pub async fn restore_backup(
     total: Arc<AtomicU64>,
 ) -> Result<(), anyhow::Error> {
     let ignored_path = get_ignored(&server, uuid);
-    let snapshot_name = get_snapshot_name(uuid);
-
-    let snapshot_path = format!(
-        "{}/.zfs/snapshot/{}",
-        server.filesystem.base_path.display(),
-        snapshot_name
-    );
+    let snapshot_path = get_snapshot_path(&server, uuid);
 
     let mut override_builder = OverrideBuilder::new(&snapshot_path);
 
@@ -284,13 +291,8 @@ pub async fn download_backup(
     uuid: uuid::Uuid,
 ) -> Result<(StatusCode, HeaderMap, Body), anyhow::Error> {
     let ignored_path = get_ignored(server, uuid);
+    let snapshot_path = get_snapshot_path(server, uuid);
     let snapshot_name = get_snapshot_name(uuid);
-
-    let snapshot_path = format!(
-        "{}/.zfs/snapshot/{}",
-        server.filesystem.base_path.display(),
-        snapshot_name
-    );
 
     if !Path::new(&snapshot_path).exists() {
         return Err(anyhow::anyhow!("Snapshot {} does not exist", snapshot_name));

@@ -3,7 +3,7 @@ use axum::{
     body::Body,
     http::{HeaderMap, StatusCode},
 };
-use ignore::overrides::OverrideBuilder;
+use ignore::gitignore::GitignoreBuilder;
 use serde::{Deserialize, Serialize};
 use std::sync::{
     Arc,
@@ -11,12 +11,12 @@ use std::sync::{
 };
 use utoipa::ToSchema;
 
-mod btrfs;
+pub mod btrfs;
 pub mod ddup_bak;
 pub mod restic;
 mod s3;
 pub mod wings;
-mod zfs;
+pub mod zfs;
 
 #[derive(ToSchema, Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "kebab-case")]
@@ -62,46 +62,34 @@ impl InternalBackup {
             "creating backup",
         );
 
-        let mut override_builder = OverrideBuilder::new(&server.filesystem.base_path);
-        let mut override_raw = String::new();
+        let mut ignore_builder = GitignoreBuilder::new("");
         let mut ignore_raw = String::new();
 
         for line in ignore.lines() {
-            if line.trim().is_empty() {
-                continue;
+            if ignore_builder.add_line(None, line).is_ok() {
+                ignore_raw.push_str(line);
+                ignore_raw.push('\n');
             }
-
-            if let Some(line) = line.trim().strip_prefix('!') {
-                if override_builder.add(line).is_ok() {
-                    override_raw.push_str(line);
-                    ignore_raw.push('!');
-                    ignore_raw.push_str(line);
-                }
-            } else if override_builder.add(&format!("!{}", line.trim())).is_ok() {
-                override_raw.push('!');
-                override_raw.push_str(line.trim());
-                ignore_raw.push_str(line.trim());
-            }
-
-            override_raw.push('\n');
-            ignore_raw.push('\n');
         }
 
-        for file in server.configuration.read().await.egg.file_denylist.iter() {
-            if let Some(file) = file.strip_prefix('!') {
-                override_builder.add(file).ok();
-                override_raw.push_str(file);
-            } else {
-                override_builder.add(&format!("!{file}")).ok();
-                override_raw.push('!');
-                override_raw.push_str(file);
+        if let Ok(pteroignore) = server.filesystem.read_to_string(".pteroignore").await {
+            for line in pteroignore.lines() {
+                if ignore_builder.add_line(None, line).is_ok() {
+                    ignore_raw.push_str(line);
+                    ignore_raw.push('\n');
+                }
             }
+        }
 
-            override_raw.push('\n');
+        for line in server.configuration.read().await.egg.file_denylist.iter() {
+            if ignore_builder.add_line(None, line).is_ok() {
+                ignore_raw.push_str(line);
+                ignore_raw.push('\n');
+            }
         }
 
         let progress = Arc::new(AtomicU64::new(0));
-        let total = Arc::new(AtomicU64::new(server.filesystem.limiter_usage().await));
+        let total = Arc::new(AtomicU64::new(0));
 
         let progress_task = tokio::spawn({
             let progress = Arc::clone(&progress);
@@ -134,8 +122,14 @@ impl InternalBackup {
 
         let backup = match match adapter {
             BackupAdapter::Wings => {
-                wings::create_backup(server.clone(), uuid, progress, override_builder.build()?)
-                    .await
+                wings::create_backup(
+                    server.clone(),
+                    uuid,
+                    progress,
+                    total,
+                    ignore_builder.build()?,
+                )
+                .await
             }
             BackupAdapter::S3 => {
                 s3::create_backup(
@@ -143,31 +137,27 @@ impl InternalBackup {
                     uuid,
                     progress,
                     total,
-                    override_builder.build()?,
+                    ignore_builder.build()?,
                 )
                 .await
             }
             BackupAdapter::DdupBak => {
-                ddup_bak::create_backup(server.clone(), uuid, progress, override_builder.build()?)
-                    .await
+                ddup_bak::create_backup(
+                    server.clone(),
+                    uuid,
+                    progress,
+                    total,
+                    ignore_builder.build()?,
+                    ignore_raw,
+                )
+                .await
             }
             BackupAdapter::Btrfs => {
-                btrfs::create_backup(
-                    server.clone(),
-                    uuid,
-                    override_builder.build()?,
-                    override_raw,
-                )
-                .await
+                btrfs::create_backup(server.clone(), uuid, ignore_builder.build()?, ignore_raw)
+                    .await
             }
             BackupAdapter::Zfs => {
-                zfs::create_backup(
-                    server.clone(),
-                    uuid,
-                    override_builder.build()?,
-                    override_raw,
-                )
-                .await
+                zfs::create_backup(server.clone(), uuid, ignore_builder.build()?, ignore_raw).await
             }
             BackupAdapter::Restic => {
                 restic::create_backup(server.clone(), uuid, progress, total, ignore_raw).await

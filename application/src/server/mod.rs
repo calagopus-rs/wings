@@ -79,7 +79,6 @@ impl Server {
         let filesystem = filesystem::Filesystem::new(
             configuration.uuid,
             configuration.build.disk_space * 1024 * 1024,
-            config.system.disk_check_interval,
             Arc::clone(&config),
             &configuration.egg.file_denylist,
         );
@@ -851,7 +850,7 @@ impl Server {
             .execute_action(
                 state::ServerState::Starting,
                 |_| async {
-                    self.filesystem.setup().await;
+                    self.filesystem.setup(self).await;
                     self.destroy_container(client).await;
 
                     self.sync_configuration(client).await;
