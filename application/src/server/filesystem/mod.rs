@@ -252,7 +252,6 @@ impl Filesystem {
     }
 
     #[inline]
-    #[tracing::instrument]
     pub fn resolve_path(path: &Path) -> PathBuf {
         let mut result = PathBuf::new();
 
@@ -271,22 +270,17 @@ impl Filesystem {
             }
         }
 
-        tracing::debug!(
-            safe_path = %result.display(),
-            "resolved filesystem path"
-        );
-
         result
     }
 
     #[inline]
     pub fn relative_path(&self, path: &Path) -> PathBuf {
-        Self::resolve_path(&if path.starts_with(&self.base_path) {
-            path.strip_prefix(&self.base_path).unwrap().to_path_buf()
-        } else if path.components().next() == Some(std::path::Component::RootDir) {
-            path.strip_prefix("/").unwrap().to_path_buf()
+        Self::resolve_path(if let Ok(path) = path.strip_prefix(&self.base_path) {
+            path
+        } else if let Ok(path) = path.strip_prefix("/") {
+            path
         } else {
-            path.to_path_buf()
+            path
         })
     }
 
