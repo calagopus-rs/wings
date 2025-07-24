@@ -928,7 +928,7 @@ impl Server {
 
         let container = match &*self.container.read().await {
             Some(container) => container.docker_id.clone(),
-            None => return Ok(())
+            None => return Ok(()),
         };
 
         tracing::info!(
@@ -968,7 +968,7 @@ impl Server {
 
         let container = match &*self.container.read().await {
             Some(container) => container.docker_id.clone(),
-            None => return Ok(())
+            None => return Ok(()),
         };
 
         tracing::info!(

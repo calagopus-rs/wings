@@ -1,7 +1,7 @@
 use crate::server::backup::InternalBackup;
 use cap_std::fs::{Metadata, PermissionsExt};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     path::{Path, PathBuf},
     pin::Pin,
     sync::{
@@ -22,28 +22,47 @@ mod usage;
 pub mod walker;
 pub mod writer;
 
-pub struct AsyncCapReadDir(Option<cap_std::fs::ReadDir>);
+pub struct AsyncCapReadDir(
+    Option<cap_std::fs::ReadDir>,
+    Option<VecDeque<std::io::Result<(bool, String)>>>,
+);
 
 impl AsyncCapReadDir {
     async fn next_entry(&mut self) -> Option<std::io::Result<(bool, String)>> {
-        let mut read_dir = self.0.take()?;
+        if let Some(buffer) = self.1.as_mut()
+            && !buffer.is_empty()
+        {
+            return buffer.pop_front();
+        }
 
-        match tokio::task::spawn_blocking(move || (read_dir.next(), read_dir)).await {
-            Ok((result, read_dir)) => {
-                self.0 = Some(read_dir);
-                result.map(|entry| {
-                    entry.map(|e| {
+        let mut read_dir = self.0.take()?;
+        let mut buffer = self.1.take()?;
+
+        match tokio::task::spawn_blocking(move || {
+            for _ in 0..32 {
+                if let Some(entry) = read_dir.next() {
+                    buffer.push_back(entry.map(|e| {
                         (
                             e.file_type().is_ok_and(|ft| ft.is_dir()),
                             e.file_name().to_string_lossy().to_string(),
                         )
-                    })
-                })
+                    }));
+                } else {
+                    break;
+                }
             }
-            Err(_) => {
-                self.0 = None;
-                None
+
+            (buffer, read_dir)
+        })
+        .await
+        {
+            Ok((buffer, read_dir)) => {
+                self.0 = Some(read_dir);
+                self.1 = Some(buffer);
+
+                self.1.as_mut()?.pop_front()
             }
+            Err(_) => None,
         }
     }
 }
@@ -608,9 +627,10 @@ impl Filesystem {
                 tokio::fs::read_dir(&self.base_path).await?,
             ))
         } else {
-            AsyncReadDir::Cap(AsyncCapReadDir(Some(
-                tokio::task::spawn_blocking(move || filesystem.read_dir(path)).await??,
-            )))
+            AsyncReadDir::Cap(AsyncCapReadDir(
+                Some(tokio::task::spawn_blocking(move || filesystem.read_dir(path)).await??),
+                Some(VecDeque::with_capacity(32)),
+            ))
         })
     }
 
