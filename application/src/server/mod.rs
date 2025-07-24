@@ -893,9 +893,7 @@ impl Server {
 
                     let container = match &*self.container.read().await {
                         Some(container) => container.docker_id.clone(),
-                        None => {
-                            return Ok(());
-                        }
+                        None => return Ok(())
                     };
 
                     if let Err(err) = client.start_container::<String>(&container, None).await {
@@ -930,9 +928,7 @@ impl Server {
 
         let container = match &*self.container.read().await {
             Some(container) => container.docker_id.clone(),
-            None => {
-                return Ok(());
-            }
+            None => return Ok(())
         };
 
         tracing::info!(
@@ -972,9 +968,7 @@ impl Server {
 
         let container = match &*self.container.read().await {
             Some(container) => container.docker_id.clone(),
-            None => {
-                return Ok(());
-            }
+            None => return Ok(())
         };
 
         tracing::info!(

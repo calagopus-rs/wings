@@ -5,6 +5,7 @@ mod post {
     use crate::routes::{ApiError, api::servers::_server_::GetServer};
     use axum::http::StatusCode;
     use serde::Deserialize;
+    use std::path::Path;
     use utoipa::ToSchema;
 
     #[derive(ToSchema, Deserialize)]
@@ -62,7 +63,8 @@ mod post {
             }
         };
 
-        let new_name = data.name.unwrap_or_else(|| {
+        #[inline]
+        async fn generate_new_name(server: &GetServer, location: &Path) -> String {
             let mut extension = location
                 .extension()
                 .and_then(|ext| ext.to_str())
@@ -79,7 +81,7 @@ mod post {
                 base_name.truncate(base_name.len() - 4);
             }
 
-            let parent = location.parent().unwrap_or(std::path::Path::new(""));
+            let parent = location.parent().unwrap_or(Path::new(""));
             let mut suffix = " copy".to_string();
 
             for i in 0..51 {
@@ -90,7 +92,7 @@ mod post {
                 let new_name = format!("{base_name}{suffix}{extension}");
                 let new_path = parent.join(&new_name);
 
-                if !new_path.exists() {
+                if server.filesystem.symlink_metadata(&new_path).await.is_err() {
                     return new_name;
                 }
 
@@ -104,7 +106,13 @@ mod post {
             }
 
             format!("{base_name}{suffix}{extension}")
-        });
+        }
+
+        let new_name = if let Some(name) = data.name {
+            name
+        } else {
+            generate_new_name(&server, &location).await
+        };
         let file_name = location.parent().unwrap().join(&new_name);
 
         if !server

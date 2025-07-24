@@ -62,8 +62,8 @@ static DISK_USAGE: LazyLock<Arc<RwLock<DiskUsageMap>>> = LazyLock::new(|| {
                                 String::from_utf8_lossy(&output.stderr)
                             );
                         }
-                        Err(e) => {
-                            tracing::error!("error executing btrfs command: {}", e);
+                        Err(err) => {
+                            tracing::error!("error executing btrfs command: {:#?}", err);
                         }
                     }
                 }
