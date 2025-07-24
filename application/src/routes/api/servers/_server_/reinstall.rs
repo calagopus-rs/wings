@@ -11,7 +11,7 @@ mod post {
     struct Response {}
 
     #[utoipa::path(post, path = "/", responses(
-        (status = OK, body = inline(Response)),
+        (status = ACCEPTED, body = inline(Response)),
         (status = CONFLICT, body = ApiError),
     ), params(
         (
@@ -51,7 +51,7 @@ mod post {
         });
 
         (
-            StatusCode::OK,
+            StatusCode::ACCEPTED,
             axum::Json(serde_json::to_value(Response {}).unwrap()),
         )
     }

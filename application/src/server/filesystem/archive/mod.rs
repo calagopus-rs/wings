@@ -636,7 +636,8 @@ impl Archive {
                 let filesystem = self.server.filesystem.base_dir().await?;
 
                 tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
-                    let file = self.file.try_into_std().unwrap();
+                    let mut file = self.file.try_into_std().unwrap();
+                    file.seek(SeekFrom::Start(0))?;
                     let archive = ddup_bak::archive::Archive::open_file(file)?;
 
                     let pool = rayon::ThreadPoolBuilder::new()

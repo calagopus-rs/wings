@@ -845,7 +845,7 @@ impl Server {
             "starting server"
         );
 
-        let success = self
+        match self
             .state
             .execute_action(
                 state::ServerState::Starting,
@@ -912,15 +912,15 @@ impl Server {
                 },
                 aquire_timeout,
             )
-            .await;
-
-        if !success {
-            Err(anyhow::anyhow!(
-                "Another power action is currently being processed for this server, please try again later."
-            ))
-        } else {
-            Ok(())
-        }
+            .await {
+                Ok(true) => Ok(()),
+                Ok(false) => {
+                    Err(anyhow::anyhow!(
+                        "Another power action is currently being processed for this server, please try again later."
+                    ))
+                },
+                Err(err) => Err(err),
+            }
     }
 
     pub async fn kill(&self, client: &bollard::Docker) -> Result<(), bollard::errors::Error> {
@@ -982,7 +982,7 @@ impl Server {
             "stopping server"
         );
 
-        let success = self
+        match self
             .state
             .execute_action(
                 state::ServerState::Stopping,
@@ -1078,23 +1078,23 @@ impl Server {
                                 }
                             });
 
+                            self.stopping.store(true, Ordering::SeqCst);
+
                             Ok(())
                         }
                     }
                 },
                 aquire_timeout,
             )
-            .await;
-
-        if !success {
-            Err(anyhow::anyhow!(
-                "Another power action is currently being processed for this server, please try again later."
-            ))
-        } else {
-            self.stopping.store(true, Ordering::SeqCst);
-
-            Ok(())
-        }
+            .await {
+                Ok(true) => Ok(()),
+                Ok(false) => {
+                    Err(anyhow::anyhow!(
+                        "Another power action is currently being processed for this server, please try again later."
+                    ))
+                },
+                Err(err) => Err(err),
+            }
     }
 
     pub async fn restart(

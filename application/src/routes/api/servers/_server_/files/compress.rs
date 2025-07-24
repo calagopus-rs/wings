@@ -143,10 +143,7 @@ mod post {
 
                             move || {
                                 crate::server::filesystem::writer::FileSystemWriter::new(
-                                    server.clone(),
-                                    file_name,
-                                    None,
-                                    None,
+                                    server, file_name, None, None,
                                 )
                             }
                         })

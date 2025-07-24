@@ -91,7 +91,7 @@ impl ServerStateLock {
         state: ServerState,
         action: F,
         aquire_timeout: Option<std::time::Duration>,
-    ) -> bool
+    ) -> Result<bool, anyhow::Error>
     where
         F: FnOnce(bool) -> Fut,
         Fut: Future<Output = Result<(), anyhow::Error>>,
@@ -110,7 +110,7 @@ impl ServerStateLock {
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             }
         } else if self.locked.load(Ordering::SeqCst) {
-            return false;
+            return Ok(false);
         }
 
         self.locked.store(true, Ordering::SeqCst);
@@ -122,11 +122,11 @@ impl ServerStateLock {
             self.set_state(old_state);
             self.locked.store(false, Ordering::SeqCst);
 
-            false
+            Err(err)
         } else {
             self.locked.store(false, Ordering::SeqCst);
 
-            true
+            Ok(true)
         }
     }
 }
