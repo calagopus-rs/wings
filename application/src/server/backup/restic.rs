@@ -204,8 +204,18 @@ async fn refresh_backup_cache(
             && let Some(paths) = snapshot.get("paths")
             && let Some(path) = paths.as_array().and_then(|arr| arr.first())
             && let Some(path_str) = path.as_str()
-            && server_backups.contains(&uuid)
         {
+            if !server
+                .config
+                .system
+                .backups
+                .restic
+                .ignore_server_backup_list
+                && !server_backups.contains(&uuid)
+            {
+                continue;
+            }
+
             backups.insert(uuid, PathBuf::from(path_str));
         }
     }

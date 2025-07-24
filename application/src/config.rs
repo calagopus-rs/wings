@@ -481,6 +481,8 @@ nestify::nest! {
                     #[serde(default = "system_backup_restic_retry_lock_seconds")]
                     pub retry_lock_seconds: u64,
                     #[serde(default)]
+                    pub ignore_server_backup_list: bool,
+                    #[serde(default)]
                     pub environment: BTreeMap<String, String>,
                 },
                 #[serde(default)]

@@ -94,6 +94,8 @@ system:
       password-file: /var/lib/pterodactyl/backups/restic_password
       # how long to wait for a repository lock if locked in seconds
       retry_lock_seconds: 60
+      # whether to ignore the panel restic backup list (only if you know what you are doing)
+      ignore_server_backup_list: false
       # the restic cli environment for each command (useful for s3 credentials, etc)
       environment: {}
 
