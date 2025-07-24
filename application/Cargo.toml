@@ -61,6 +61,7 @@ rustix = "1.0.7"
 cidr = { version = "0.3.1", features = ["serde"] }
 hickory-resolver = "0.25.2"
 constant_time_eq = "0.4.2"
+tikv-jemallocator = "0.6.0"
 
 [build-dependencies]
 serde_json = { workspace = true }

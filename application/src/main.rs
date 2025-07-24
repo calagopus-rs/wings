@@ -9,10 +9,14 @@ use clap::{Arg, Command};
 use colored::Colorize;
 use russh::{keys::ssh_key::rand_core::OsRng, server::Server};
 use std::{net::SocketAddr, path::Path, sync::Arc, time::Instant};
+use tikv_jemallocator::Jemalloc;
 use tower_http::catch_panic::CatchPanicLayer;
 use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityScheme};
 use utoipa_axum::router::OpenApiRouter;
 use wings_rs::routes::ApiError;
+
+#[global_allocator]
+static ALLOC: Jemalloc = Jemalloc;
 
 fn cli() -> Command {
     Command::new("wings-rs")
