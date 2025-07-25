@@ -9,6 +9,7 @@ mod _server_;
 
 mod post {
     use crate::{
+        io::limited_reader::AsyncLimitedReader,
         routes::{ApiError, GetState},
         server::transfer::TransferArchiveFormat,
     };
@@ -123,6 +124,11 @@ mod post {
                                     "failed to read multipart field: {err}"
                                 ))
                             }));
+                        let reader = AsyncLimitedReader::new_with_bytes_per_second(
+                            reader,
+                            state.config.system.transfers.download_limit * 1024 * 1024,
+                        );
+                        let reader = tokio::io::BufReader::new(reader);
                         let reader: Box<dyn tokio::io::AsyncRead + Unpin + Send> =
                             match TransferArchiveFormat::from_str(&file_name)
                                 .unwrap_or(TransferArchiveFormat::TarGz)
@@ -234,12 +240,16 @@ mod post {
                             Some("backup/wings") => {
                                 let file_name = Path::new(&state.config.system.backup_directory)
                                     .join(file_name);
-                                let mut reader = tokio_util::io::StreamReader::new(
+                                let reader = tokio_util::io::StreamReader::new(
                                     field.into_stream().map_err(|err| {
                                         std::io::Error::other(format!(
                                             "failed to read multipart field: {err}"
                                         ))
                                     }),
+                                );
+                                let mut reader = AsyncLimitedReader::new_with_bytes_per_second(
+                                    reader,
+                                    state.config.system.transfers.download_limit * 1024 * 1024,
                                 );
 
                                 let mut file = match tokio::fs::File::create(&file_name).await {
@@ -279,8 +289,8 @@ mod post {
                             }
                             _ => {
                                 tracing::warn!(
-                                    "invalid content type for backup field: {}",
-                                    field.content_type().unwrap_or("unknown")
+                                    "invalid content type for backup field: {:?}",
+                                    field.content_type()
                                 );
                                 continue;
                             }
@@ -313,17 +323,37 @@ mod post {
             .write()
             .await
             .replace(handle.abort_handle());
-        if let Ok(Err(err)) = handle.await {
-            tracing::error!(
-                server = %server.uuid,
-                "failed to complete server transfer: {:#?}",
-                err
-            );
+        match handle.await {
+            Ok(Ok(())) => {
+                tracing::info!(
+                    server = %server.uuid,
+                    "server transfer completed successfully"
+                );
+            }
+            Ok(Err(err)) => {
+                tracing::error!(
+                    server = %server.uuid,
+                    "failed to complete server transfer: {:#?}",
+                    err
+                );
 
-            return (
-                StatusCode::EXPECTATION_FAILED,
-                axum::Json(ApiError::new("failed to complete server transfer").to_json()),
-            );
+                return (
+                    StatusCode::EXPECTATION_FAILED,
+                    axum::Json(ApiError::new("failed to complete server transfer").to_json()),
+                );
+            }
+            Err(err) => {
+                tracing::error!(
+                    server = %server.uuid,
+                    "failed to complete server transfer: {:#?}",
+                    err
+                );
+
+                return (
+                    StatusCode::EXPECTATION_FAILED,
+                    axum::Json(ApiError::new("failed to complete server transfer").to_json()),
+                );
+            }
         }
 
         (

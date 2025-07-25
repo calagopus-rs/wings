@@ -88,15 +88,15 @@ system:
 
     # settings for the restic backup driver
     restic:
-      # the repository to use for restic backups (must already be initialized)
+      # the repository to use for restic backups (must already be initialized, can be overriden by panel)
       repository: /var/lib/pterodactyl/backups/restic
-      # the password file to use for authenticating against the repository
+      # the password file to use for authenticating against the repository (can be overriden by panel)
       password-file: /var/lib/pterodactyl/backups/restic_password
-      # how long to wait for a repository lock if locked in seconds
+      # how long to wait for a repository lock if locked in seconds (can be overriden by panel)
       retry_lock_seconds: 60
       # whether to ignore the panel restic backup list (only if you know what you are doing)
       ignore_server_backup_list: false
-      # the restic cli environment for each command (useful for s3 credentials, etc)
+      # the restic cli environment for each command (useful for s3 credentials, etc, can be overriden by panel)
       environment: {}
 
     # settings for the btrfs backup driver

@@ -981,6 +981,8 @@ impl Server {
             .execute_action(
                 state::ServerState::Stopping,
                 |_| async {
+                    self.stopping.store(true, Ordering::SeqCst);
+
                     let stop = &self.process_configuration.read().await.stop;
 
                     match stop.r#type.as_str() {
@@ -1072,8 +1074,6 @@ impl Server {
                                 }
                             });
 
-                            self.stopping.store(true, Ordering::SeqCst);
-
                             Ok(())
                         }
                     }
@@ -1081,13 +1081,19 @@ impl Server {
                 aquire_timeout,
             )
             .await {
-                Ok(true) => Ok(()),
+                Ok(true) =>  Ok(()),
                 Ok(false) => {
+                    self.stopping.store(false, Ordering::SeqCst);
+
                     Err(anyhow::anyhow!(
                         "Another power action is currently being processed for this server, please try again later."
                     ))
                 },
-                Err(err) => Err(err),
+                Err(err) => {
+                    self.stopping.store(false, Ordering::SeqCst);
+
+                    Err(err)
+                }
             }
     }
 
