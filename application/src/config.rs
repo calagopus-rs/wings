@@ -760,6 +760,12 @@ impl Config {
         )
         .unwrap();
 
+        if config.api.send_offline_server_logs && config.docker.delete_container_on_stop {
+            tracing::warn!(
+                "You have enabled sending offline server logs, but also deleting containers on stop. This will result in no logs being sent for stopped servers."
+            );
+        }
+
         Ok((Arc::new(config), guard))
     }
 

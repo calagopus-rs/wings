@@ -2,7 +2,10 @@ use super::State;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod get {
-    use crate::routes::GetState;
+    use crate::{
+        response::{ApiResponse, ApiResponseResult},
+        routes::GetState,
+    };
     use axum::{
         body::Body,
         extract::Query,
@@ -38,35 +41,26 @@ mod get {
             description = "The JWT token to use for authentication",
         ),
     ))]
-    pub async fn route(
-        state: GetState,
-        Query(data): Query<Params>,
-    ) -> (StatusCode, HeaderMap, Body) {
+    pub async fn route(state: GetState, Query(data): Query<Params>) -> ApiResponseResult {
         let payload: FileJwtPayload = match state.config.jwt.verify(&data.token) {
             Ok(payload) => payload,
             Err(_) => {
-                return (
-                    StatusCode::UNAUTHORIZED,
-                    HeaderMap::new(),
-                    Body::from("Invalid token"),
-                );
+                return ApiResponse::error("invalid token")
+                    .with_status(StatusCode::UNAUTHORIZED)
+                    .ok();
             }
         };
 
         if !payload.base.validate(&state.config.jwt).await {
-            return (
-                StatusCode::UNAUTHORIZED,
-                HeaderMap::new(),
-                Body::from("Invalid token"),
-            );
+            return ApiResponse::error("invalid token")
+                .with_status(StatusCode::UNAUTHORIZED)
+                .ok();
         }
 
         if !state.config.jwt.one_time_id(&payload.unique_id).await {
-            return (
-                StatusCode::UNAUTHORIZED,
-                HeaderMap::new(),
-                Body::from("Token has already been used"),
-            );
+            return ApiResponse::error("token has already been used")
+                .with_status(StatusCode::UNAUTHORIZED)
+                .ok();
         }
 
         let server = state
@@ -80,11 +74,9 @@ mod get {
         let server = match server {
             Some(server) => server,
             None => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    HeaderMap::new(),
-                    Body::from("Server not found"),
-                );
+                return ApiResponse::error("server not found")
+                    .with_status(StatusCode::NOT_FOUND)
+                    .ok();
             }
         };
 
@@ -104,19 +96,15 @@ mod get {
                                 path.file_name().unwrap().to_str().unwrap().to_string(),
                             )
                         )
-                        .parse()
-                        .unwrap(),
+                        .parse()?,
                     );
-                    headers.insert("Content-Type", "application/octet-stream".parse().unwrap());
+                    headers.insert("Content-Type", "application/octet-stream".parse()?);
 
-                    return (
-                        StatusCode::OK,
-                        headers,
-                        Body::from_stream(tokio_util::io::ReaderStream::with_capacity(
-                            reader,
-                            crate::BUFFER_SIZE,
-                        )),
-                    );
+                    return ApiResponse::new(Body::from_stream(
+                        tokio_util::io::ReaderStream::with_capacity(reader, crate::BUFFER_SIZE),
+                    ))
+                    .with_headers(headers)
+                    .ok();
                 }
                 Err(err) => {
                     tracing::error!(
@@ -126,11 +114,9 @@ mod get {
                         "failed to get backup file contents",
                     );
 
-                    return (
-                        StatusCode::EXPECTATION_FAILED,
-                        HeaderMap::new(),
-                        Body::from("Failed to retrieve file contents from backup"),
-                    );
+                    return ApiResponse::error("failed to retrieve file contents from backup")
+                        .with_status(StatusCode::EXPECTATION_FAILED)
+                        .ok();
                 }
             }
         }
@@ -140,32 +126,26 @@ mod get {
                 if !metadata.is_file()
                     || server.filesystem.is_ignored(path, metadata.is_dir()).await
                 {
-                    return (
-                        StatusCode::NOT_FOUND,
-                        HeaderMap::new(),
-                        Body::from("File not found"),
-                    );
+                    return ApiResponse::error("file not found")
+                        .with_status(StatusCode::NOT_FOUND)
+                        .ok();
                 } else {
                     metadata
                 }
             }
             Err(_) => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    HeaderMap::new(),
-                    Body::from("File not found"),
-                );
+                return ApiResponse::error("file not found")
+                    .with_status(StatusCode::NOT_FOUND)
+                    .ok();
             }
         };
 
         let file = match server.filesystem.open(&path).await {
             Ok(file) => file,
             Err(_) => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    HeaderMap::new(),
-                    Body::from("File not found"),
-                );
+                return ApiResponse::error("file not found")
+                    .with_status(StatusCode::NOT_FOUND)
+                    .ok();
             }
         };
 
@@ -177,19 +157,15 @@ mod get {
                 "attachment; filename={}",
                 serde_json::Value::String(path.file_name().unwrap().to_str().unwrap().to_string())
             )
-            .parse()
-            .unwrap(),
+            .parse()?,
         );
-        headers.insert("Content-Type", "application/octet-stream".parse().unwrap());
+        headers.insert("Content-Type", "application/octet-stream".parse()?);
 
-        (
-            StatusCode::OK,
-            headers,
-            Body::from_stream(tokio_util::io::ReaderStream::with_capacity(
-                file,
-                crate::BUFFER_SIZE,
-            )),
-        )
+        ApiResponse::new(Body::from_stream(
+            tokio_util::io::ReaderStream::with_capacity(file, crate::BUFFER_SIZE),
+        ))
+        .with_headers(headers)
+        .ok()
     }
 }
 

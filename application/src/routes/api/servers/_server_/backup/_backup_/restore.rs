@@ -2,7 +2,10 @@ use super::State;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod post {
-    use crate::routes::{ApiError, GetState, api::servers::_server_::GetServer};
+    use crate::{
+        response::{ApiResponse, ApiResponseResult},
+        routes::{ApiError, GetState, api::servers::_server_::GetServer},
+    };
     use axum::{extract::Path, http::StatusCode};
     use serde::{Deserialize, Serialize};
     use utoipa::ToSchema;
@@ -18,7 +21,7 @@ mod post {
     struct Response {}
 
     #[utoipa::path(post, path = "/", responses(
-        (status = OK, body = inline(Response)),
+        (status = ACCEPTED, body = inline(Response)),
         (status = NOT_FOUND, body = ApiError),
     ), params(
         (
@@ -37,24 +40,20 @@ mod post {
         server: GetServer,
         Path((_server, backup_id)): Path<(uuid::Uuid, uuid::Uuid)>,
         axum::Json(data): axum::Json<Payload>,
-    ) -> (StatusCode, axum::Json<serde_json::Value>) {
+    ) -> ApiResponseResult {
         if data.adapter == crate::server::backup::BackupAdapter::S3 && data.download_url.is_none() {
-            return (
-                StatusCode::BAD_REQUEST,
-                axum::Json(
-                    ApiError::new("unable to restore s3 backup without download_url").to_json(),
-                ),
-            );
+            return ApiResponse::error("unable to restore s3 backup without download_url")
+                .with_status(StatusCode::BAD_REQUEST)
+                .ok();
         }
 
         let backup = if data.adapter != crate::server::backup::BackupAdapter::S3 {
             match crate::server::backup::InternalBackup::find(&server, backup_id).await {
                 Some(backup) => backup,
                 None => {
-                    return (
-                        StatusCode::NOT_FOUND,
-                        axum::Json(ApiError::new("backup not found").to_json()),
-                    );
+                    return ApiResponse::error("backup not found")
+                        .with_status(StatusCode::NOT_FOUND)
+                        .ok();
                 }
             }
         } else {
@@ -84,10 +83,9 @@ mod post {
             }
         });
 
-        (
-            StatusCode::OK,
-            axum::Json(serde_json::to_value(Response {}).unwrap()),
-        )
+        ApiResponse::json(Response {})
+            .with_status(StatusCode::ACCEPTED)
+            .ok()
     }
 }
 

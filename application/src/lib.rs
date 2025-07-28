@@ -5,6 +5,7 @@ pub mod extensions;
 pub mod io;
 pub mod models;
 pub mod remote;
+pub mod response;
 pub mod routes;
 pub mod server;
 pub mod ssh;

@@ -137,17 +137,40 @@ impl Download {
         let mut response = self.response.take().unwrap();
 
         let task = tokio::task::spawn(async move {
-            let mut writer =
-                super::writer::AsyncFileSystemWriter::new(server, destination, None, None)
-                    .await
-                    .unwrap();
+            let mut run_inner = async || -> Result<(), anyhow::Error> {
+                let mut writer = super::writer::AsyncFileSystemWriter::new(
+                    server.clone(),
+                    destination.clone(),
+                    None,
+                    None,
+                )
+                .await?;
 
-            while let Ok(Some(chunk)) = response.chunk().await {
-                writer.write_all(&chunk).await.unwrap();
-                progress.fetch_add(chunk.len() as u64, Ordering::Relaxed);
+                while let Some(chunk) = response.chunk().await? {
+                    writer.write_all(&chunk).await?;
+                    progress.fetch_add(chunk.len() as u64, Ordering::Relaxed);
+                }
+
+                writer.flush().await?;
+                Ok(())
+            };
+
+            match run_inner().await {
+                Ok(_) => {
+                    tracing::info!(
+                        server = %server.uuid,
+                        "pull completed: {}",
+                        destination.to_string_lossy()
+                    );
+                }
+                Err(err) => {
+                    tracing::error!(
+                        server = %server.uuid,
+                        "failed to pull file: {:#?}",
+                        err
+                    );
+                }
             }
-
-            writer.flush().await.unwrap();
         });
 
         self.task = Some(task);

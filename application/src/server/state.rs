@@ -86,6 +86,12 @@ impl ServerStateLock {
         ServerState::from(self.state.load(Ordering::SeqCst))
     }
 
+    /// Executes an action with the server state locked.
+    /// If the action fails, the state is reverted to the previous state.
+    /// Returns `Ok(true)` if the action was executed successfully, `Ok(false)` if the lock was not acquired,
+    /// and `Err` if an error occurred during the action execution.
+    /// If `aquire_timeout` is `Some`, it will wait for the specified duration to acquire the lock.
+    /// If the lock is not acquired within the timeout, it returns `Ok(false)`.
     pub async fn execute_action<F, Fut>(
         &self,
         state: ServerState,

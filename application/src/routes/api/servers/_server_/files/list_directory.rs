@@ -2,7 +2,10 @@ use super::State;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod get {
-    use crate::routes::{ApiError, GetState, api::servers::_server_::GetServer};
+    use crate::{
+        response::{ApiResponse, ApiResponseResult},
+        routes::{ApiError, GetState, api::servers::_server_::GetServer},
+    };
     use axum::{extract::Query, http::StatusCode};
     use serde::Deserialize;
     use std::path::PathBuf;
@@ -36,7 +39,7 @@ mod get {
         state: GetState,
         server: GetServer,
         Query(data): Query<Params>,
-    ) -> (StatusCode, axum::Json<serde_json::Value>) {
+    ) -> ApiResponseResult {
         let path = match server.filesystem.canonicalize(&data.directory).await {
             Ok(path) => path,
             Err(_) => PathBuf::from(data.directory),
@@ -62,10 +65,9 @@ mod get {
                         "failed to list backup directory",
                     );
 
-                    return (
-                        StatusCode::EXPECTATION_FAILED,
-                        axum::Json(ApiError::new("failed to list backup directory").to_json()),
-                    );
+                    return ApiResponse::error("failed to list backup directory")
+                        .with_status(StatusCode::EXPECTATION_FAILED)
+                        .ok();
                 }
             };
 
@@ -79,28 +81,23 @@ mod get {
                 }
             });
 
-            return (
-                StatusCode::OK,
-                axum::Json(serde_json::to_value(&entries).unwrap()),
-            );
+            return ApiResponse::json(entries).ok();
         }
 
         let metadata = server.filesystem.metadata(&path).await;
         if let Ok(metadata) = metadata {
             if !metadata.is_dir() || server.filesystem.is_ignored(&path, metadata.is_dir()).await {
-                return (
-                    StatusCode::EXPECTATION_FAILED,
-                    axum::Json(ApiError::new("path not a directory").to_json()),
-                );
+                return ApiResponse::error("path not a directory")
+                    .with_status(StatusCode::EXPECTATION_FAILED)
+                    .ok();
             }
         } else {
-            return (
-                StatusCode::NOT_FOUND,
-                axum::Json(ApiError::new("path not found").to_json()),
-            );
+            return ApiResponse::error("path not found")
+                .with_status(StatusCode::NOT_FOUND)
+                .ok();
         }
 
-        let mut directory = server.filesystem.read_dir(&path).await.unwrap();
+        let mut directory = server.filesystem.read_dir(&path).await?;
 
         let mut entries = Vec::new();
 
@@ -132,10 +129,7 @@ mod get {
             }
         });
 
-        (
-            StatusCode::OK,
-            axum::Json(serde_json::to_value(&entries).unwrap()),
-        )
+        ApiResponse::json(entries).ok()
     }
 }
 

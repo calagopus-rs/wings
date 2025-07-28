@@ -2,7 +2,10 @@ use super::State;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod post {
-    use crate::routes::{ApiError, GetState, api::servers::_server_::GetServer};
+    use crate::{
+        response::{ApiResponse, ApiResponseResult},
+        routes::{ApiError, GetState, api::servers::_server_::GetServer},
+    };
     use axum::http::StatusCode;
     use serde::Serialize;
     use utoipa::ToSchema;
@@ -20,21 +23,16 @@ mod post {
             example = "123e4567-e89b-12d3-a456-426614174000",
         ),
     ))]
-    pub async fn route(
-        state: GetState,
-        server: GetServer,
-    ) -> (StatusCode, axum::Json<serde_json::Value>) {
+    pub async fn route(state: GetState, server: GetServer) -> ApiResponseResult {
         if server.is_locked_state() {
-            return (
-                StatusCode::CONFLICT,
-                axum::Json(serde_json::to_value(ApiError::new("server is locked")).unwrap()),
-            );
+            return ApiResponse::error("server is locked")
+                .with_status(StatusCode::CONFLICT)
+                .ok();
         }
 
         server
             .stop_with_kill_timeout(&state.docker, std::time::Duration::from_secs(30))
-            .await
-            .unwrap();
+            .await?;
         server.sync_configuration(&state.docker).await;
 
         tokio::spawn(async move {
@@ -50,10 +48,9 @@ mod post {
             }
         });
 
-        (
-            StatusCode::ACCEPTED,
-            axum::Json(serde_json::to_value(Response {}).unwrap()),
-        )
+        ApiResponse::json(Response {})
+            .with_status(StatusCode::ACCEPTED)
+            .ok()
     }
 }
 

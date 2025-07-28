@@ -19,7 +19,6 @@ serde_json = { workspace = true }
 utoipa = { workspace = true }
 utoipa-axum = { workspace = true }
 reqwest = { workspace = true }
-tower-http = { workspace = true }
 tokio = { workspace = true }
 chrono = { workspace = true }
 futures-util = { workspace = true }

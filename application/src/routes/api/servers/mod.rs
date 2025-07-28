@@ -4,19 +4,22 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 pub mod _server_;
 
 mod get {
-    use crate::routes::GetState;
+    use crate::{
+        response::{ApiResponse, ApiResponseResult},
+        routes::GetState,
+    };
 
     #[utoipa::path(get, path = "/", responses(
         (status = OK, body = Vec<crate::models::Server>),
     ))]
-    pub async fn route(state: GetState) -> axum::Json<serde_json::Value> {
+    pub async fn route(state: GetState) -> ApiResponseResult {
         let mut servers = Vec::new();
 
         for server in state.server_manager.get_servers().await.iter() {
             servers.push(server.to_api_response().await);
         }
 
-        axum::Json(serde_json::to_value(&servers).unwrap())
+        ApiResponse::json(servers).ok()
     }
 }
 

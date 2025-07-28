@@ -2,6 +2,7 @@ use super::State;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod get {
+    use crate::response::{ApiResponse, ApiResponseResult};
     use serde::Serialize;
     use std::path::Path;
     use sysinfo::{Disks, Networks, System};
@@ -53,7 +54,7 @@ mod get {
     #[utoipa::path(get, path = "/", responses(
         (status = OK, body = inline(Response)),
     ))]
-    pub async fn route() -> axum::Json<Response> {
+    pub async fn route() -> ApiResponseResult {
         let mut sys = System::new_all();
 
         let mut disks = Disks::new_with_refreshed_list();
@@ -97,7 +98,7 @@ mod get {
             .first()
             .map_or_else(|| "unknown".to_string(), |cpu| cpu.brand().to_string());
 
-        axum::Json(Response {
+        ApiResponse::json(Response {
             cpu: CpuStats {
                 used: cpu_usage,
                 threads: cpu_threads,
@@ -122,6 +123,7 @@ mod get {
                 writing_rate: disk_write_rate,
             },
         })
+        .ok()
     }
 }
 

@@ -14,7 +14,6 @@ serde_json = { version = "1.0.139", features = ["preserve_order"] }
 utoipa = { version = "5.4.0", features = ["axum_extras", "preserve_order", "chrono", "indexmap", "uuid"] }
 utoipa-axum = "0.2.0"
 reqwest = { version = "0.12.12", default-features = false, features = ["hickory-dns", "rustls-tls", "json", "multipart", "stream"] }
-tower-http = { version = "0.6.2", features = ["catch-panic"] }
 tokio = { version = "1.43.0", features = ["full"] }
 chrono = { version = "0.4.40", features = ["serde"] }
 futures-util = "0.3.31"

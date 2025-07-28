@@ -2,7 +2,10 @@ use super::State;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod get {
-    use crate::routes::{ApiError, api::servers::_server_::GetServer};
+    use crate::{
+        response::{ApiResponse, ApiResponseResult},
+        routes::{ApiError, api::servers::_server_::GetServer},
+    };
     use axum::http::StatusCode;
     use axum_extra::extract::Query;
     use serde::{Deserialize, Serialize};
@@ -44,20 +47,18 @@ mod get {
             description = "The game logic to use for the sha256 hash",
         ),
     ))]
-    pub async fn route(
-        server: GetServer,
-        Query(data): Query<Params>,
-    ) -> (StatusCode, axum::Json<serde_json::Value>) {
+    pub async fn route(server: GetServer, Query(data): Query<Params>) -> ApiResponseResult {
         match data.game {
             Game::MinecraftJava => {
                 let mut jar = PathBuf::from("server.jar");
                 for (key, value) in &server.configuration.read().await.environment {
-                    if let Some(value_str) = value.as_str() {
-                        if key.contains("JAR") && value_str.contains(".jar") {
-                            jar = value_str.into();
+                    if let Some(value_str) = value.as_str()
+                        && key.contains("JAR")
+                        && value_str.contains(".jar")
+                    {
+                        jar = value_str.into();
 
-                            break;
-                        }
+                        break;
                     }
                 }
 
@@ -70,7 +71,7 @@ mod get {
                         .await
                         .is_ok_and(|m| m.is_dir())
                     {
-                        let mut entries = server.filesystem.read_dir(path).await.unwrap();
+                        let mut entries = server.filesystem.read_dir(path).await?;
 
                         while let Some(Ok((_, entry))) = entries.next_entry().await {
                             if let Ok(mut entries) =
@@ -98,7 +99,7 @@ mod get {
                         .await
                         .is_ok_and(|m| m.is_dir())
                     {
-                        let mut entries = server.filesystem.read_dir(path).await.unwrap();
+                        let mut entries = server.filesystem.read_dir(path).await?;
 
                         while let Some(Ok((_, entry))) = entries.next_entry().await {
                             if let Ok(mut entries) =
@@ -120,17 +121,16 @@ mod get {
                 let mut file = match server.filesystem.open(&jar).await {
                     Ok(file) => file,
                     Err(_) => {
-                        return (
-                            StatusCode::NOT_FOUND,
-                            axum::Json(ApiError::new("version not found").to_json()),
-                        );
+                        return ApiResponse::error("version not found")
+                            .with_status(StatusCode::NOT_FOUND)
+                            .ok();
                     }
                 };
 
                 let mut hasher = sha2::Sha256::new();
                 let mut buffer = [0; 8192];
                 loop {
-                    let bytes_read = file.read(&mut buffer).await.unwrap();
+                    let bytes_read = file.read(&mut buffer).await?;
                     if bytes_read == 0 {
                         break;
                     }
@@ -138,15 +138,10 @@ mod get {
                     hasher.update(&buffer[..bytes_read]);
                 }
 
-                (
-                    StatusCode::OK,
-                    axum::Json(
-                        serde_json::to_value(Response {
-                            hash: format!("{:x}", hasher.finalize()),
-                        })
-                        .unwrap(),
-                    ),
-                )
+                ApiResponse::json(Response {
+                    hash: format!("{:x}", hasher.finalize()),
+                })
+                .ok()
             }
         }
     }

@@ -2,7 +2,10 @@ use super::State;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod get {
-    use crate::routes::{GetState, api::servers::_server_::GetServer};
+    use crate::{
+        response::{ApiResponse, ApiResponseResult},
+        routes::{GetState, api::servers::_server_::GetServer},
+    };
     use axum::extract::Query;
     use serde::{Deserialize, Serialize};
     use utoipa::ToSchema;
@@ -30,11 +33,11 @@ mod get {
         state: GetState,
         server: GetServer,
         Query(data): Query<Params>,
-    ) -> axum::Json<serde_json::Value> {
+    ) -> ApiResponseResult {
         let size = data.size.unwrap_or(100).min(100);
-        let log = server.read_log(&state.docker, size).await.unwrap();
+        let log = server.read_log(&state.docker, size).await?;
 
-        axum::Json(serde_json::to_value(Response { data: log }).unwrap())
+        ApiResponse::json(Response { data: log }).ok()
     }
 }
 

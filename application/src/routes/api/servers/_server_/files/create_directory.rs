@@ -2,7 +2,10 @@ use super::State;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod post {
-    use crate::routes::{ApiError, api::servers::_server_::GetServer};
+    use crate::{
+        response::{ApiResponse, ApiResponseResult},
+        routes::{ApiError, api::servers::_server_::GetServer},
+    };
     use axum::http::StatusCode;
     use serde::{Deserialize, Serialize};
     use std::path::PathBuf;
@@ -31,7 +34,7 @@ mod post {
     pub async fn route(
         server: GetServer,
         axum::Json(data): axum::Json<Payload>,
-    ) -> (StatusCode, axum::Json<serde_json::Value>) {
+    ) -> ApiResponseResult {
         let path = match server.filesystem.canonicalize(&data.path).await {
             Ok(path) => path,
             Err(_) => PathBuf::from(data.path),
@@ -39,39 +42,29 @@ mod post {
 
         let metadata = server.filesystem.metadata(&path).await;
         if !metadata.map(|m| m.is_dir()).unwrap_or(true) {
-            return (
-                StatusCode::EXPECTATION_FAILED,
-                axum::Json(ApiError::new("path is not a directory").to_json()),
-            );
+            return ApiResponse::error("path is not a directory")
+                .with_status(StatusCode::EXPECTATION_FAILED)
+                .ok();
         }
 
         if server.filesystem.is_ignored(&path, true).await {
-            return (
-                StatusCode::NOT_FOUND,
-                axum::Json(ApiError::new("path not found").to_json()),
-            );
+            return ApiResponse::error("path not found")
+                .with_status(StatusCode::NOT_FOUND)
+                .ok();
         }
 
         let destination = path.join(&data.name);
 
         if server.filesystem.is_ignored(&destination, true).await {
-            return (
-                StatusCode::EXPECTATION_FAILED,
-                axum::Json(ApiError::new("destination not found").to_json()),
-            );
+            return ApiResponse::error("destination not found")
+                .with_status(StatusCode::EXPECTATION_FAILED)
+                .ok();
         }
 
-        server
-            .filesystem
-            .create_dir_all(&destination)
-            .await
-            .unwrap();
+        server.filesystem.create_dir_all(&destination).await?;
         server.filesystem.chown_path(&destination).await;
 
-        (
-            StatusCode::OK,
-            axum::Json(serde_json::to_value(Response {}).unwrap()),
-        )
+        ApiResponse::json(Response {}).ok()
     }
 }
 

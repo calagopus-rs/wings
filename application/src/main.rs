@@ -10,7 +10,6 @@ use colored::Colorize;
 use russh::{keys::ssh_key::rand_core::OsRng, server::Server};
 use std::{net::SocketAddr, path::Path, sync::Arc, time::Instant};
 use tikv_jemallocator::Jemalloc;
-use tower_http::catch_panic::CatchPanicLayer;
 use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityScheme};
 use utoipa_axum::router::OpenApiRouter;
 use wings_rs::routes::ApiError;
@@ -127,24 +126,12 @@ fn cli() -> Command {
                         .num_args(1)
                         .short('l')
                         .long("log-lines")
-                        .default_value("200")
+                        .default_value("500")
                         .value_parser(clap::value_parser!(usize))
                         .required(false),
                 )
                 .arg_required_else_help(false),
         )
-}
-
-fn handle_panic(_err: Box<dyn std::any::Any + Send + 'static>) -> Response<Body> {
-    tracing::error!("a request panic has occurred");
-
-    let body = serde_json::to_string(&ApiError::new("internal server error")).unwrap();
-
-    Response::builder()
-        .status(StatusCode::INTERNAL_SERVER_ERROR)
-        .header("Content-Type", "application/json")
-        .body(Body::from(body))
-        .unwrap()
 }
 
 async fn handle_request(req: Request<Body>, next: Next) -> Result<Response<Body>, StatusCode> {
@@ -187,13 +174,13 @@ async fn handle_cors(
 
     headers.insert("Access-Control-Max-Age", "7200".parse().unwrap());
 
-    if let Some(origin) = req.headers().get("Origin") {
-        if origin.to_str().ok() != Some(state.config.remote.as_str()) {
-            for o in state.config.allowed_origins.iter() {
-                if o.as_str() == "*" || origin.to_str().ok() == Some(o.as_str()) {
-                    headers.insert("Access-Control-Allow-Origin", o.parse().unwrap());
-                    break;
-                }
+    if let Some(origin) = req.headers().get("Origin")
+        && origin.to_str().ok() != Some(state.config.remote.as_str())
+    {
+        for o in state.config.allowed_origins.iter() {
+            if o == "*" || origin.to_str().ok() == Some(o.as_str()) {
+                headers.insert("Access-Control-Allow-Origin", o.parse().unwrap());
+                break;
             }
         }
     }
@@ -226,9 +213,10 @@ async fn main() {
     let config_path = matches.get_one::<String>("config").unwrap();
     let extensions_path = matches.get_one::<String>("extensions").unwrap();
     let debug = *matches.get_one::<bool>("debug").unwrap();
-    let ignore_certificate_errors = *matches
+    let ignore_certificate_errors = matches
         .get_one::<bool>("ignore_certificate_errors")
-        .unwrap_or(&false);
+        .copied()
+        .unwrap_or(false);
     let config = wings_rs::config::Config::open(config_path, debug, ignore_certificate_errors);
 
     match matches.subcommand() {
@@ -279,23 +267,26 @@ async fn main() {
     tracing::info!("config loaded from {}", config_path);
 
     tracing::info!("connecting to docker");
-    let docker = Arc::new(
-        if config.docker.socket.starts_with("http") {
-            bollard::Docker::connect_with_http(
-                &config.docker.socket,
-                120,
-                bollard::API_DEFAULT_VERSION,
-            )
-        } else {
-            bollard::Docker::connect_with_unix(
-                &config.docker.socket,
-                120,
-                bollard::API_DEFAULT_VERSION,
-            )
-        }
-        .context("failed to connect to docker")
-        .unwrap(),
-    );
+    let docker =
+        Arc::new(
+            if config.docker.socket.starts_with("http://")
+                || config.docker.socket.starts_with("tcp://")
+            {
+                bollard::Docker::connect_with_http(
+                    &config.docker.socket,
+                    120,
+                    bollard::API_DEFAULT_VERSION,
+                )
+            } else {
+                bollard::Docker::connect_with_unix(
+                    &config.docker.socket,
+                    120,
+                    bollard::API_DEFAULT_VERSION,
+                )
+            }
+            .context("failed to connect to docker")
+            .unwrap(),
+        );
 
     tracing::info!("ensuring docker network exists");
     config
@@ -354,7 +345,6 @@ async fn main() {
                 axum::Json(ApiError::new("route not found")),
             )
         })
-        .layer(CatchPanicLayer::custom(handle_panic))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             handle_cors,
@@ -380,7 +370,7 @@ async fn main() {
         );
     }
 
-    tracing::info!("starting api/sftp server");
+    tracing::info!("starting http/sftp server");
 
     rustls::crypto::ring::default_provider()
         .install_default()

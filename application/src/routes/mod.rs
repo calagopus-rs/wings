@@ -26,7 +26,7 @@ pub struct ApiError<'a> {
 impl<'a> ApiError<'a> {
     #[inline]
     pub fn new(error: &'a str) -> Self {
-        ApiError { error }
+        Self { error }
     }
 
     #[inline]

@@ -2,7 +2,10 @@ use super::State;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod post {
-    use crate::routes::{ApiError, api::servers::_server_::GetServer};
+    use crate::{
+        response::{ApiResponse, ApiResponseResult},
+        routes::{ApiError, api::servers::_server_::GetServer},
+    };
     use axum::http::StatusCode;
     use serde::Deserialize;
     use std::path::Path;
@@ -28,14 +31,13 @@ mod post {
     pub async fn route(
         server: GetServer,
         axum::Json(data): axum::Json<Payload>,
-    ) -> (StatusCode, axum::Json<serde_json::Value>) {
+    ) -> ApiResponseResult {
         let location = match server.filesystem.canonicalize(data.location).await {
             Ok(path) => path,
             Err(_) => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    axum::Json(ApiError::new("file not found").to_json()),
-                );
+                return ApiResponse::error("file not found")
+                    .with_status(StatusCode::NOT_FOUND)
+                    .ok();
             }
         };
 
@@ -47,19 +49,17 @@ mod post {
                         .is_ignored(&location, metadata.is_dir())
                         .await
                 {
-                    return (
-                        StatusCode::NOT_FOUND,
-                        axum::Json(ApiError::new("file not found").to_json()),
-                    );
+                    return ApiResponse::error("file not found")
+                        .with_status(StatusCode::NOT_FOUND)
+                        .ok();
                 } else {
                     metadata
                 }
             }
             Err(_) => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    axum::Json(ApiError::new("file not found").to_json()),
-                );
+                return ApiResponse::error("file not found")
+                    .with_status(StatusCode::NOT_FOUND)
+                    .ok();
             }
         };
 
@@ -120,22 +120,15 @@ mod post {
             .allocate_in_path(location.parent().unwrap(), metadata.len() as i64)
             .await
         {
-            return (
-                StatusCode::EXPECTATION_FAILED,
-                axum::Json(ApiError::new("failed to allocate space").to_json()),
-            );
+            return ApiResponse::error("failed to allocate space")
+                .with_status(StatusCode::EXPECTATION_FAILED)
+                .ok();
         }
 
-        server.filesystem.copy(&location, &file_name).await.unwrap();
-        let metadata = server.filesystem.metadata(&file_name).await.unwrap();
+        server.filesystem.copy(&location, &file_name).await?;
+        let metadata = server.filesystem.metadata(&file_name).await?;
 
-        (
-            StatusCode::OK,
-            axum::Json(
-                serde_json::to_value(server.filesystem.to_api_entry(file_name, metadata).await)
-                    .unwrap(),
-            ),
-        )
+        ApiResponse::json(server.filesystem.to_api_entry(file_name, metadata).await).ok()
     }
 }
 

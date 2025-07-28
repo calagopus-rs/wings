@@ -2,7 +2,11 @@ use super::State;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod get {
-    use crate::{extensions::ExtensionInfo, routes::GetState};
+    use crate::{
+        extensions::ExtensionInfo,
+        response::{ApiResponse, ApiResponseResult},
+        routes::GetState,
+    };
     use serde::Serialize;
     use utoipa::ToSchema;
 
@@ -14,18 +18,16 @@ mod get {
     #[utoipa::path(get, path = "/", responses(
         (status = OK, body = inline(Response)),
     ))]
-    pub async fn route(state: GetState) -> axum::Json<serde_json::Value> {
-        axum::Json(
-            serde_json::to_value(Response {
-                extensions: state
-                    .extension_manager
-                    .get_extensions()
-                    .iter()
-                    .map(|ext| ext.info())
-                    .collect(),
-            })
-            .unwrap(),
-        )
+    pub async fn route(state: GetState) -> ApiResponseResult {
+        ApiResponse::json(Response {
+            extensions: state
+                .extension_manager
+                .get_extensions()
+                .iter()
+                .map(|ext| ext.info())
+                .collect(),
+        })
+        .ok()
     }
 }
 

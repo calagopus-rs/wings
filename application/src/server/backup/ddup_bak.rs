@@ -1,8 +1,7 @@
-use crate::{io::counting_reader::CountingReader, remote::backups::RawServerBackup};
-use axum::{
-    body::Body,
-    http::{HeaderMap, StatusCode},
+use crate::{
+    io::counting_reader::CountingReader, remote::backups::RawServerBackup, response::ApiResponse,
 };
+use axum::{body::Body, http::HeaderMap};
 use ddup_bak::archive::entries::Entry;
 use ignore::{WalkBuilder, overrides::OverrideBuilder};
 use sha1::Digest;
@@ -295,7 +294,7 @@ pub async fn restore_backup(
 pub async fn download_backup(
     server: &crate::server::Server,
     uuid: uuid::Uuid,
-) -> Result<(StatusCode, HeaderMap, Body), anyhow::Error> {
+) -> Result<ApiResponse, anyhow::Error> {
     let repository = get_repository(server).await;
     let archive = repository.get_archive(&uuid.to_string())?;
 
@@ -331,14 +330,10 @@ pub async fn download_backup(
     );
     headers.insert("Content-Type", "application/gzip".parse().unwrap());
 
-    Ok((
-        StatusCode::OK,
-        headers,
-        Body::from_stream(tokio_util::io::ReaderStream::with_capacity(
-            reader,
-            crate::BUFFER_SIZE,
-        )),
+    Ok(ApiResponse::new(Body::from_stream(
+        tokio_util::io::ReaderStream::with_capacity(reader, crate::BUFFER_SIZE),
     ))
+    .with_headers(headers))
 }
 
 pub fn tar_recursive_convert_entries(

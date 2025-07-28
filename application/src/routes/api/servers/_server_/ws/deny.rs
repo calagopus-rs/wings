@@ -2,7 +2,10 @@ use super::State;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod post {
-    use crate::routes::GetState;
+    use crate::{
+        response::{ApiResponse, ApiResponseResult},
+        routes::GetState,
+    };
     use serde::{Deserialize, Serialize};
     use utoipa::ToSchema;
 
@@ -26,12 +29,12 @@ mod post {
     pub async fn route(
         state: GetState,
         axum::Json(data): axum::Json<Payload>,
-    ) -> axum::Json<serde_json::Value> {
+    ) -> ApiResponseResult {
         for jti in data.jtis {
             state.config.jwt.deny(&jti).await;
         }
 
-        axum::Json(serde_json::to_value(Response {}).unwrap())
+        ApiResponse::json(Response {}).ok()
     }
 }
 

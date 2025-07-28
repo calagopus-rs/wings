@@ -4,7 +4,10 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 mod restore;
 
 mod delete {
-    use crate::routes::{ApiError, api::servers::_server_::GetServer};
+    use crate::{
+        response::{ApiResponse, ApiResponseResult},
+        routes::{ApiError, api::servers::_server_::GetServer},
+    };
     use axum::{extract::Path, http::StatusCode};
     use serde::Serialize;
     use utoipa::ToSchema;
@@ -13,7 +16,7 @@ mod delete {
     struct Response {}
 
     #[utoipa::path(delete, path = "/", responses(
-        (status = OK, body = inline(Response)),
+        (status = ACCEPTED, body = inline(Response)),
         (status = NOT_FOUND, body = ApiError),
     ), params(
         (
@@ -30,14 +33,13 @@ mod delete {
     pub async fn route(
         server: GetServer,
         Path((_server, backup_id)): Path<(uuid::Uuid, uuid::Uuid)>,
-    ) -> (StatusCode, axum::Json<serde_json::Value>) {
+    ) -> ApiResponseResult {
         let backup = match crate::server::backup::InternalBackup::find(&server, backup_id).await {
             Some(backup) => backup,
             None => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    axum::Json(ApiError::new("backup not found").to_json()),
-                );
+                return ApiResponse::error("backup not found")
+                    .with_status(StatusCode::NOT_FOUND)
+                    .ok();
             }
         };
 
@@ -53,10 +55,9 @@ mod delete {
             }
         });
 
-        (
-            StatusCode::OK,
-            axum::Json(serde_json::to_value(Response {}).unwrap()),
-        )
+        ApiResponse::json(Response {})
+            .with_status(StatusCode::ACCEPTED)
+            .ok()
     }
 }
 

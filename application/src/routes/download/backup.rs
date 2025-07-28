@@ -2,12 +2,11 @@ use super::State;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod get {
-    use crate::routes::GetState;
-    use axum::{
-        body::Body,
-        extract::Query,
-        http::{HeaderMap, StatusCode},
+    use crate::{
+        response::{ApiResponse, ApiResponseResult},
+        routes::GetState,
     };
+    use axum::{extract::Query, http::StatusCode};
     use serde::Deserialize;
     use utoipa::ToSchema;
 
@@ -37,35 +36,32 @@ mod get {
             description = "The JWT token to use for authentication",
         ),
     ))]
-    pub async fn route(
-        state: GetState,
-        Query(data): Query<Params>,
-    ) -> (StatusCode, HeaderMap, Body) {
+    pub async fn route(state: GetState, Query(data): Query<Params>) -> ApiResponseResult {
         let payload: BackupJwtPayload = match state.config.jwt.verify(&data.token) {
             Ok(payload) => payload,
             Err(_) => {
-                return (
-                    StatusCode::UNAUTHORIZED,
-                    HeaderMap::new(),
-                    Body::from("Invalid token"),
-                );
+                return ApiResponse::error("invalid token")
+                    .with_status(StatusCode::UNAUTHORIZED)
+                    .ok();
             }
         };
 
         if !payload.base.validate(&state.config.jwt).await {
-            return (
-                StatusCode::UNAUTHORIZED,
-                HeaderMap::new(),
-                Body::from("Invalid token"),
-            );
+            return ApiResponse::error("invalid token")
+                .with_status(StatusCode::UNAUTHORIZED)
+                .ok();
         }
 
         if !state.config.jwt.one_time_id(&payload.unique_id).await {
-            return (
-                StatusCode::UNAUTHORIZED,
-                HeaderMap::new(),
-                Body::from("Token has already been used"),
-            );
+            return ApiResponse::error("token has already been used")
+                .with_status(StatusCode::UNAUTHORIZED)
+                .ok();
+        }
+
+        if !state.config.jwt.one_time_id(&payload.unique_id).await {
+            return ApiResponse::error("token has already been used")
+                .with_status(StatusCode::UNAUTHORIZED)
+                .ok();
         }
 
         let server = state
@@ -79,11 +75,9 @@ mod get {
         let server = match server {
             Some(server) => server,
             None => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    HeaderMap::new(),
-                    Body::from("Server not found"),
-                );
+                return ApiResponse::error("server not found")
+                    .with_status(StatusCode::NOT_FOUND)
+                    .ok();
             }
         };
 
@@ -91,26 +85,22 @@ mod get {
         let backup = match backups.into_iter().find(|b| b.uuid == payload.backup_uuid) {
             Some(backup) => backup,
             None => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    HeaderMap::new(),
-                    Body::from("Backup not found"),
-                );
+                return ApiResponse::error("backup not found")
+                    .with_status(StatusCode::NOT_FOUND)
+                    .ok();
             }
         };
 
         match backup.download(&server).await {
             Ok(response) => response,
-            Err(e) => {
-                tracing::error!("failed to download backup: {}", e);
+            Err(err) => {
+                tracing::error!("failed to download backup: {:#?}", err);
 
-                (
-                    StatusCode::EXPECTATION_FAILED,
-                    HeaderMap::new(),
-                    Body::from("Failed to download backup"),
-                )
+                ApiResponse::error("failed to download backup")
+                    .with_status(StatusCode::EXPECTATION_FAILED)
             }
         }
+        .ok()
     }
 }
 

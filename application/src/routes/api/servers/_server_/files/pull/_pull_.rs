@@ -2,7 +2,10 @@ use super::State;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod delete {
-    use crate::routes::{ApiError, api::servers::_server_::GetServer};
+    use crate::{
+        response::{ApiResponse, ApiResponseResult},
+        routes::{ApiError, api::servers::_server_::GetServer},
+    };
     use axum::{extract::Path, http::StatusCode};
     use serde::Serialize;
     use utoipa::ToSchema;
@@ -28,15 +31,14 @@ mod delete {
     pub async fn route(
         server: GetServer,
         Path((_server, pull_id)): Path<(uuid::Uuid, uuid::Uuid)>,
-    ) -> (StatusCode, axum::Json<serde_json::Value>) {
+    ) -> ApiResponseResult {
         let pull = server.filesystem.pulls().await;
         let pull = match pull.iter().find(|p| *p.0 == pull_id) {
             Some(pull) => pull.1,
             None => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    axum::Json(ApiError::new("pull not found").to_json()),
-                );
+                return ApiResponse::error("pull not found")
+                    .with_status(StatusCode::NOT_FOUND)
+                    .ok();
             }
         };
 
@@ -46,10 +48,7 @@ mod delete {
 
         server.filesystem.pulls.write().await.remove(&pull_id);
 
-        (
-            StatusCode::OK,
-            axum::Json(serde_json::to_value(Response {}).unwrap()),
-        )
+        ApiResponse::json(Response {}).ok()
     }
 }
 

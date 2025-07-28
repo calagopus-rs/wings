@@ -4,7 +4,10 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 mod _pull_;
 
 mod get {
-    use crate::routes::api::servers::_server_::GetServer;
+    use crate::{
+        response::{ApiResponse, ApiResponseResult},
+        routes::api::servers::_server_::GetServer,
+    };
     use serde::Serialize;
     use utoipa::ToSchema;
 
@@ -22,7 +25,7 @@ mod get {
             example = "123e4567-e89b-12d3-a456-426614174000",
         ),
     ))]
-    pub async fn route(server: GetServer) -> axum::Json<serde_json::Value> {
+    pub async fn route(server: GetServer) -> ApiResponseResult {
         let values = server.filesystem.pulls().await;
         let mut downloads = Vec::new();
         downloads.reserve_exact(values.len());
@@ -31,12 +34,15 @@ mod get {
             downloads.push(download.read().await.to_api_response());
         }
 
-        axum::Json(serde_json::to_value(Response { downloads }).unwrap())
+        ApiResponse::json(Response { downloads }).ok()
     }
 }
 
 mod post {
-    use crate::routes::{ApiError, GetState, api::servers::_server_::GetServer};
+    use crate::{
+        response::{ApiResponse, ApiResponseResult},
+        routes::{ApiError, GetState, api::servers::_server_::GetServer},
+    };
     use axum::http::StatusCode;
     use serde::{Deserialize, Serialize};
     use std::{path::PathBuf, sync::Arc};
@@ -76,7 +82,7 @@ mod post {
         state: GetState,
         server: GetServer,
         axum::Json(data): axum::Json<Payload>,
-    ) -> (StatusCode, axum::Json<serde_json::Value>) {
+    ) -> ApiResponseResult {
         let path = match server.filesystem.canonicalize(&data.root).await {
             Ok(path) => path,
             Err(_) => PathBuf::from(data.root),
@@ -84,44 +90,37 @@ mod post {
 
         let metadata = server.filesystem.symlink_metadata(&path).await;
         if !metadata.map(|m| m.is_dir()).unwrap_or(true) {
-            return (
-                StatusCode::EXPECTATION_FAILED,
-                axum::Json(ApiError::new("root is not a directory").to_json()),
-            );
+            return ApiResponse::error("root is not a directory")
+                .with_status(StatusCode::EXPECTATION_FAILED)
+                .ok();
         }
 
         if let Some(file_name) = &data.file_name {
             let metadata = server.filesystem.metadata(path.join(file_name)).await;
             if !metadata.map(|m| m.is_file()).unwrap_or(true) {
-                return (
-                    StatusCode::EXPECTATION_FAILED,
-                    axum::Json(ApiError::new("file is not a file").to_json()),
-                );
+                return ApiResponse::error("file is not a file")
+                    .with_status(StatusCode::EXPECTATION_FAILED)
+                    .ok();
             }
         } else if !data.use_header {
-            return (
-                StatusCode::EXPECTATION_FAILED,
-                axum::Json(
-                    ApiError::new("file name is required when not using use_header").to_json(),
-                ),
-            );
+            return ApiResponse::error("file name is required when not using use_header")
+                .with_status(StatusCode::EXPECTATION_FAILED)
+                .ok();
         }
 
         if state.config.api.disable_remote_download {
-            return (
-                StatusCode::EXPECTATION_FAILED,
-                axum::Json(ApiError::new("remote download is disabled").to_json()),
-            );
+            return ApiResponse::error("remote pulling is disabled")
+                .with_status(StatusCode::EXPECTATION_FAILED)
+                .ok();
         }
 
         if server.filesystem.pulls().await.len() >= 3 {
-            return (
-                StatusCode::EXPECTATION_FAILED,
-                axum::Json(ApiError::new("too many concurrent downloads").to_json()),
-            );
+            return ApiResponse::error("too many concurrent pulls")
+                .with_status(StatusCode::EXPECTATION_FAILED)
+                .ok();
         }
 
-        server.filesystem.create_dir_all(&path).await.unwrap();
+        server.filesystem.create_dir_all(&path).await?;
         let download = Arc::new(RwLock::new(
             match crate::server::filesystem::pull::Download::new(
                 server.0.clone(),
@@ -134,13 +133,11 @@ mod post {
             {
                 Ok(download) => download,
                 Err(err) => {
-                    tracing::error!("Failed to create download: {}", err);
-                    return (
-                        StatusCode::EXPECTATION_FAILED,
-                        axum::Json(
-                            ApiError::new(&format!("failed to create download: {err}")).to_json(),
-                        ),
-                    );
+                    tracing::error!("failed to create pull: {:#?}", err);
+
+                    return ApiResponse::error(&format!("failed to create pull: {err}"))
+                        .with_status(StatusCode::EXPECTATION_FAILED)
+                        .ok();
                 }
             },
         ));
@@ -168,10 +165,7 @@ mod post {
             }
         }
 
-        (
-            StatusCode::OK,
-            axum::Json(serde_json::to_value(Response { identifier }).unwrap()),
-        )
+        ApiResponse::json(Response { identifier }).ok()
     }
 }
 

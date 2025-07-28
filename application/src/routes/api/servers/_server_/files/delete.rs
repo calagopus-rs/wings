@@ -2,7 +2,10 @@ use super::State;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod post {
-    use crate::routes::{ApiError, api::servers::_server_::GetServer};
+    use crate::{
+        response::{ApiResponse, ApiResponseResult},
+        routes::{ApiError, api::servers::_server_::GetServer},
+    };
     use axum::http::StatusCode;
     use serde::{Deserialize, Serialize};
     use utoipa::ToSchema;
@@ -34,23 +37,21 @@ mod post {
     pub async fn route(
         server: GetServer,
         axum::Json(data): axum::Json<Payload>,
-    ) -> (StatusCode, axum::Json<serde_json::Value>) {
+    ) -> ApiResponseResult {
         let root = match server.filesystem.canonicalize(data.root).await {
             Ok(path) => path,
             Err(_) => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    axum::Json(ApiError::new("root not found").to_json()),
-                );
+                return ApiResponse::error("root not found")
+                    .with_status(StatusCode::NOT_FOUND)
+                    .ok();
             }
         };
 
         let metadata = server.filesystem.symlink_metadata(&root).await;
         if !metadata.map(|m| m.is_dir()).unwrap_or(false) {
-            return (
-                StatusCode::EXPECTATION_FAILED,
-                axum::Json(ApiError::new("root is not a directory").to_json()),
-            );
+            return ApiResponse::error("root is not a directory")
+                .with_status(StatusCode::EXPECTATION_FAILED)
+                .ok();
         }
 
         let mut deleted_count = 0;
@@ -80,15 +81,10 @@ mod post {
             }
         }
 
-        (
-            StatusCode::OK,
-            axum::Json(
-                serde_json::to_value(Response {
-                    deleted: deleted_count,
-                })
-                .unwrap(),
-            ),
-        )
+        ApiResponse::json(Response {
+            deleted: deleted_count,
+        })
+        .ok()
     }
 }
 

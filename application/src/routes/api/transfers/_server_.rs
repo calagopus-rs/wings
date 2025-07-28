@@ -2,7 +2,10 @@ use super::State;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod delete {
-    use crate::routes::{ApiError, GetState};
+    use crate::{
+        response::{ApiResponse, ApiResponseResult},
+        routes::{ApiError, GetState},
+    };
     use axum::{extract::Path, http::StatusCode};
     use serde::Serialize;
     use utoipa::ToSchema;
@@ -20,10 +23,7 @@ mod delete {
             example = "123e4567-e89b-12d3-a456-426614174000",
         ),
     ))]
-    pub async fn route(
-        state: GetState,
-        Path(server): Path<uuid::Uuid>,
-    ) -> (StatusCode, axum::Json<serde_json::Value>) {
+    pub async fn route(state: GetState, Path(server): Path<uuid::Uuid>) -> ApiResponseResult {
         let server = state
             .server_manager
             .get_servers()
@@ -35,10 +35,9 @@ mod delete {
         let server = match server {
             Some(server) => server,
             None => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    axum::Json(ApiError::new("server not found").to_json()),
-                );
+                return ApiResponse::error("server not found")
+                    .with_status(StatusCode::NOT_FOUND)
+                    .ok();
             }
         };
 
@@ -49,10 +48,7 @@ mod delete {
             handle.abort();
         }
 
-        (
-            StatusCode::OK,
-            axum::Json(serde_json::to_value(Response {}).unwrap()),
-        )
+        ApiResponse::json(Response {}).ok()
     }
 }
 

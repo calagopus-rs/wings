@@ -10,6 +10,7 @@ mod _server_;
 mod post {
     use crate::{
         io::limited_reader::AsyncLimitedReader,
+        response::{ApiResponse, ApiResponseResult},
         routes::{ApiError, GetState},
         server::transfer::TransferArchiveFormat,
     };
@@ -35,10 +36,10 @@ mod post {
         state: GetState,
         headers: HeaderMap,
         mut multipart: Multipart,
-    ) -> (StatusCode, axum::Json<serde_json::Value>) {
+    ) -> ApiResponseResult {
         let key = headers
             .get("Authorization")
-            .map(|v| v.to_str().unwrap())
+            .and_then(|v| v.to_str().ok())
             .unwrap_or("")
             .to_string();
         let mut parts = key.splitn(2, " ");
@@ -46,45 +47,40 @@ mod post {
         let token = parts.next();
 
         if r#type != "Bearer" || token.is_none() {
-            return (
-                StatusCode::UNAUTHORIZED,
-                axum::Json(ApiError::new("invalid authorization token").to_json()),
-            );
+            return ApiResponse::error("invalid token format")
+                .with_status(StatusCode::UNAUTHORIZED)
+                .ok();
         }
 
         let payload: crate::remote::jwt::BasePayload = match state.config.jwt.verify(token.unwrap())
         {
             Ok(payload) => payload,
             Err(_) => {
-                return (
-                    StatusCode::UNAUTHORIZED,
-                    axum::Json(ApiError::new("invalid token").to_json()),
-                );
+                return ApiResponse::error("invalid token")
+                    .with_status(StatusCode::UNAUTHORIZED)
+                    .ok();
             }
         };
 
         if !payload.validate(&state.config.jwt).await {
-            return (
-                StatusCode::UNAUTHORIZED,
-                axum::Json(ApiError::new("invalid token").to_json()),
-            );
+            return ApiResponse::error("invalid token")
+                .with_status(StatusCode::UNAUTHORIZED)
+                .ok();
         }
 
         let subject: uuid::Uuid = match payload.subject {
             Some(subject) => match subject.parse() {
                 Ok(subject) => subject,
                 Err(_) => {
-                    return (
-                        StatusCode::UNAUTHORIZED,
-                        axum::Json(ApiError::new("invalid token").to_json()),
-                    );
+                    return ApiResponse::error("invalid token")
+                        .with_status(StatusCode::UNAUTHORIZED)
+                        .ok();
                 }
             },
             None => {
-                return (
-                    StatusCode::UNAUTHORIZED,
-                    axum::Json(ApiError::new("invalid token").to_json()),
-                );
+                return ApiResponse::error("invalid token")
+                    .with_status(StatusCode::UNAUTHORIZED)
+                    .ok();
             }
         };
 
@@ -95,16 +91,12 @@ mod post {
             .iter()
             .any(|s| s.uuid == subject)
         {
-            return (
-                StatusCode::CONFLICT,
-                axum::Json(
-                    serde_json::to_value(ApiError::new("server with this uuid already exists"))
-                        .unwrap(),
-                ),
-            );
+            return ApiResponse::error("server with this uuid already exists")
+                .with_status(StatusCode::CONFLICT)
+                .ok();
         }
 
-        let server_data = state.config.client.server(subject).await.unwrap();
+        let server_data = state.config.client.server(subject).await?;
         let server = state.server_manager.create_server(server_data, false).await;
 
         server
@@ -337,10 +329,9 @@ mod post {
                     err
                 );
 
-                return (
-                    StatusCode::EXPECTATION_FAILED,
-                    axum::Json(ApiError::new("failed to complete server transfer").to_json()),
-                );
+                return ApiResponse::error("failed to complete server transfer")
+                    .with_status(StatusCode::EXPECTATION_FAILED)
+                    .ok();
             }
             Err(err) => {
                 tracing::error!(
@@ -349,17 +340,13 @@ mod post {
                     err
                 );
 
-                return (
-                    StatusCode::EXPECTATION_FAILED,
-                    axum::Json(ApiError::new("failed to complete server transfer").to_json()),
-                );
+                return ApiResponse::error("failed to complete server transfer")
+                    .with_status(StatusCode::EXPECTATION_FAILED)
+                    .ok();
             }
         }
 
-        (
-            StatusCode::OK,
-            axum::Json(serde_json::to_value(Response {}).unwrap()),
-        )
+        ApiResponse::json(Response {}).ok()
     }
 }
 

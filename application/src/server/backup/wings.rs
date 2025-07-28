@@ -5,12 +5,10 @@ use crate::{
         limited_writer::{AsyncLimitedWriter, LimitedWriter},
     },
     remote::backups::RawServerBackup,
+    response::ApiResponse,
     server::filesystem::archive::multi_reader::MultiReader,
 };
-use axum::{
-    body::Body,
-    http::{HeaderMap, StatusCode},
-};
+use axum::{body::Body, http::HeaderMap};
 use futures::StreamExt;
 use sha1::Digest;
 use std::{
@@ -460,7 +458,7 @@ pub async fn restore_backup(
 pub async fn download_backup(
     server: &crate::server::Server,
     uuid: uuid::Uuid,
-) -> Result<(StatusCode, HeaderMap, Body), anyhow::Error> {
+) -> Result<ApiResponse, anyhow::Error> {
     let (file_format, file_name) = get_first_file_name(server, uuid).await?;
     let file = tokio::fs::File::open(&file_name).await?;
 
@@ -502,14 +500,10 @@ pub async fn download_backup(
 
     headers.insert("Content-Length", file.metadata().await?.len().into());
 
-    Ok((
-        StatusCode::OK,
-        headers,
-        Body::from_stream(tokio_util::io::ReaderStream::with_capacity(
-            file,
-            crate::BUFFER_SIZE,
-        )),
+    Ok(ApiResponse::new(Body::from_stream(
+        tokio_util::io::ReaderStream::with_capacity(file, crate::BUFFER_SIZE),
     ))
+    .with_headers(headers))
 }
 
 pub async fn delete_backup(

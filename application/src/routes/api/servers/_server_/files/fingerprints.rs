@@ -2,7 +2,10 @@ use super::State;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod get {
-    use crate::routes::api::servers::_server_::GetServer;
+    use crate::{
+        response::{ApiResponse, ApiResponseResult},
+        routes::api::servers::_server_::GetServer,
+    };
     use axum_extra::extract::Query;
     use serde::{Deserialize, Serialize};
     use sha1::Digest;
@@ -52,10 +55,7 @@ mod get {
             description = "The list of files to fingerprint",
         ),
     ))]
-    pub async fn route(
-        server: GetServer,
-        Query(data): Query<Params>,
-    ) -> axum::Json<serde_json::Value> {
+    pub async fn route(server: GetServer, Query(data): Query<Params>) -> ApiResponseResult {
         let mut fingerprint_handles = Vec::new();
         for path_raw in data.files {
             let path = match server.filesystem.canonicalize(&path_raw).await {
@@ -77,14 +77,14 @@ mod get {
             };
 
             fingerprint_handles.push(async move {
-                (
+                Ok::<_, std::io::Error>((
                     path_raw,
                     match data.algorithm {
                         Algorithm::Md5 => {
                             let mut hasher = md5::Context::new();
                             let mut buffer = [0; 8192];
                             loop {
-                                let bytes_read = file.read(&mut buffer).await.unwrap();
+                                let bytes_read = file.read(&mut buffer).await?;
                                 if bytes_read == 0 {
                                     break;
                                 }
@@ -98,7 +98,7 @@ mod get {
                             let mut hasher = crc32fast::Hasher::new();
                             let mut buffer = [0; 8192];
                             loop {
-                                let bytes_read = file.read(&mut buffer).await.unwrap();
+                                let bytes_read = file.read(&mut buffer).await?;
                                 if bytes_read == 0 {
                                     break;
                                 }
@@ -112,7 +112,7 @@ mod get {
                             let mut hasher = sha1::Sha1::new();
                             let mut buffer = [0; 8192];
                             loop {
-                                let bytes_read = file.read(&mut buffer).await.unwrap();
+                                let bytes_read = file.read(&mut buffer).await?;
                                 if bytes_read == 0 {
                                     break;
                                 }
@@ -126,7 +126,7 @@ mod get {
                             let mut hasher = sha2::Sha224::new();
                             let mut buffer = [0; 8192];
                             loop {
-                                let bytes_read = file.read(&mut buffer).await.unwrap();
+                                let bytes_read = file.read(&mut buffer).await?;
                                 if bytes_read == 0 {
                                     break;
                                 }
@@ -140,7 +140,7 @@ mod get {
                             let mut hasher = sha2::Sha256::new();
                             let mut buffer = [0; 8192];
                             loop {
-                                let bytes_read = file.read(&mut buffer).await.unwrap();
+                                let bytes_read = file.read(&mut buffer).await?;
                                 if bytes_read == 0 {
                                     break;
                                 }
@@ -154,7 +154,7 @@ mod get {
                             let mut hasher = sha2::Sha384::new();
                             let mut buffer = [0; 8192];
                             loop {
-                                let bytes_read = file.read(&mut buffer).await.unwrap();
+                                let bytes_read = file.read(&mut buffer).await?;
                                 if bytes_read == 0 {
                                     break;
                                 }
@@ -168,7 +168,7 @@ mod get {
                             let mut hasher = sha2::Sha512::new();
                             let mut buffer = [0; 8192];
                             loop {
-                                let bytes_read = file.read(&mut buffer).await.unwrap();
+                                let bytes_read = file.read(&mut buffer).await?;
                                 if bytes_read == 0 {
                                     break;
                                 }
@@ -190,7 +190,7 @@ mod get {
                             let mut normalized_length: u32 = 0;
 
                             loop {
-                                let bytes_read = file.read(&mut buffer).await.unwrap();
+                                let bytes_read = file.read(&mut buffer).await?;
                                 if bytes_read == 0 {
                                     break;
                                 }
@@ -202,14 +202,14 @@ mod get {
                                 }
                             }
 
-                            file.seek(std::io::SeekFrom::Start(0)).await.unwrap();
+                            file.seek(std::io::SeekFrom::Start(0)).await?;
 
                             let mut num2: u32 = 1 ^ normalized_length;
                             let mut num3: u32 = 0;
                             let mut num4: u32 = 0;
 
                             loop {
-                                let bytes_read = file.read(&mut buffer).await.unwrap();
+                                let bytes_read = file.read(&mut buffer).await?;
                                 if bytes_read == 0 {
                                     break;
                                 }
@@ -242,18 +242,19 @@ mod get {
                             result.to_string()
                         }
                     },
-                )
+                ))
             });
         }
 
         let joined_fingerprints = futures::future::join_all(fingerprint_handles).await;
 
-        axum::Json(
-            serde_json::to_value(Response {
-                fingerprints: HashMap::from_iter(joined_fingerprints),
-            })
-            .unwrap(),
-        )
+        ApiResponse::json(Response {
+            fingerprints: joined_fingerprints
+                .into_iter()
+                .filter_map(Result::ok)
+                .collect(),
+        })
+        .ok()
     }
 }
 

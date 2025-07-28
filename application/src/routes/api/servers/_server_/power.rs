@@ -2,7 +2,10 @@ use super::State;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod post {
-    use crate::routes::{GetState, api::servers::_server_::GetServer};
+    use crate::{
+        response::{ApiResponse, ApiResponseResult},
+        routes::{GetState, api::servers::_server_::GetServer},
+    };
     use axum::http::StatusCode;
     use serde::{Deserialize, Serialize};
     use utoipa::ToSchema;
@@ -29,7 +32,7 @@ mod post {
         state: GetState,
         server: GetServer,
         axum::Json(data): axum::Json<Payload>,
-    ) -> (StatusCode, axum::Json<serde_json::Value>) {
+    ) -> ApiResponseResult {
         let aquire_timeout = data.wait_seconds.map(std::time::Duration::from_secs);
 
         tokio::spawn(async move {
@@ -94,10 +97,9 @@ mod post {
             }
         });
 
-        (
-            StatusCode::ACCEPTED,
-            axum::Json(serde_json::to_value(Response {}).unwrap()),
-        )
+        ApiResponse::json(Response {})
+            .with_status(StatusCode::ACCEPTED)
+            .ok()
     }
 }
 

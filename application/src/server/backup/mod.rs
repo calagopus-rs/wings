@@ -1,8 +1,4 @@
-use crate::remote::backups::RawServerBackup;
-use axum::{
-    body::Body,
-    http::{HeaderMap, StatusCode},
-};
+use crate::{remote::backups::RawServerBackup, response::ApiResponse};
 use ignore::gitignore::GitignoreBuilder;
 use serde::{Deserialize, Serialize};
 use std::sync::{
@@ -434,7 +430,7 @@ impl InternalBackup {
     pub async fn download(
         &self,
         server: &crate::server::Server,
-    ) -> Result<(StatusCode, HeaderMap, Body), anyhow::Error> {
+    ) -> Result<ApiResponse, anyhow::Error> {
         tracing::info!(
             server = %server.uuid,
             backup = %self.uuid,

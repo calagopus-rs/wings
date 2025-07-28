@@ -2,7 +2,10 @@ use super::State;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod get {
-    use crate::routes::{ApiError, api::servers::_server_::GetServer};
+    use crate::{
+        response::{ApiResponse, ApiResponseResult},
+        routes::{ApiError, api::servers::_server_::GetServer},
+    };
     use axum::{
         body::Body,
         extract::Query,
@@ -46,10 +49,7 @@ mod get {
             description = "The maximum size of the file to return. If the file is larger than this, an error will be returned.",
         ),
     ))]
-    pub async fn route(
-        server: GetServer,
-        Query(data): Query<Params>,
-    ) -> (StatusCode, HeaderMap, Body) {
+    pub async fn route(server: GetServer, Query(data): Query<Params>) -> ApiResponseResult {
         let path = match server.filesystem.canonicalize(&data.file).await {
             Ok(path) => path,
             Err(_) => PathBuf::from(data.file),
@@ -63,19 +63,9 @@ mod get {
                     if let Some(max_size) = data.max_size
                         && size > max_size
                     {
-                        return (
-                            StatusCode::PAYLOAD_TOO_LARGE,
-                            HeaderMap::from_iter([(
-                                "Content-Type".parse().unwrap(),
-                                "application/json".parse().unwrap(),
-                            )]),
-                            Body::from(
-                                serde_json::to_string(&ApiError::new(
-                                    "file size exceeds maximum allowed size",
-                                ))
-                                .unwrap(),
-                            ),
-                        );
+                        return ApiResponse::error("file size exceeds maximum allowed size")
+                            .with_status(StatusCode::PAYLOAD_TOO_LARGE)
+                            .ok();
                     }
 
                     headers.insert("Content-Length", size.into());
@@ -88,20 +78,16 @@ mod get {
                                     path.file_name().unwrap().to_str().unwrap().to_string(),
                                 )
                             )
-                            .parse()
-                            .unwrap(),
+                            .parse()?,
                         );
-                        headers.insert("Content-Type", "application/octet-stream".parse().unwrap());
+                        headers.insert("Content-Type", "application/octet-stream".parse()?);
                     }
 
-                    return (
-                        StatusCode::OK,
-                        headers,
-                        Body::from_stream(tokio_util::io::ReaderStream::with_capacity(
-                            reader,
-                            crate::BUFFER_SIZE,
-                        )),
-                    );
+                    return ApiResponse::new(Body::from_stream(
+                        tokio_util::io::ReaderStream::with_capacity(reader, crate::BUFFER_SIZE),
+                    ))
+                    .with_headers(headers)
+                    .ok();
                 }
                 Err(err) => {
                     tracing::error!(
@@ -111,19 +97,9 @@ mod get {
                         "failed to get backup file contents",
                     );
 
-                    return (
-                        StatusCode::EXPECTATION_FAILED,
-                        HeaderMap::from_iter([(
-                            "Content-Type".parse().unwrap(),
-                            "application/json".parse().unwrap(),
-                        )]),
-                        Body::from(
-                            serde_json::to_string(&ApiError::new(
-                                "failed to get backup file contents",
-                            ))
-                            .unwrap(),
-                        ),
-                    );
+                    return ApiResponse::error("failed to get backup file contents")
+                        .with_status(StatusCode::EXPECTATION_FAILED)
+                        .ok();
                 }
             }
         }
@@ -133,46 +109,26 @@ mod get {
                 if !metadata.is_file()
                     || server.filesystem.is_ignored(&path, metadata.is_dir()).await
                 {
-                    return (
-                        StatusCode::NOT_FOUND,
-                        HeaderMap::from_iter([(
-                            "Content-Type".parse().unwrap(),
-                            "application/json".parse().unwrap(),
-                        )]),
-                        Body::from(
-                            serde_json::to_string(&ApiError::new("file not found")).unwrap(),
-                        ),
-                    );
+                    return ApiResponse::error("file not found")
+                        .with_status(StatusCode::NOT_FOUND)
+                        .ok();
                 }
 
                 metadata
             }
             Err(_) => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    HeaderMap::from_iter([(
-                        "Content-Type".parse().unwrap(),
-                        "application/json".parse().unwrap(),
-                    )]),
-                    Body::from(serde_json::to_string(&ApiError::new("file not found")).unwrap()),
-                );
+                return ApiResponse::error("file not found")
+                    .with_status(StatusCode::NOT_FOUND)
+                    .ok();
             }
         };
 
         if let Some(max_size) = data.max_size
             && metadata.len() > max_size
         {
-            return (
-                StatusCode::PAYLOAD_TOO_LARGE,
-                HeaderMap::from_iter([(
-                    "Content-Type".parse().unwrap(),
-                    "application/json".parse().unwrap(),
-                )]),
-                Body::from(
-                    serde_json::to_string(&ApiError::new("file size exceeds maximum allowed size"))
-                        .unwrap(),
-                ),
-            );
+            return ApiResponse::error("file size exceeds maximum allowed size")
+                .with_status(StatusCode::PAYLOAD_TOO_LARGE)
+                .ok();
         }
 
         let mut file =
@@ -181,35 +137,18 @@ mod get {
             {
                 Some(file) => file,
                 None => {
-                    return (
-                        StatusCode::NOT_FOUND,
-                        HeaderMap::from_iter([(
-                            "Content-Type".parse().unwrap(),
-                            "application/json".parse().unwrap(),
-                        )]),
-                        Body::from(
-                            serde_json::to_string(&ApiError::new("file not found")).unwrap(),
-                        ),
-                    );
+                    return ApiResponse::error("file not found")
+                        .with_status(StatusCode::NOT_FOUND)
+                        .ok();
                 }
             };
 
         let size = match file.estimated_size().await {
             Some(size) => size,
             None => {
-                return (
-                    StatusCode::EXPECTATION_FAILED,
-                    HeaderMap::from_iter([(
-                        "Content-Type".parse().unwrap(),
-                        "application/json".parse().unwrap(),
-                    )]),
-                    Body::from(
-                        serde_json::to_string(&ApiError::new(
-                            "unable to retrieve estimated file size",
-                        ))
-                        .unwrap(),
-                    ),
-                );
+                return ApiResponse::error("unable to retrieve estimated file size")
+                    .with_status(StatusCode::EXPECTATION_FAILED)
+                    .ok();
             }
         };
 
@@ -223,17 +162,9 @@ mod get {
                     err,
                 );
 
-                return (
-                    StatusCode::EXPECTATION_FAILED,
-                    HeaderMap::from_iter([(
-                        "Content-Type".parse().unwrap(),
-                        "application/json".parse().unwrap(),
-                    )]),
-                    Body::from(
-                        serde_json::to_string(&ApiError::new("unable to open file for reading"))
-                            .unwrap(),
-                    ),
-                );
+                return ApiResponse::error("unable to open file for reading")
+                    .with_status(StatusCode::EXPECTATION_FAILED)
+                    .ok();
             }
         };
 
@@ -249,20 +180,16 @@ mod get {
                         path.file_name().unwrap().to_str().unwrap().to_string(),
                     )
                 )
-                .parse()
-                .unwrap(),
+                .parse()?,
             );
-            headers.insert("Content-Type", "application/octet-stream".parse().unwrap());
+            headers.insert("Content-Type", "application/octet-stream".parse()?);
         }
 
-        (
-            StatusCode::OK,
-            headers,
-            Body::from_stream(tokio_util::io::ReaderStream::with_capacity(
-                reader,
-                crate::BUFFER_SIZE,
-            )),
-        )
+        ApiResponse::new(Body::from_stream(
+            tokio_util::io::ReaderStream::with_capacity(reader, crate::BUFFER_SIZE),
+        ))
+        .with_headers(headers)
+        .ok()
     }
 }
 

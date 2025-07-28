@@ -1,6 +1,6 @@
 [package]
 name = "wings-rs"
-version = "0.16.12"
+version = "0.16.13"
 edition = "2024"
 
 [dependencies]
@@ -18,7 +18,6 @@ serde_json = { workspace = true }
 utoipa = { workspace = true }
 utoipa-axum = { workspace = true }
 reqwest = { workspace = true }
-tower-http = { workspace = true }
 tokio = { workspace = true }
 colored = "3.0.0"
 chrono = { workspace = true }

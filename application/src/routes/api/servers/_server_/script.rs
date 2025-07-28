@@ -3,7 +3,8 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod post {
     use crate::{
-        routes::{ApiError, GetState, api::servers::_server_::GetServer},
+        response::{ApiResponse, ApiResponseResult},
+        routes::{GetState, api::servers::_server_::GetServer},
         server::installation::InstallationScript,
     };
     use axum::http::StatusCode;
@@ -29,12 +30,9 @@ mod post {
         state: GetState,
         server: GetServer,
         axum::Json(data): axum::Json<InstallationScript>,
-    ) -> (StatusCode, axum::Json<serde_json::Value>) {
+    ) -> ApiResponseResult {
         match crate::server::script::script_server(&server, &state.docker, data).await {
-            Ok((stdout, stderr)) => (
-                StatusCode::OK,
-                axum::Json(serde_json::to_value(Response { stdout, stderr }).unwrap()),
-            ),
+            Ok((stdout, stderr)) => ApiResponse::json(Response { stdout, stderr }).ok(),
             Err(err) => {
                 tracing::error!(
                     server = %server.uuid,
@@ -42,12 +40,9 @@ mod post {
                     err
                 );
 
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    axum::Json(
-                        serde_json::to_value(ApiError::new("failed to run server script")).unwrap(),
-                    ),
-                )
+                ApiResponse::error("failed to run server script")
+                    .with_status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .ok()
             }
         }
     }

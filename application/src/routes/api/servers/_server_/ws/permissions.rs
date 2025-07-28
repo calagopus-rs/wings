@@ -2,7 +2,11 @@ use super::State;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod post {
-    use crate::{routes::api::servers::_server_::GetServer, server::permissions::Permissions};
+    use crate::{
+        response::{ApiResponse, ApiResponseResult},
+        routes::api::servers::_server_::GetServer,
+        server::permissions::Permissions,
+    };
     use serde::{Deserialize, Serialize};
     use utoipa::ToSchema;
 
@@ -37,7 +41,7 @@ mod post {
     pub async fn route(
         server: GetServer,
         axum::Json(data): axum::Json<Payload>,
-    ) -> axum::Json<serde_json::Value> {
+    ) -> ApiResponseResult {
         for user_permission in data.user_permissions {
             server
                 .user_permissions
@@ -49,7 +53,7 @@ mod post {
                 .await;
         }
 
-        axum::Json(serde_json::to_value(Response {}).unwrap())
+        ApiResponse::json(Response {}).ok()
     }
 }
 

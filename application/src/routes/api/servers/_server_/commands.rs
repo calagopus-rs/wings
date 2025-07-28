@@ -2,7 +2,10 @@ use super::State;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod post {
-    use crate::routes::{ApiError, api::servers::_server_::GetServer};
+    use crate::{
+        response::{ApiResponse, ApiResponseResult},
+        routes::{ApiError, api::servers::_server_::GetServer},
+    };
     use axum::http::StatusCode;
     use serde::{Deserialize, Serialize};
     use utoipa::ToSchema;
@@ -28,12 +31,11 @@ mod post {
     pub async fn route(
         server: GetServer,
         axum::Json(data): axum::Json<Payload>,
-    ) -> (StatusCode, axum::Json<serde_json::Value>) {
+    ) -> ApiResponseResult {
         if server.state.get_state() == crate::server::state::ServerState::Offline {
-            return (
-                StatusCode::EXPECTATION_FAILED,
-                axum::Json(ApiError::new("server is offline").to_json()),
-            );
+            return ApiResponse::error("server is offline")
+                .with_status(StatusCode::EXPECTATION_FAILED)
+                .ok();
         }
 
         if let Some(stdin) = server.container_stdin().await {
@@ -43,16 +45,12 @@ mod post {
                 stdin.send(command).await.ok();
             }
         } else {
-            return (
-                StatusCode::EXPECTATION_FAILED,
-                axum::Json(ApiError::new("failed to get stdin (is server offline?)").to_json()),
-            );
+            return ApiResponse::error("failed to get stdin (is server offline?)")
+                .with_status(StatusCode::EXPECTATION_FAILED)
+                .ok();
         }
 
-        (
-            StatusCode::OK,
-            axum::Json(serde_json::to_value(Response {}).unwrap()),
-        )
+        ApiResponse::json(Response {}).ok()
     }
 }
 

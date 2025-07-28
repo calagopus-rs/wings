@@ -4,7 +4,10 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 mod _backup_;
 
 mod post {
-    use crate::routes::{ApiError, api::servers::_server_::GetServer};
+    use crate::{
+        response::{ApiResponse, ApiResponseResult},
+        routes::{ApiError, api::servers::_server_::GetServer},
+    };
     use axum::http::StatusCode;
     use serde::{Deserialize, Serialize};
     use utoipa::ToSchema;
@@ -20,7 +23,7 @@ mod post {
     struct Response {}
 
     #[utoipa::path(post, path = "/", responses(
-        (status = OK, body = inline(Response)),
+        (status = ACCEPTED, body = inline(Response)),
         (status = CONFLICT, body = ApiError),
     ), params(
         (
@@ -32,15 +35,14 @@ mod post {
     pub async fn route(
         server: GetServer,
         axum::Json(data): axum::Json<Payload>,
-    ) -> (StatusCode, axum::Json<serde_json::Value>) {
+    ) -> ApiResponseResult {
         if crate::server::backup::InternalBackup::list_for_adapter(&server, data.adapter)
             .await
             .is_ok_and(|backups| backups.contains(&data.uuid))
         {
-            return (
-                StatusCode::CONFLICT,
-                axum::Json(ApiError::new("backup already exists").to_json()),
-            );
+            return ApiResponse::error("backup already exists")
+                .with_status(StatusCode::CONFLICT)
+                .ok();
         }
 
         tokio::spawn(async move {
@@ -62,10 +64,9 @@ mod post {
             }
         });
 
-        (
-            StatusCode::OK,
-            axum::Json(serde_json::to_value(Response {}).unwrap()),
-        )
+        ApiResponse::json(Response {})
+            .with_status(StatusCode::ACCEPTED)
+            .ok()
     }
 }
 

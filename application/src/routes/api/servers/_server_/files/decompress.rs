@@ -2,7 +2,10 @@ use super::State;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod post {
-    use crate::routes::{ApiError, api::servers::_server_::GetServer};
+    use crate::{
+        response::{ApiResponse, ApiResponseResult},
+        routes::{ApiError, api::servers::_server_::GetServer},
+    };
     use axum::http::StatusCode;
     use serde::{Deserialize, Serialize};
     use utoipa::ToSchema;
@@ -32,23 +35,21 @@ mod post {
     pub async fn route(
         server: GetServer,
         axum::Json(data): axum::Json<Payload>,
-    ) -> (StatusCode, axum::Json<serde_json::Value>) {
+    ) -> ApiResponseResult {
         let root = match server.filesystem.canonicalize(data.root).await {
             Ok(path) => path,
             Err(_) => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    axum::Json(ApiError::new("root not found").to_json()),
-                );
+                return ApiResponse::error("root not found")
+                    .with_status(StatusCode::NOT_FOUND)
+                    .ok();
             }
         };
 
         let metadata = server.filesystem.metadata(&root).await;
         if !metadata.map(|m| m.is_dir()).unwrap_or(true) {
-            return (
-                StatusCode::EXPECTATION_FAILED,
-                axum::Json(ApiError::new("root is not a directory").to_json()),
-            );
+            return ApiResponse::error("root is not a directory")
+                .with_status(StatusCode::EXPECTATION_FAILED)
+                .ok();
         }
 
         let source = root.join(data.file);
@@ -65,10 +66,9 @@ mod post {
             )
             .await
         {
-            return (
-                StatusCode::NOT_FOUND,
-                axum::Json(ApiError::new("file not found").to_json()),
-            );
+            return ApiResponse::error("file not found")
+                .with_status(StatusCode::NOT_FOUND)
+                .ok();
         }
 
         let archive =
@@ -76,10 +76,9 @@ mod post {
             {
                 Some(archive) => archive,
                 None => {
-                    return (
-                        StatusCode::EXPECTATION_FAILED,
-                        axum::Json(ApiError::new("failed to open archive").to_json()),
-                    );
+                    return ApiResponse::error("failed to open archive")
+                        .with_status(StatusCode::EXPECTATION_FAILED)
+                        .ok();
                 }
             };
 
@@ -93,12 +92,9 @@ mod post {
                     err,
                 );
 
-                return (
-                    StatusCode::EXPECTATION_FAILED,
-                    axum::Json(
-                        ApiError::new(&format!("failed to decompress archive: {err}")).to_json(),
-                    ),
-                );
+                return ApiResponse::error(&format!("failed to decompress archive: {err}"))
+                    .with_status(StatusCode::EXPECTATION_FAILED)
+                    .ok();
             }
             Err(err) => {
                 tracing::error!(
@@ -108,19 +104,15 @@ mod post {
                     err,
                 );
 
-                return (
-                    StatusCode::EXPECTATION_FAILED,
-                    axum::Json(ApiError::new("failed to decompress archive").to_json()),
-                );
+                return ApiResponse::error("failed to decompress archive")
+                    .with_status(StatusCode::EXPECTATION_FAILED)
+                    .ok();
             }
         }
 
         server.filesystem.chown_path(&root).await;
 
-        (
-            StatusCode::OK,
-            axum::Json(serde_json::to_value(Response {}).unwrap()),
-        )
+        ApiResponse::json(Response {}).ok()
     }
 }
 

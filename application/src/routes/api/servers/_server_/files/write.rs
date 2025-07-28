@@ -2,7 +2,10 @@ use super::State;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod post {
-    use crate::routes::{ApiError, api::servers::_server_::GetServer};
+    use crate::{
+        response::{ApiResponse, ApiResponseResult},
+        routes::{ApiError, api::servers::_server_::GetServer},
+    };
     use axum::{
         body::Body,
         extract::Query,
@@ -42,7 +45,7 @@ mod post {
         headers: HeaderMap,
         Query(data): Query<Params>,
         body: Body,
-    ) -> (StatusCode, axum::Json<serde_json::Value>) {
+    ) -> ApiResponseResult {
         let path = match server.filesystem.canonicalize(&data.file).await {
             Ok(path) => path,
             Err(_) => PathBuf::from(data.file),
@@ -63,18 +66,16 @@ mod post {
             )
             .await
         {
-            return (
-                StatusCode::NOT_FOUND,
-                axum::Json(ApiError::new("file not found").to_json()),
-            );
+            return ApiResponse::error("file not found")
+                .with_status(StatusCode::NOT_FOUND)
+                .ok();
         }
 
         let old_content_size = if let Ok(metadata) = metadata {
             if !metadata.is_file() {
-                return (
-                    StatusCode::NOT_FOUND,
-                    axum::Json(ApiError::new("file is not a file").to_json()),
-                );
+                return ApiResponse::error("file is not a file")
+                    .with_status(StatusCode::EXPECTATION_FAILED)
+                    .ok();
             }
 
             metadata.len() as i64
@@ -83,35 +84,31 @@ mod post {
         };
 
         let parent = path.parent().unwrap();
-        server.filesystem.create_dir_all(parent).await.unwrap();
+        server.filesystem.create_dir_all(parent).await?;
 
         if !server
             .filesystem
             .allocate_in_path(parent, content_size - old_content_size)
             .await
         {
-            return (
-                StatusCode::EXPECTATION_FAILED,
-                axum::Json(ApiError::new("failed to allocate space").to_json()),
-            );
+            return ApiResponse::error("failed to allocate space")
+                .with_status(StatusCode::EXPECTATION_FAILED)
+                .ok();
         }
 
-        let mut file = server.filesystem.create(&path).await.unwrap();
+        let mut file = server.filesystem.create(&path).await?;
         let mut stream = body.into_data_stream();
 
         while let Some(Ok(chunk)) = stream.next().await {
-            file.write_all(&chunk).await.unwrap();
+            file.write_all(&chunk).await?;
         }
 
-        file.flush().await.unwrap();
-        file.sync_all().await.unwrap();
+        file.flush().await?;
+        file.sync_all().await?;
 
         server.filesystem.chown_path(&path).await;
 
-        (
-            StatusCode::OK,
-            axum::Json(serde_json::to_value(Response {}).unwrap()),
-        )
+        ApiResponse::json(Response {}).ok()
     }
 }
 

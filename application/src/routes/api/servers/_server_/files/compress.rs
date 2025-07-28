@@ -3,6 +3,7 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod post {
     use crate::{
+        response::{ApiResponse, ApiResponseResult},
         routes::{ApiError, GetState, api::servers::_server_::GetServer},
         server::filesystem::archive::CompressionType,
     };
@@ -51,23 +52,21 @@ mod post {
         state: GetState,
         server: GetServer,
         axum::Json(data): axum::Json<Payload>,
-    ) -> (StatusCode, axum::Json<serde_json::Value>) {
+    ) -> ApiResponseResult {
         let root = match server.filesystem.canonicalize(data.root).await {
             Ok(path) => path,
             Err(_) => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    axum::Json(ApiError::new("root not found").to_json()),
-                );
+                return ApiResponse::error("root not found")
+                    .with_status(StatusCode::NOT_FOUND)
+                    .ok();
             }
         };
 
         let metadata = server.filesystem.symlink_metadata(&root).await;
         if !metadata.map(|m| m.is_dir()).unwrap_or(true) {
-            return (
-                StatusCode::EXPECTATION_FAILED,
-                axum::Json(ApiError::new("root is not a directory").to_json()),
-            );
+            return ApiResponse::error("root is not a directory")
+                .with_status(StatusCode::EXPECTATION_FAILED)
+                .ok();
         }
 
         let file_name = data.name.unwrap_or_else(|| {
@@ -88,10 +87,9 @@ mod post {
         let file_name = root.join(file_name);
 
         if server.filesystem.is_ignored(&file_name, false).await {
-            return (
-                StatusCode::EXPECTATION_FAILED,
-                axum::Json(ApiError::new("file not found").to_json()),
-            );
+            return ApiResponse::error("file not found")
+                .with_status(StatusCode::EXPECTATION_FAILED)
+                .ok();
         }
 
         match tokio::spawn({
@@ -173,12 +171,9 @@ mod post {
                     err,
                 );
 
-                return (
-                    StatusCode::EXPECTATION_FAILED,
-                    axum::Json(
-                        ApiError::new(&format!("failed to compress files: {err}")).to_json(),
-                    ),
-                );
+                return ApiResponse::error(&format!("failed to compress files: {err}"))
+                    .with_status(StatusCode::EXPECTATION_FAILED)
+                    .ok();
             }
             Err(err) => {
                 tracing::error!(
@@ -188,26 +183,15 @@ mod post {
                     err,
                 );
 
-                return (
-                    StatusCode::EXPECTATION_FAILED,
-                    axum::Json(ApiError::new("failed to compress files").to_json()),
-                );
+                return ApiResponse::error("failed to compress files")
+                    .with_status(StatusCode::EXPECTATION_FAILED)
+                    .ok();
             }
         }
 
-        let metadata = server
-            .filesystem
-            .symlink_metadata(&file_name)
-            .await
-            .unwrap();
+        let metadata = server.filesystem.symlink_metadata(&file_name).await?;
 
-        (
-            StatusCode::OK,
-            axum::Json(
-                serde_json::to_value(server.filesystem.to_api_entry(file_name, metadata).await)
-                    .unwrap(),
-            ),
-        )
+        ApiResponse::json(server.filesystem.to_api_entry(file_name, metadata).await).ok()
     }
 }
 

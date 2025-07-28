@@ -2,7 +2,10 @@ use super::State;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod get {
-    use crate::routes::GetState;
+    use crate::{
+        response::{ApiResponse, ApiResponseResult},
+        routes::GetState,
+    };
     use axum::{
         body::Body,
         extract::Query,
@@ -38,35 +41,26 @@ mod get {
             description = "The JWT token to use for authentication",
         ),
     ))]
-    pub async fn route(
-        state: GetState,
-        Query(data): Query<Params>,
-    ) -> (StatusCode, HeaderMap, Body) {
+    pub async fn route(state: GetState, Query(data): Query<Params>) -> ApiResponseResult {
         let payload: FolderJwtPayload = match state.config.jwt.verify(&data.token) {
             Ok(payload) => payload,
             Err(_) => {
-                return (
-                    StatusCode::UNAUTHORIZED,
-                    HeaderMap::new(),
-                    Body::from("Invalid token"),
-                );
+                return ApiResponse::error("invalid token")
+                    .with_status(StatusCode::UNAUTHORIZED)
+                    .ok();
             }
         };
 
         if !payload.base.validate(&state.config.jwt).await {
-            return (
-                StatusCode::UNAUTHORIZED,
-                HeaderMap::new(),
-                Body::from("Invalid token"),
-            );
+            return ApiResponse::error("invalid token")
+                .with_status(StatusCode::UNAUTHORIZED)
+                .ok();
         }
 
         if !state.config.jwt.one_time_id(&payload.unique_id).await {
-            return (
-                StatusCode::UNAUTHORIZED,
-                HeaderMap::new(),
-                Body::from("Token has already been used"),
-            );
+            return ApiResponse::error("token has already been used")
+                .with_status(StatusCode::UNAUTHORIZED)
+                .ok();
         }
 
         let server = state
@@ -80,11 +74,9 @@ mod get {
         let server = match server {
             Some(server) => server,
             None => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    HeaderMap::new(),
-                    Body::from("Server not found"),
-                );
+                return ApiResponse::error("server not found")
+                    .with_status(StatusCode::NOT_FOUND)
+                    .ok();
             }
         };
 
@@ -109,23 +101,19 @@ mod get {
                 "attachment; filename={}",
                 serde_json::Value::String(folder_ascii)
             )
-            .parse()
-            .unwrap(),
+            .parse()?,
         );
-        headers.insert("Content-Type", "application/gzip".parse().unwrap());
+        headers.insert("Content-Type", "application/gzip".parse()?);
 
         if let Some((backup, path)) = server.filesystem.backup_fs(&server, &path).await {
             match crate::server::filesystem::backup::directory_reader(backup, &server, &path).await
             {
                 Ok(reader) => {
-                    return (
-                        StatusCode::OK,
-                        headers,
-                        Body::from_stream(tokio_util::io::ReaderStream::with_capacity(
-                            reader,
-                            crate::BUFFER_SIZE,
-                        )),
-                    );
+                    return ApiResponse::new(Body::from_stream(
+                        tokio_util::io::ReaderStream::with_capacity(reader, crate::BUFFER_SIZE),
+                    ))
+                    .with_headers(headers)
+                    .ok();
                 }
                 Err(err) => {
                     tracing::error!(
@@ -135,11 +123,9 @@ mod get {
                         "failed to get backup directory contents",
                     );
 
-                    return (
-                        StatusCode::EXPECTATION_FAILED,
-                        HeaderMap::new(),
-                        Body::from("Failed to retrieve backup folder contents"),
-                    );
+                    return ApiResponse::error("failed to retrieve backup folder contents")
+                        .with_status(StatusCode::EXPECTATION_FAILED)
+                        .ok();
                 }
             }
         }
@@ -147,18 +133,14 @@ mod get {
         let metadata = server.filesystem.symlink_metadata(&path).await;
         if let Ok(metadata) = metadata {
             if !metadata.is_dir() || server.filesystem.is_ignored(&path, metadata.is_dir()).await {
-                return (
-                    StatusCode::NOT_FOUND,
-                    HeaderMap::new(),
-                    Body::from("Folder not found"),
-                );
+                return ApiResponse::error("directory not found")
+                    .with_status(StatusCode::NOT_FOUND)
+                    .ok();
             }
         } else {
-            return (
-                StatusCode::NOT_FOUND,
-                HeaderMap::new(),
-                Body::from("Folder not found"),
-            );
+            return ApiResponse::error("directory not found")
+                .with_status(StatusCode::NOT_FOUND)
+                .ok();
         }
 
         let (writer, reader) = tokio::io::duplex(crate::BUFFER_SIZE);
@@ -203,14 +185,11 @@ mod get {
             }
         });
 
-        (
-            StatusCode::OK,
-            headers,
-            Body::from_stream(tokio_util::io::ReaderStream::with_capacity(
-                reader,
-                crate::BUFFER_SIZE,
-            )),
-        )
+        ApiResponse::new(Body::from_stream(
+            tokio_util::io::ReaderStream::with_capacity(reader, crate::BUFFER_SIZE),
+        ))
+        .with_headers(headers)
+        .ok()
     }
 }
 

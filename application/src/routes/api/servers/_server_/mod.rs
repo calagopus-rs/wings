@@ -78,7 +78,10 @@ pub async fn auth(
 }
 
 mod get {
-    use crate::routes::api::servers::_server_::GetServer;
+    use crate::{
+        response::{ApiResponse, ApiResponseResult},
+        routes::api::servers::_server_::GetServer,
+    };
 
     #[utoipa::path(get, path = "/", responses(
         (status = OK, body = crate::models::Server),
@@ -89,8 +92,8 @@ mod get {
             example = "123e4567-e89b-12d3-a456-426614174000",
         ),
     ))]
-    pub async fn route(server: GetServer) -> axum::Json<serde_json::Value> {
-        axum::Json(serde_json::to_value(server.to_api_response().await).unwrap())
+    pub async fn route(server: GetServer) -> ApiResponseResult {
+        ApiResponse::json(server.to_api_response().await).ok()
     }
 }
 

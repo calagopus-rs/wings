@@ -1,8 +1,5 @@
-use crate::remote::backups::RawServerBackup;
-use axum::{
-    body::Body,
-    http::{HeaderMap, StatusCode},
-};
+use crate::{remote::backups::RawServerBackup, response::ApiResponse};
+use axum::{body::Body, http::HeaderMap};
 use human_bytes::human_bytes;
 use std::{
     collections::HashMap,
@@ -432,7 +429,7 @@ pub async fn restore_backup(
 pub async fn download_backup(
     server: &crate::server::Server,
     uuid: uuid::Uuid,
-) -> Result<(StatusCode, HeaderMap, Body), anyhow::Error> {
+) -> Result<ApiResponse, anyhow::Error> {
     let base_path = get_backup_base_path(server, uuid).await?;
 
     let configuration = server.configuration.read().await;
@@ -479,14 +476,10 @@ pub async fn download_backup(
     );
     headers.insert("Content-Type", "application/gzip".parse().unwrap());
 
-    Ok((
-        StatusCode::OK,
-        headers,
-        Body::from_stream(tokio_util::io::ReaderStream::with_capacity(
-            reader,
-            crate::BUFFER_SIZE,
-        )),
+    Ok(ApiResponse::new(Body::from_stream(
+        tokio_util::io::ReaderStream::with_capacity(reader, crate::BUFFER_SIZE),
     ))
+    .with_headers(headers))
 }
 
 pub async fn delete_backup(

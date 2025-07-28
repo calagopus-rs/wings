@@ -2,7 +2,10 @@ use super::State;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod post {
-    use crate::routes::GetState;
+    use crate::{
+        response::{ApiResponse, ApiResponseResult},
+        routes::GetState,
+    };
     use serde::{Deserialize, Serialize};
     use utoipa::ToSchema;
 
@@ -56,9 +59,9 @@ mod post {
     pub async fn route(
         state: GetState,
         axum::Json(data): axum::Json<Payload>,
-    ) -> axum::Json<serde_json::Value> {
+    ) -> ApiResponseResult {
         if state.config.ignore_panel_config_updates {
-            return axum::Json(serde_json::to_value(Response { applied: false }).unwrap());
+            return ApiResponse::json(Response { applied: false }).ok();
         }
 
         let config = state.config.unsafe_mut();
@@ -110,12 +113,9 @@ mod post {
             config.ignore_panel_config_updates = ignore_panel_config_updates;
         }
 
-        tokio::task::spawn_blocking(move || state.config.save())
-            .await
-            .unwrap()
-            .unwrap();
+        tokio::task::spawn_blocking(move || state.config.save()).await??;
 
-        axum::Json(serde_json::to_value(Response { applied: true }).unwrap())
+        ApiResponse::json(Response { applied: true }).ok()
     }
 }
 
