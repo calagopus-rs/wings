@@ -14,20 +14,20 @@ use std::{
 use tokio::process::Command;
 
 #[inline]
-pub fn get_backup_path(server: &crate::server::Server, uuid: uuid::Uuid) -> PathBuf {
-    Path::new(&server.config.system.backup_directory)
+pub fn get_backup_path(config: &crate::config::Config, uuid: uuid::Uuid) -> PathBuf {
+    Path::new(&config.system.backup_directory)
         .join("btrfs")
         .join(uuid.to_string())
 }
 
 #[inline]
-pub fn get_subvolume_path(server: &crate::server::Server, uuid: uuid::Uuid) -> PathBuf {
-    get_backup_path(server, uuid).join("subvolume")
+pub fn get_subvolume_path(config: &crate::config::Config, uuid: uuid::Uuid) -> PathBuf {
+    get_backup_path(config, uuid).join("subvolume")
 }
 
 #[inline]
-pub fn get_ignored(server: &crate::server::Server, uuid: uuid::Uuid) -> PathBuf {
-    get_backup_path(server, uuid).join("ignored")
+pub fn get_ignored(config: &crate::config::Config, uuid: uuid::Uuid) -> PathBuf {
+    get_backup_path(config, uuid).join("ignored")
 }
 
 pub async fn create_backup(
@@ -36,10 +36,10 @@ pub async fn create_backup(
     ignore: ignore::gitignore::Gitignore,
     ignore_raw: String,
 ) -> Result<RawServerBackup, anyhow::Error> {
-    let subvolume_path = get_subvolume_path(&server, uuid);
-    let ignored_path = get_ignored(&server, uuid);
+    let subvolume_path = get_subvolume_path(&server.config, uuid);
+    let ignored_path = get_ignored(&server.config, uuid);
 
-    tokio::fs::create_dir_all(get_backup_path(&server, uuid)).await?;
+    tokio::fs::create_dir_all(get_backup_path(&server.config, uuid)).await?;
 
     let total_task = {
         let server = server.clone();
@@ -154,8 +154,8 @@ pub async fn restore_backup(
     progress: Arc<AtomicU64>,
     total: Arc<AtomicU64>,
 ) -> Result<(), anyhow::Error> {
-    let subvolume_path = get_subvolume_path(&server, uuid);
-    let ignored_path = get_ignored(&server, uuid);
+    let subvolume_path = get_subvolume_path(&server.config, uuid);
+    let ignored_path = get_ignored(&server.config, uuid);
 
     let mut override_builder = OverrideBuilder::new(&subvolume_path);
 
@@ -308,11 +308,11 @@ pub async fn restore_backup(
 }
 
 pub async fn download_backup(
-    server: &crate::server::Server,
+    config: &crate::config::Config,
     uuid: uuid::Uuid,
 ) -> Result<ApiResponse, anyhow::Error> {
-    let subvolume_path = get_subvolume_path(server, uuid);
-    let ignored_path = get_ignored(server, uuid);
+    let subvolume_path = get_subvolume_path(config, uuid);
+    let ignored_path = get_ignored(config, uuid);
 
     if !subvolume_path.exists() {
         return Err(anyhow::anyhow!(
@@ -337,7 +337,6 @@ pub async fn download_backup(
         }
     }
 
-    let server = server.clone();
     tokio::task::spawn_blocking(move || {
         let writer = tokio_util::io::SyncIoBridge::new(writer);
         let writer = flate2::write::GzEncoder::new(writer, flate2::Compression::default());
@@ -367,17 +366,8 @@ pub async fn download_backup(
 
             let metadata = match entry.metadata() {
                 Ok(metadata) => metadata,
-                Err(_) => {
-                    continue;
-                }
+                Err(_) => continue,
             };
-
-            if server
-                .filesystem
-                .is_ignored_sync(entry.path(), metadata.is_dir())
-            {
-                continue;
-            }
 
             if metadata.is_dir() {
                 tar.append_dir(path, entry.path()).ok();
@@ -409,10 +399,10 @@ pub async fn download_backup(
 }
 
 pub async fn delete_backup(
-    server: &crate::server::Server,
+    config: &crate::config::Config,
     uuid: uuid::Uuid,
 ) -> Result<(), anyhow::Error> {
-    let subvolume_path = get_subvolume_path(server, uuid);
+    let subvolume_path = get_subvolume_path(config, uuid);
 
     if !subvolume_path.exists() {
         return Ok(());
@@ -442,8 +432,7 @@ pub async fn delete_backup(
 
                     if !output.status.success() {
                         tracing::warn!(
-                            server = %server.uuid,
-                            "failed to destroy Btrfs qgroup: {}",
+                            "failed to destroy btrfs qgroup: {}",
                             String::from_utf8_lossy(&output.stderr)
                         );
                     }
@@ -470,10 +459,10 @@ pub async fn delete_backup(
 }
 
 pub async fn list_backups(
-    server: &crate::server::Server,
+    config: &crate::config::Config,
 ) -> Result<Vec<uuid::Uuid>, anyhow::Error> {
     let mut backups = Vec::new();
-    let path = Path::new(&server.config.system.backup_directory).join("btrfs");
+    let path = Path::new(&config.system.backup_directory).join("btrfs");
 
     if tokio::fs::metadata(&path).await.is_err() {
         return Ok(backups);

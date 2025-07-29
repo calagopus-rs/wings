@@ -16,7 +16,7 @@ impl Client {
         headers.insert(
             "User-Agent",
             format!(
-                "Pterodactyl Wings/v{} (id:{})",
+                "pterodactyl-rs wings/v{} (id:{})",
                 crate::VERSION,
                 config.token_id
             )
@@ -159,5 +159,13 @@ impl Client {
     ) -> Result<(u64, Vec<String>), anyhow::Error> {
         tracing::info!("getting backup upload urls");
         super::backups::backup_upload_urls(self, uuid, size).await
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn backup_configurations(
+        &self,
+    ) -> Result<super::backups::BackupConfigurations, anyhow::Error> {
+        tracing::info!("fetching backup configurations");
+        super::backups::backup_configurations(self).await
     }
 }

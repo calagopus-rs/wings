@@ -12,6 +12,7 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
+use tokio::sync::RwLock;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 
@@ -481,8 +482,6 @@ nestify::nest! {
                     #[serde(default = "system_backup_restic_retry_lock_seconds")]
                     pub retry_lock_seconds: u64,
                     #[serde(default)]
-                    pub ignore_server_backup_list: bool,
-                    #[serde(default)]
                     pub environment: BTreeMap<String, String>,
                 },
                 #[serde(default)]
@@ -684,6 +683,7 @@ pub struct Config {
 
     pub path: String,
     pub ignore_certificate_errors: bool,
+    pub backup_configurations: RwLock<crate::remote::backups::BackupConfigurations>,
     pub client: crate::remote::client::Client,
     pub jwt: crate::remote::jwt::JwtClient,
 }
@@ -706,6 +706,7 @@ impl Config {
         let jwt = crate::remote::jwt::JwtClient::new(&config.token);
         let mut config = Self {
             inner: UnsafeCell::new(config),
+            backup_configurations: Default::default(),
 
             path: path.to_string(),
             ignore_certificate_errors,

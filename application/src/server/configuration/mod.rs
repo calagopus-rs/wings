@@ -1,9 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_default::DefaultFromSerde;
-use std::{
-    collections::{BTreeMap, HashMap},
-    path::PathBuf,
-};
+use std::{collections::HashMap, path::PathBuf};
 use utoipa::ToSchema;
 
 pub mod process;
@@ -46,18 +43,6 @@ nestify::nest! {
         pub environment: HashMap<String, serde_json::Value>,
         #[serde(default)]
         pub labels: HashMap<String, String>,
-
-        #[serde(default)]
-        #[schema(inline)]
-        pub backup_configurations: #[derive(ToSchema, Deserialize, Serialize, DefaultFromSerde)] pub struct ServerConfigurationBackupConfigurations {
-            #[serde(default)]
-            #[schema(inline)]
-            pub restic: Option<#[derive(ToSchema, Deserialize, Serialize)] pub struct ServerConfigurationBackupConfigurationsRestic {
-                pub repository: String,
-                pub retry_lock_seconds: u64,
-                pub environment: BTreeMap<String, String>,
-            }>,
-        },
         #[serde(default)]
         pub backups: Vec<uuid::Uuid>,
 

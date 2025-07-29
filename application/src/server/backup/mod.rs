@@ -181,7 +181,7 @@ impl InternalBackup {
                         },
                     )
                     .await?;
-                internal_backup.delete(server).await.ok();
+                internal_backup.delete(&server.config).await.ok();
 
                 return Err(e);
             }
@@ -214,7 +214,7 @@ impl InternalBackup {
         let variants = BackupAdapter::variants();
         let mut results = Vec::with_capacity(variants.len());
         for adapter in variants.iter().copied() {
-            results.push(Self::list_for_adapter(server, adapter));
+            results.push(Self::list_for_adapter(&server.config, adapter));
         }
 
         let mut backups = Vec::new();
@@ -240,28 +240,28 @@ impl InternalBackup {
     }
 
     pub async fn list_for_adapter(
-        server: &crate::server::Server,
+        config: &Arc<crate::config::Config>,
         adapter: BackupAdapter,
     ) -> Result<Vec<uuid::Uuid>, anyhow::Error> {
         match adapter {
-            BackupAdapter::Wings => wings::list_backups(server).await,
+            BackupAdapter::Wings => wings::list_backups(config).await,
             BackupAdapter::S3 => Ok(Vec::new()),
-            BackupAdapter::DdupBak => ddup_bak::list_backups(server).await,
-            BackupAdapter::Btrfs => btrfs::list_backups(server).await,
-            BackupAdapter::Zfs => zfs::list_backups(server).await,
-            BackupAdapter::Restic => restic::list_backups(server).await,
+            BackupAdapter::DdupBak => ddup_bak::list_backups(config).await,
+            BackupAdapter::Btrfs => btrfs::list_backups(config).await,
+            BackupAdapter::Zfs => zfs::list_backups(config).await,
+            BackupAdapter::Restic => restic::list_backups(config).await,
         }
     }
 
-    pub async fn find(server: &crate::server::Server, uuid: uuid::Uuid) -> Option<Self> {
+    pub async fn find(config: &Arc<crate::config::Config>, uuid: uuid::Uuid) -> Option<Self> {
         for adapter in BackupAdapter::variants() {
             match match adapter {
-                BackupAdapter::Wings => wings::list_backups(server).await,
+                BackupAdapter::Wings => wings::list_backups(config).await,
                 BackupAdapter::S3 => Ok(Vec::new()),
-                BackupAdapter::DdupBak => ddup_bak::list_backups(server).await,
-                BackupAdapter::Btrfs => btrfs::list_backups(server).await,
-                BackupAdapter::Zfs => zfs::list_backups(server).await,
-                BackupAdapter::Restic => restic::list_backups(server).await,
+                BackupAdapter::DdupBak => ddup_bak::list_backups(config).await,
+                BackupAdapter::Btrfs => btrfs::list_backups(config).await,
+                BackupAdapter::Zfs => zfs::list_backups(config).await,
+                BackupAdapter::Restic => restic::list_backups(config).await,
             } {
                 Ok(uuids) => {
                     if uuids.contains(&uuid) {
@@ -271,12 +271,12 @@ impl InternalBackup {
                         });
                     }
                 }
-                Err(e) => {
+                Err(err) => {
                     tracing::error!(
-                        "Failed to find backup {} for adapter {:?}: {}",
+                        "failed to find backup {} for adapter {:?}: {:#?}",
                         uuid,
                         adapter,
-                        e
+                        err
                     );
                 }
             }
@@ -429,40 +429,38 @@ impl InternalBackup {
 
     pub async fn download(
         &self,
-        server: &crate::server::Server,
+        config: &Arc<crate::config::Config>,
     ) -> Result<ApiResponse, anyhow::Error> {
         tracing::info!(
-            server = %server.uuid,
             backup = %self.uuid,
             adapter = ?self.adapter,
             "downloading backup",
         );
 
         match self.adapter {
-            BackupAdapter::Wings => wings::download_backup(server, self.uuid).await,
+            BackupAdapter::Wings => wings::download_backup(config, self.uuid).await,
             BackupAdapter::S3 => unimplemented!(),
-            BackupAdapter::DdupBak => ddup_bak::download_backup(server, self.uuid).await,
-            BackupAdapter::Btrfs => btrfs::download_backup(server, self.uuid).await,
-            BackupAdapter::Zfs => zfs::download_backup(server, self.uuid).await,
-            BackupAdapter::Restic => restic::download_backup(server, self.uuid).await,
+            BackupAdapter::DdupBak => ddup_bak::download_backup(config, self.uuid).await,
+            BackupAdapter::Btrfs => btrfs::download_backup(config, self.uuid).await,
+            BackupAdapter::Zfs => zfs::download_backup(config, self.uuid).await,
+            BackupAdapter::Restic => restic::download_backup(config, self.uuid).await,
         }
     }
 
-    pub async fn delete(&self, server: &crate::server::Server) -> Result<(), anyhow::Error> {
+    pub async fn delete(&self, config: &Arc<crate::config::Config>) -> Result<(), anyhow::Error> {
         tracing::info!(
-            server = %server.uuid,
             backup = %self.uuid,
             adapter = ?self.adapter,
             "deleting backup",
         );
 
         match self.adapter {
-            BackupAdapter::Wings => wings::delete_backup(server, self.uuid).await,
-            BackupAdapter::S3 => s3::delete_backup(server, self.uuid).await,
-            BackupAdapter::DdupBak => ddup_bak::delete_backup(server, self.uuid).await,
-            BackupAdapter::Btrfs => btrfs::delete_backup(server, self.uuid).await,
-            BackupAdapter::Zfs => zfs::delete_backup(server, self.uuid).await,
-            BackupAdapter::Restic => restic::delete_backup(server, self.uuid).await,
+            BackupAdapter::Wings => wings::delete_backup(config, self.uuid).await,
+            BackupAdapter::S3 => s3::delete_backup(config, self.uuid).await,
+            BackupAdapter::DdupBak => ddup_bak::delete_backup(config, self.uuid).await,
+            BackupAdapter::Btrfs => btrfs::delete_backup(config, self.uuid).await,
+            BackupAdapter::Zfs => zfs::delete_backup(config, self.uuid).await,
+            BackupAdapter::Restic => restic::delete_backup(config, self.uuid).await,
         }
     }
 }

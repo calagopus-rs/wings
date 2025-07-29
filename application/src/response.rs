@@ -70,7 +70,7 @@ where
     #[inline]
     fn from(err: T) -> Self {
         let err = err.into();
-        tracing::error!("request error occurred: {:#?}", err);
+        tracing::error!("a request error occurred: {:#?}", err);
 
         ApiResponse::json(ApiError::new("internal server error"))
             .with_status(axum::http::StatusCode::INTERNAL_SERVER_ERROR)

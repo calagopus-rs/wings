@@ -249,7 +249,7 @@ impl OutgoingServerTransfer {
                     if let Some(backup) = backup_list.iter().find(|b| b.uuid == *backup) {
                         match backup.adapter {
                             super::backup::BackupAdapter::Wings => {
-                                let file_name = match super::backup::wings::get_first_file_name(&server, backup.uuid).await {
+                                let file_name = match super::backup::wings::get_first_file_name(&server.config, backup.uuid).await {
                                     Ok((_, file_name)) => file_name,
                                     Err(err) => {
                                         tracing::error!(
@@ -397,7 +397,7 @@ impl OutgoingServerTransfer {
                 match backup_list.iter().find(|b| b.uuid == backup) {
                     Some(backup) => {
                         if delete_backups {
-                            if let Err(err) = backup.delete(&server).await {
+                            if let Err(err) = backup.delete(&server.config).await {
                                 tracing::error!(
                                     server = %server.uuid,
                                     "failed to delete backup {}: {}",

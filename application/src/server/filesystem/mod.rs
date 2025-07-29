@@ -364,7 +364,7 @@ impl Filesystem {
             return None;
         }
 
-        match crate::server::backup::InternalBackup::find(server, uuid).await {
+        match crate::server::backup::InternalBackup::find(&server.config, uuid).await {
             Some(backup) => Some((
                 backup,
                 backup_path

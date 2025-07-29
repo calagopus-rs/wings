@@ -105,8 +105,8 @@ impl AsyncRead for BoundedReader {
 }
 
 #[inline]
-fn get_file_name(server: &crate::server::Server, uuid: uuid::Uuid) -> PathBuf {
-    Path::new(&server.config.system.backup_directory).join(format!("{uuid}.s3.tar.gz"))
+fn get_file_name(config: &crate::config::Config, uuid: uuid::Uuid) -> PathBuf {
+    Path::new(&config.system.backup_directory).join(format!("{uuid}.s3.tar.gz"))
 }
 
 pub async fn create_backup(
@@ -116,7 +116,7 @@ pub async fn create_backup(
     total: Arc<AtomicU64>,
     ignore: ignore::gitignore::Gitignore,
 ) -> Result<RawServerBackup, anyhow::Error> {
-    let file_name = get_file_name(&server, uuid);
+    let file_name = get_file_name(&server.config, uuid);
     let writer = tokio::fs::File::create(&file_name).await?;
 
     let total_task = {
@@ -403,10 +403,10 @@ pub async fn restore_backup(
 }
 
 pub async fn delete_backup(
-    server: &crate::server::Server,
+    config: &Arc<crate::config::Config>,
     uuid: uuid::Uuid,
 ) -> Result<(), anyhow::Error> {
-    let file_name = get_file_name(server, uuid);
+    let file_name = get_file_name(config, uuid);
     if file_name.exists() {
         tokio::fs::remove_file(&file_name).await?;
     }

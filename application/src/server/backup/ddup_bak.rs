@@ -18,13 +18,13 @@ use tokio::{io::AsyncReadExt, sync::RwLock};
 static REPOSITORY: RwLock<Option<Arc<ddup_bak::repository::Repository>>> = RwLock::const_new(None);
 
 pub async fn get_repository(
-    server: &crate::server::Server,
+    config: &crate::config::Config,
 ) -> Arc<ddup_bak::repository::Repository> {
     if let Some(repository) = REPOSITORY.read().await.as_ref() {
         return Arc::clone(repository);
     }
 
-    let path = PathBuf::from(&server.config.system.backup_directory);
+    let path = PathBuf::from(&config.system.backup_directory);
     if path.join(".ddup-bak").exists() {
         let repository = Arc::new(
             tokio::task::spawn_blocking(move || {
@@ -59,7 +59,7 @@ pub async fn create_backup(
     ignore: ignore::gitignore::Gitignore,
     ignore_raw: String,
 ) -> Result<RawServerBackup, anyhow::Error> {
-    let repository = get_repository(&server).await;
+    let repository = get_repository(&server.config).await;
     let path = repository.archive_path(&uuid.to_string());
 
     let total_task = {
@@ -188,7 +188,7 @@ pub async fn restore_backup(
     progress: Arc<AtomicU64>,
     total: Arc<AtomicU64>,
 ) -> Result<(), anyhow::Error> {
-    let repository = get_repository(&server).await;
+    let repository = get_repository(&server.config).await;
 
     let runtime = tokio::runtime::Handle::current();
     tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
@@ -292,10 +292,10 @@ pub async fn restore_backup(
 }
 
 pub async fn download_backup(
-    server: &crate::server::Server,
+    config: &crate::config::Config,
     uuid: uuid::Uuid,
 ) -> Result<ApiResponse, anyhow::Error> {
-    let repository = get_repository(server).await;
+    let repository = get_repository(config).await;
     let archive = repository.get_archive(&uuid.to_string())?;
 
     let (writer, reader) = tokio::io::duplex(crate::BUFFER_SIZE);
@@ -455,10 +455,10 @@ pub fn tar_recursive_convert_entries(
 }
 
 pub async fn delete_backup(
-    server: &crate::server::Server,
+    config: &crate::config::Config,
     uuid: uuid::Uuid,
 ) -> Result<(), anyhow::Error> {
-    let repository = get_repository(server).await;
+    let repository = get_repository(config).await;
 
     tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
         repository.delete_archive(&uuid.to_string(), None)?;
@@ -472,9 +472,9 @@ pub async fn delete_backup(
 }
 
 pub async fn list_backups(
-    server: &crate::server::Server,
+    config: &crate::config::Config,
 ) -> Result<Vec<uuid::Uuid>, anyhow::Error> {
-    let repository = get_repository(server).await;
+    let repository = get_repository(config).await;
     let mut backups = Vec::new();
 
     for archive in tokio::task::spawn_blocking(move || repository.list_archives()).await?? {

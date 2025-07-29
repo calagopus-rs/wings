@@ -8,6 +8,7 @@ use axum::{
 };
 use utoipa_axum::router::OpenApiRouter;
 
+mod backups;
 mod extensions;
 pub mod servers;
 mod stats;
@@ -91,6 +92,11 @@ pub fn router(state: &State) -> OpenApiRouter<State> {
         .nest(
             "/servers",
             servers::router(state)
+                .route_layer(axum::middleware::from_fn_with_state(state.clone(), auth)),
+        )
+        .nest(
+            "/backups",
+            backups::router(state)
                 .route_layer(axum::middleware::from_fn_with_state(state.clone(), auth)),
         )
         .route(

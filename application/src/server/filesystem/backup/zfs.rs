@@ -1,6 +1,6 @@
 use crate::{
     models::DirectoryEntry,
-    server::backup::zfs::{get_ignored, get_snapshot_path},
+    server::backup::zfs::{get_ignored_path, get_snapshot_path},
 };
 use ignore::{WalkBuilder, gitignore::GitignoreBuilder};
 use std::path::{Path, PathBuf};
@@ -13,14 +13,17 @@ pub async fn list(
     page: usize,
     is_ignored: impl Fn(&Path, bool) -> bool + Send + Sync + 'static,
 ) -> Result<(usize, Vec<DirectoryEntry>), anyhow::Error> {
-    let full_path = tokio::fs::canonicalize(get_snapshot_path(server, uuid).join(path)).await?;
-    let ignored_path = get_ignored(server, uuid);
+    let full_path =
+        tokio::fs::canonicalize(get_snapshot_path(&server.config, server.uuid, uuid).join(path))
+            .await?;
+    let ignored_path = get_ignored_path(&server.config, uuid);
 
-    if !full_path.starts_with(get_snapshot_path(server, uuid)) {
+    if !full_path.starts_with(get_snapshot_path(&server.config, server.uuid, uuid)) {
         return Err(anyhow::anyhow!("Access to this path is denied"));
     }
 
-    let mut ignore_builder = GitignoreBuilder::new(get_snapshot_path(server, uuid));
+    let mut ignore_builder =
+        GitignoreBuilder::new(get_snapshot_path(&server.config, server.uuid, uuid));
 
     for line in tokio::fs::read_to_string(&ignored_path)
         .await
@@ -39,7 +42,7 @@ pub async fn list(
     while let Ok(Some(entry)) = directory.next_entry().await {
         let is_dir = entry.file_type().await.is_ok_and(|ft| ft.is_dir());
         let path = entry.path();
-        let path = match path.strip_prefix(get_snapshot_path(server, uuid)) {
+        let path = match path.strip_prefix(get_snapshot_path(&server.config, server.uuid, uuid)) {
             Ok(path) => path,
             Err(_) => continue,
         };
@@ -101,14 +104,17 @@ pub async fn reader(
     uuid: uuid::Uuid,
     path: PathBuf,
 ) -> Result<(Box<dyn tokio::io::AsyncRead + Unpin + Send>, u64), anyhow::Error> {
-    let full_path = tokio::fs::canonicalize(get_snapshot_path(server, uuid).join(path)).await?;
-    let ignored_path = get_ignored(server, uuid);
+    let full_path =
+        tokio::fs::canonicalize(get_snapshot_path(&server.config, server.uuid, uuid).join(path))
+            .await?;
+    let ignored_path = get_ignored_path(&server.config, uuid);
 
-    if !full_path.starts_with(get_snapshot_path(server, uuid)) {
+    if !full_path.starts_with(get_snapshot_path(&server.config, server.uuid, uuid)) {
         return Err(anyhow::anyhow!("Access to this path is denied"));
     }
 
-    let mut ignore_builder = GitignoreBuilder::new(get_snapshot_path(server, uuid));
+    let mut ignore_builder =
+        GitignoreBuilder::new(get_snapshot_path(&server.config, server.uuid, uuid));
 
     for line in tokio::fs::read_to_string(&ignored_path)
         .await
@@ -135,14 +141,17 @@ pub async fn files_reader(
     path: PathBuf,
     file_paths: Vec<PathBuf>,
 ) -> Result<tokio::io::DuplexStream, anyhow::Error> {
-    let full_path = tokio::fs::canonicalize(get_snapshot_path(server, uuid).join(path)).await?;
-    let ignored_path = get_ignored(server, uuid);
+    let full_path =
+        tokio::fs::canonicalize(get_snapshot_path(&server.config, server.uuid, uuid).join(path))
+            .await?;
+    let ignored_path = get_ignored_path(&server.config, uuid);
 
-    if !full_path.starts_with(get_snapshot_path(server, uuid)) {
+    if !full_path.starts_with(get_snapshot_path(&server.config, server.uuid, uuid)) {
         return Err(anyhow::anyhow!("Access to this path is denied"));
     }
 
-    let mut ignore_builder = GitignoreBuilder::new(get_snapshot_path(server, uuid));
+    let mut ignore_builder =
+        GitignoreBuilder::new(get_snapshot_path(&server.config, server.uuid, uuid));
 
     for line in tokio::fs::read_to_string(&ignored_path)
         .await
@@ -236,14 +245,17 @@ pub async fn directory_reader(
     uuid: uuid::Uuid,
     path: PathBuf,
 ) -> Result<tokio::io::DuplexStream, anyhow::Error> {
-    let full_path = tokio::fs::canonicalize(get_snapshot_path(server, uuid).join(path)).await?;
-    let ignored_path = get_ignored(server, uuid);
+    let full_path =
+        tokio::fs::canonicalize(get_snapshot_path(&server.config, server.uuid, uuid).join(path))
+            .await?;
+    let ignored_path = get_ignored_path(&server.config, uuid);
 
-    if !full_path.starts_with(get_snapshot_path(server, uuid)) {
+    if !full_path.starts_with(get_snapshot_path(&server.config, server.uuid, uuid)) {
         return Err(anyhow::anyhow!("Access to this path is denied"));
     }
 
-    let mut ignore_builder = GitignoreBuilder::new(get_snapshot_path(server, uuid));
+    let mut ignore_builder =
+        GitignoreBuilder::new(get_snapshot_path(&server.config, server.uuid, uuid));
 
     for line in tokio::fs::read_to_string(&ignored_path)
         .await
@@ -292,9 +304,7 @@ pub async fn directory_reader(
 
             let metadata = match entry.metadata() {
                 Ok(metadata) => metadata,
-                Err(_) => {
-                    continue;
-                }
+                Err(_) => continue,
             };
 
             if ignore.matched(path, metadata.is_dir()).is_ignore() {

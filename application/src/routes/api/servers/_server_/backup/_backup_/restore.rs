@@ -48,7 +48,7 @@ mod post {
         }
 
         let backup = if data.adapter != crate::server::backup::BackupAdapter::S3 {
-            match crate::server::backup::InternalBackup::find(&server, backup_id).await {
+            match crate::server::backup::InternalBackup::find(&state.config, backup_id).await {
                 Some(backup) => backup,
                 None => {
                     return ApiResponse::error("backup not found")

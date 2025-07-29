@@ -117,7 +117,7 @@ pub async fn list(
     page: usize,
     is_ignored: impl Fn(&Path, bool) -> bool + Send + Sync + 'static,
 ) -> Result<(usize, Vec<DirectoryEntry>), anyhow::Error> {
-    let repository = get_repository(server).await;
+    let repository = get_repository(&server.config).await;
 
     let entries = tokio::task::spawn_blocking(
         move || -> Result<(usize, Vec<DirectoryEntry>), anyhow::Error> {
@@ -271,7 +271,7 @@ pub async fn reader(
     uuid: uuid::Uuid,
     path: PathBuf,
 ) -> Result<(Box<dyn tokio::io::AsyncRead + Unpin + Send>, u64), anyhow::Error> {
-    let repository = get_repository(server).await;
+    let repository = get_repository(&server.config).await;
 
     tokio::task::spawn_blocking(move || {
         let archive = repository.get_archive(&uuid.to_string())?;
@@ -332,7 +332,7 @@ pub async fn files_reader(
     path: PathBuf,
     file_paths: Vec<PathBuf>,
 ) -> Result<tokio::io::DuplexStream, anyhow::Error> {
-    let repository = get_repository(server).await;
+    let repository = get_repository(&server.config).await;
 
     let (writer, reader) = tokio::io::duplex(crate::BUFFER_SIZE);
     let compression_level = server.config.system.backups.compression_level;
@@ -407,7 +407,7 @@ pub async fn directory_reader(
     uuid: uuid::Uuid,
     path: PathBuf,
 ) -> Result<tokio::io::DuplexStream, anyhow::Error> {
-    let repository = get_repository(server).await;
+    let repository = get_repository(&server.config).await;
 
     let (writer, reader) = tokio::io::duplex(crate::BUFFER_SIZE);
     let compression_level = server.config.system.backups.compression_level;

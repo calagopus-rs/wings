@@ -260,7 +260,7 @@ async fn main() {
     let (config, _guard) = match config {
         Ok(config) => config,
         Err(err) => {
-            tracing::error!("failed to load configuration: {:#?}", err);
+            eprintln!("failed to load configuration: {err:#?}");
             std::process::exit(1);
         }
     };
@@ -298,12 +298,25 @@ async fn main() {
     tracing::info!("loading extensions");
     let extension_manager = Arc::new(wings_rs::extensions::manager::Manager::new(extensions_path));
 
-    config
-        .client
-        .reset_state()
-        .await
-        .context("failed to reset remote state")
-        .unwrap();
+    match config.client.reset_state().await {
+        Ok(_) => tracing::info!("remote state reset successfully"),
+        Err(err) => {
+            tracing::error!("failed to reset remote state: {:#?}", err);
+            std::process::exit(1);
+        }
+    }
+
+    match config.client.backup_configurations().await {
+        Ok(backup_configurations) => {
+            tracing::info!("remote backup configurations loaded successfully");
+
+            *config.backup_configurations.write().await = backup_configurations;
+        }
+        Err(err) => tracing::warn!(
+            "failed to load remote backup configurations (not using panel-rs?): {:#?}",
+            err
+        ),
+    }
 
     tracing::info!("creating server manager");
     let server_manager = wings_rs::server::manager::Manager::new(

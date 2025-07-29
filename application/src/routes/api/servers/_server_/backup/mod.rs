@@ -6,7 +6,7 @@ mod _backup_;
 mod post {
     use crate::{
         response::{ApiResponse, ApiResponseResult},
-        routes::{ApiError, api::servers::_server_::GetServer},
+        routes::{ApiError, GetState, api::servers::_server_::GetServer},
     };
     use axum::http::StatusCode;
     use serde::{Deserialize, Serialize};
@@ -33,10 +33,11 @@ mod post {
         ),
     ), request_body = inline(Payload))]
     pub async fn route(
+        state: GetState,
         server: GetServer,
         axum::Json(data): axum::Json<Payload>,
     ) -> ApiResponseResult {
-        if crate::server::backup::InternalBackup::list_for_adapter(&server, data.adapter)
+        if crate::server::backup::InternalBackup::list_for_adapter(&state.config, data.adapter)
             .await
             .is_ok_and(|backups| backups.contains(&data.uuid))
         {

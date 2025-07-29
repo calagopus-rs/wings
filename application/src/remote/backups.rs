@@ -1,6 +1,7 @@
 use super::client::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::BTreeMap;
 use utoipa::ToSchema;
 
 #[derive(Debug, ToSchema, Serialize)]
@@ -16,6 +17,18 @@ pub struct RawServerBackup {
     pub size: u64,
     pub successful: bool,
     pub parts: Vec<RawServerBackupPart>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BackupConfigurationsRestic {
+    pub repository: String,
+    pub retry_lock_seconds: u64,
+    pub environment: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct BackupConfigurations {
+    pub restic: Option<BackupConfigurationsRestic>,
 }
 
 pub async fn set_backup_status(
@@ -72,4 +85,18 @@ pub async fn backup_upload_urls(
     }
 
     Ok((response.part_size, response.parts))
+}
+
+pub async fn backup_configurations(client: &Client) -> Result<BackupConfigurations, anyhow::Error> {
+    let response: BackupConfigurations = super::into_json(
+        client
+            .client
+            .get(format!("{}/backups", client.url))
+            .send()
+            .await?
+            .text()
+            .await?,
+    )?;
+
+    Ok(response)
 }

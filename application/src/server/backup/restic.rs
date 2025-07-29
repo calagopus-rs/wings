@@ -18,8 +18,8 @@ use tokio::{
 
 #[macro_export]
 macro_rules! restic_configuration {
-    ($configuration:expr, $server:expr) => {
-        match &$configuration.backup_configurations.restic {
+    ($backuo_configurations:expr, $config:expr) => {
+        match &$backuo_configurations.restic {
             Some(restic) => (
                 &restic.repository,
                 restic.retry_lock_seconds,
@@ -27,13 +27,13 @@ macro_rules! restic_configuration {
                 &restic.environment,
             ),
             None => (
-                &$server.config.system.backups.restic.repository,
-                $server.config.system.backups.restic.retry_lock_seconds,
+                &$config.system.backups.restic.repository,
+                $config.system.backups.restic.retry_lock_seconds,
                 &[
                     "--password-file",
-                    &$server.config.system.backups.restic.password_file,
+                    &$config.system.backups.restic.password_file,
                 ] as &[&str],
-                &$server.config.system.backups.restic.environment,
+                &$config.system.backups.restic.environment,
             ),
         }
     };
@@ -45,94 +45,57 @@ struct BackupCache {
     refresh_in_progress: bool,
 }
 
-static SERVER_BACKUP_CACHES: LazyLock<RwLock<HashMap<uuid::Uuid, Arc<RwLock<BackupCache>>>>> =
-    LazyLock::new(|| RwLock::const_new(HashMap::new()));
-static REFRESH_LOCKS: LazyLock<RwLock<HashMap<uuid::Uuid, Arc<Mutex<()>>>>> =
-    LazyLock::new(|| RwLock::const_new(HashMap::new()));
+static GLOBAL_BACKUP_CACHE: LazyLock<RwLock<BackupCache>> = LazyLock::new(|| {
+    RwLock::new(BackupCache {
+        backups: HashMap::new(),
+        last_updated: Instant::now() - Duration::from_secs(3600),
+        refresh_in_progress: false,
+    })
+});
+
+static REFRESH_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 const BACKGROUND_REFRESH_THRESHOLD: Duration = Duration::from_secs(120);
 const FOREGROUND_REFRESH_THRESHOLD: Duration = Duration::from_secs(3600);
 
-async fn get_backup_list(server: &crate::server::Server) -> Vec<uuid::Uuid> {
-    let cache_entry = {
-        let caches = SERVER_BACKUP_CACHES.read().await;
-        caches.get(&server.uuid).cloned()
-    };
-
-    let cache_entry = match cache_entry {
-        Some(cache) => cache,
-        None => {
-            let new_cache = Arc::new(RwLock::new(BackupCache {
-                backups: HashMap::new(),
-                last_updated: Instant::now() - FOREGROUND_REFRESH_THRESHOLD,
-                refresh_in_progress: false,
-            }));
-
-            SERVER_BACKUP_CACHES
-                .write()
-                .await
-                .insert(server.uuid, new_cache.clone());
-            REFRESH_LOCKS
-                .write()
-                .await
-                .insert(server.uuid, Arc::new(Mutex::new(())));
-
-            new_cache
-        }
-    };
-
-    let refresh_lock = REFRESH_LOCKS
-        .read()
-        .await
-        .get(&server.uuid)
-        .cloned()
-        .unwrap();
-
+async fn get_backup_list(config: &Arc<crate::config::Config>) -> Vec<uuid::Uuid> {
     let cache_age = {
-        let cache = cache_entry.read().await;
+        let cache = GLOBAL_BACKUP_CACHE.read().await;
         cache.last_updated.elapsed()
     };
 
     if cache_age < BACKGROUND_REFRESH_THRESHOLD {
-        let cache = cache_entry.read().await;
+        let cache = GLOBAL_BACKUP_CACHE.read().await;
+
         cache.backups.keys().copied().collect()
     } else if cache_age < FOREGROUND_REFRESH_THRESHOLD {
         let backups = {
-            let cache = cache_entry.read().await;
-            cache.backups.keys().copied().collect::<Vec<uuid::Uuid>>()
+            let cache = GLOBAL_BACKUP_CACHE.read().await;
+
+            cache.backups.keys().copied().collect()
         };
 
         let refresh_needed = {
-            let cache = cache_entry.read().await;
+            let cache = GLOBAL_BACKUP_CACHE.read().await;
             !cache.refresh_in_progress
         };
 
         if refresh_needed {
-            tracing::debug!(server = %server.uuid, "refreshing restic backup cache");
-
-            tokio::spawn(refresh_backup_cache(
-                server.clone(),
-                cache_entry.clone(),
-                refresh_lock,
-            ));
+            tracing::debug!("refreshing global restic backup cache");
+            tokio::spawn(refresh_backup_cache(config.clone()));
         }
 
-        return backups;
+        backups
     } else {
-        tracing::debug!(server = %server.uuid, "refreshing restic backup cache (foreground)");
-
-        return refresh_backup_cache(server.clone(), cache_entry, refresh_lock).await;
+        tracing::debug!("refreshing global restic backup cache (foreground)");
+        refresh_backup_cache(config.clone()).await
     }
 }
 
-async fn refresh_backup_cache(
-    server: crate::server::Server,
-    cache_entry: Arc<RwLock<BackupCache>>,
-    refresh_lock: Arc<Mutex<()>>,
-) -> Vec<uuid::Uuid> {
-    let _guard = refresh_lock.lock().await;
+async fn refresh_backup_cache(config: Arc<crate::config::Config>) -> Vec<uuid::Uuid> {
+    let _guard = REFRESH_LOCK.lock().await;
 
     {
-        let mut cache = cache_entry.write().await;
+        let mut cache = GLOBAL_BACKUP_CACHE.write().await;
         if cache.refresh_in_progress {
             return cache.backups.keys().copied().collect();
         }
@@ -142,8 +105,8 @@ async fn refresh_backup_cache(
 
     let mut backups = HashMap::new();
 
-    let configuration = server.configuration.read().await;
-    let (repository, _, args, envs) = restic_configuration!(&configuration, server);
+    let configuration = config.backup_configurations.read().await;
+    let (repository, _, args, envs) = restic_configuration!(&configuration, config);
 
     let output = match Command::new("restic")
         .envs(envs)
@@ -160,7 +123,7 @@ async fn refresh_backup_cache(
         Err(err) => {
             tracing::error!("failed to list Restic backups: {}", err);
 
-            let mut cache = cache_entry.write().await;
+            let mut cache = GLOBAL_BACKUP_CACHE.write().await;
             cache.refresh_in_progress = false;
 
             return cache.backups.keys().copied().collect();
@@ -184,14 +147,12 @@ async fn refresh_backup_cache(
                 String::from_utf8_lossy(&output.stdout)
             );
 
-            let mut cache = cache_entry.write().await;
+            let mut cache = GLOBAL_BACKUP_CACHE.write().await;
             cache.refresh_in_progress = false;
 
             return cache.backups.keys().copied().collect();
         }
     };
-
-    let server_backups = &server.configuration.read().await.backups;
 
     for snapshot in snapshots {
         if let Some(tags) = snapshot.get("tags")
@@ -202,22 +163,11 @@ async fn refresh_backup_cache(
             && let Some(path) = paths.as_array().and_then(|arr| arr.first())
             && let Some(path_str) = path.as_str()
         {
-            if !server
-                .config
-                .system
-                .backups
-                .restic
-                .ignore_server_backup_list
-                && !server_backups.contains(&uuid)
-            {
-                continue;
-            }
-
             backups.insert(uuid, PathBuf::from(path_str));
         }
     }
 
-    let mut cache = cache_entry.write().await;
+    let mut cache = GLOBAL_BACKUP_CACHE.write().await;
     cache.backups = backups;
     cache.last_updated = Instant::now();
     cache.refresh_in_progress = false;
@@ -226,19 +176,16 @@ async fn refresh_backup_cache(
 }
 
 pub async fn get_backup_base_path(
-    server: &crate::server::Server,
+    config: &Arc<crate::config::Config>,
     uuid: uuid::Uuid,
 ) -> Result<PathBuf, anyhow::Error> {
-    let backups = get_backup_list(server).await;
+    let backups = get_backup_list(config).await;
     if !backups.contains(&uuid) {
         return Err(anyhow::anyhow!("Backup with UUID {} not found", uuid));
     }
 
-    let cached_backups = SERVER_BACKUP_CACHES.read().await;
-    let cached_backups = cached_backups.get(&server.uuid);
-    if let Some(cached_backups) = cached_backups.as_ref()
-        && let Some(path) = cached_backups.read().await.backups.get(&uuid)
-    {
+    let cached_backups = GLOBAL_BACKUP_CACHE.read().await;
+    if let Some(path) = cached_backups.backups.get(&uuid) {
         return Ok(path.clone());
     }
 
@@ -258,11 +205,11 @@ pub async fn create_backup(
         excluded_paths.push(line);
     }
 
-    let backups = get_backup_list(&server).await;
+    let backups = get_backup_list(&server.config).await;
 
-    let configuration = server.configuration.read().await;
+    let configuration = server.config.backup_configurations.read().await;
     let (repository, retry_lock_seconds, args, envs) =
-        restic_configuration!(&configuration, server);
+        restic_configuration!(&configuration, server.config);
 
     let mut child = Command::new("restic")
         .envs(envs)
@@ -329,25 +276,10 @@ pub async fn create_backup(
     }
 
     if !backups.contains(&uuid) {
-        let mut cache = SERVER_BACKUP_CACHES.write().await;
-        if let Some(cache_entry) = cache.get_mut(&server.uuid) {
-            let mut cache = cache_entry.write().await;
-            cache
-                .backups
-                .insert(uuid, server.filesystem.base_path.clone());
-        } else {
-            let new_cache = Arc::new(RwLock::new(BackupCache {
-                backups: HashMap::from([(uuid, server.filesystem.base_path.clone())]),
-                last_updated: Instant::now(),
-                refresh_in_progress: false,
-            }));
-            cache.insert(server.uuid, new_cache.clone());
-
-            REFRESH_LOCKS
-                .write()
-                .await
-                .insert(server.uuid, Arc::new(Mutex::new(())));
-        }
+        let mut cache = GLOBAL_BACKUP_CACHE.write().await;
+        cache
+            .backups
+            .insert(uuid, server.filesystem.base_path.clone());
     }
 
     Ok(RawServerBackup {
@@ -365,10 +297,10 @@ pub async fn restore_backup(
     progress: Arc<AtomicU64>,
     total: Arc<AtomicU64>,
 ) -> Result<(), anyhow::Error> {
-    let base_path = get_backup_base_path(&server, uuid).await?;
+    let base_path = get_backup_base_path(&server.config, uuid).await?;
 
-    let configuration = server.configuration.read().await;
-    let (repository, _, args, envs) = restic_configuration!(&configuration, server);
+    let configuration = server.config.backup_configurations.read().await;
+    let (repository, _, args, envs) = restic_configuration!(&configuration, server.config);
 
     let child = Command::new("restic")
         .envs(envs)
@@ -427,13 +359,13 @@ pub async fn restore_backup(
 }
 
 pub async fn download_backup(
-    server: &crate::server::Server,
+    config: &Arc<crate::config::Config>,
     uuid: uuid::Uuid,
 ) -> Result<ApiResponse, anyhow::Error> {
-    let base_path = get_backup_base_path(server, uuid).await?;
+    let base_path = get_backup_base_path(config, uuid).await?;
 
-    let configuration = server.configuration.read().await;
-    let (repository, _, args, envs) = restic_configuration!(&configuration, server);
+    let configuration = config.backup_configurations.read().await;
+    let (repository, _, args, envs) = restic_configuration!(&configuration, config);
 
     let child = Command::new("restic")
         .envs(envs)
@@ -453,7 +385,7 @@ pub async fn download_backup(
 
     let (reader, writer) = tokio::io::duplex(crate::BUFFER_SIZE);
 
-    let compression_level = server.config.system.backups.compression_level;
+    let compression_level = config.system.backups.compression_level;
     tokio::spawn(async move {
         let mut stdout = child.stdout.unwrap();
         let mut writer = async_compression::tokio::write::GzipEncoder::with_quality(
@@ -483,11 +415,11 @@ pub async fn download_backup(
 }
 
 pub async fn delete_backup(
-    server: &crate::server::Server,
+    config: &Arc<crate::config::Config>,
     uuid: uuid::Uuid,
 ) -> Result<(), anyhow::Error> {
-    let configuration = server.configuration.read().await;
-    let (repository, _, args, envs) = restic_configuration!(&configuration, server);
+    let configuration = config.backup_configurations.read().await;
+    let (repository, _, args, envs) = restic_configuration!(&configuration, config);
 
     let output = Command::new("restic")
         .envs(envs)
@@ -507,31 +439,27 @@ pub async fn delete_backup(
 
     if !output.status.success() {
         return Err(anyhow::anyhow!(
-            "Failed to delete Restic backup for {}: {}",
-            server.filesystem.base_path.display(),
+            "failed to delete restic backup: {}",
             String::from_utf8_lossy(&output.stderr)
         ));
     }
+
+    let mut cache = GLOBAL_BACKUP_CACHE.write().await;
+    cache.backups.remove(&uuid);
 
     Ok(())
 }
 
 pub async fn list_backups(
-    server: &crate::server::Server,
+    config: &Arc<crate::config::Config>,
 ) -> Result<Vec<uuid::Uuid>, anyhow::Error> {
-    if server
-        .configuration
-        .read()
-        .await
-        .backup_configurations
-        .restic
-        .is_none()
-        && tokio::fs::metadata(&server.config.system.backups.restic.password_file)
+    if config.backup_configurations.read().await.restic.is_none()
+        && tokio::fs::metadata(&config.system.backups.restic.password_file)
             .await
             .is_err()
     {
         return Ok(Vec::new());
     }
 
-    Ok(get_backup_list(server).await)
+    Ok(get_backup_list(config).await)
 }

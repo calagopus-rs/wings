@@ -96,7 +96,7 @@ pub async fn list(
     is_ignored: impl Fn(&Path, bool) -> bool + Send + Sync + 'static,
 ) -> Result<(usize, Vec<DirectoryEntry>), anyhow::Error> {
     let (file_format, file_name) =
-        crate::server::backup::wings::get_first_file_name(server, uuid).await?;
+        crate::server::backup::wings::get_first_file_name(&server.config, uuid).await?;
     if !matches!(
         file_format,
         crate::config::SystemBackupsWingsArchiveFormat::Zip
@@ -208,7 +208,7 @@ pub async fn reader(
     path: PathBuf,
 ) -> Result<(Box<dyn tokio::io::AsyncRead + Unpin + Send>, u64), anyhow::Error> {
     let (file_format, file_name) =
-        crate::server::backup::wings::get_first_file_name(server, uuid).await?;
+        crate::server::backup::wings::get_first_file_name(&server.config, uuid).await?;
     if !matches!(
         file_format,
         crate::config::SystemBackupsWingsArchiveFormat::Zip
@@ -275,7 +275,7 @@ pub async fn files_reader(
     file_paths: Vec<PathBuf>,
 ) -> Result<tokio::io::DuplexStream, anyhow::Error> {
     let (file_format, file_name) =
-        crate::server::backup::wings::get_first_file_name(server, uuid).await?;
+        crate::server::backup::wings::get_first_file_name(&server.config, uuid).await?;
     if !matches!(
         file_format,
         crate::config::SystemBackupsWingsArchiveFormat::Zip
@@ -375,7 +375,7 @@ pub async fn directory_reader(
     path: PathBuf,
 ) -> Result<tokio::io::DuplexStream, anyhow::Error> {
     let (file_format, file_name) =
-        crate::server::backup::wings::get_first_file_name(server, uuid).await?;
+        crate::server::backup::wings::get_first_file_name(&server.config, uuid).await?;
     if !matches!(
         file_format,
         crate::config::SystemBackupsWingsArchiveFormat::Zip

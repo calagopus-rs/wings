@@ -67,11 +67,11 @@ async fn get_files_for_backup(
     }
     drop(files);
 
-    let configuration = server.configuration.read().await;
+    let configuration = server.config.backup_configurations.read().await;
     let (repository, retry_lock_seconds, args, envs) =
-        restic_configuration!(&configuration, server);
+        restic_configuration!(&configuration, server.config);
 
-    let base_path = get_backup_base_path(server, uuid).await?;
+    let base_path = get_backup_base_path(&server.config, uuid).await?;
 
     let child = Command::new("restic")
         .envs(envs)
@@ -252,7 +252,7 @@ pub async fn reader(
     path: PathBuf,
 ) -> Result<(Box<dyn tokio::io::AsyncRead + Unpin + Send>, u64), anyhow::Error> {
     let files = get_files_for_backup(server, uuid).await?;
-    let base_path = get_backup_base_path(server, uuid).await?;
+    let base_path = get_backup_base_path(&server.config, uuid).await?;
 
     let entry = files
         .iter()
@@ -264,8 +264,8 @@ pub async fn reader(
 
     let full_path = PathBuf::from(&base_path).join(&entry.path);
 
-    let configuration = server.configuration.read().await;
-    let (repository, _, args, envs) = restic_configuration!(&configuration, server);
+    let configuration = server.config.backup_configurations.read().await;
+    let (repository, _, args, envs) = restic_configuration!(&configuration, server.config);
 
     let child = Command::new("restic")
         .envs(envs)
@@ -294,7 +294,7 @@ pub async fn files_reader(
     file_paths: Vec<PathBuf>,
 ) -> Result<tokio::io::DuplexStream, anyhow::Error> {
     let files = get_files_for_backup(server, uuid).await?;
-    let base_path = get_backup_base_path(server, uuid).await?;
+    let base_path = get_backup_base_path(&server.config, uuid).await?;
 
     let path = if path.components().count() > 0 {
         let entry = files
@@ -352,9 +352,9 @@ pub async fn files_reader(
                             .await
                             .is_ok()
                         {
-                            let configuration = server.configuration.read().await;
+                            let configuration = server.config.backup_configurations.read().await;
                             let (repository, _, args, envs) =
-                                restic_configuration!(&configuration, server);
+                                restic_configuration!(&configuration, server.config);
 
                             let child = match Command::new("restic")
                                 .envs(envs)
@@ -400,9 +400,9 @@ pub async fn files_reader(
                         }
                     }
                     ResticEntryType::File => {
-                        let configuration = server.configuration.read().await;
+                        let configuration = server.config.backup_configurations.read().await;
                         let (repository, _, args, envs) =
-                            restic_configuration!(&configuration, server);
+                            restic_configuration!(&configuration, server.config);
 
                         let child = match Command::new("restic")
                             .envs(envs)
@@ -452,7 +452,7 @@ pub async fn directory_reader(
     path: PathBuf,
 ) -> Result<tokio::io::DuplexStream, anyhow::Error> {
     let files = get_files_for_backup(server, uuid).await?;
-    let base_path = get_backup_base_path(server, uuid).await?;
+    let base_path = get_backup_base_path(&server.config, uuid).await?;
 
     let entry = files
         .iter()
@@ -465,8 +465,8 @@ pub async fn directory_reader(
     let full_path = PathBuf::from(&base_path).join(&entry.path);
     let (writer, reader) = tokio::io::duplex(crate::BUFFER_SIZE);
 
-    let configuration = server.configuration.read().await;
-    let (repository, _, args, envs) = restic_configuration!(&configuration, server);
+    let configuration = server.config.backup_configurations.read().await;
+    let (repository, _, args, envs) = restic_configuration!(&configuration, server.config);
 
     let child = Command::new("restic")
         .envs(envs)

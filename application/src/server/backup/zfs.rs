@@ -14,8 +14,8 @@ use std::{
 use tokio::process::Command;
 
 #[inline]
-fn get_backup_path(server: &crate::server::Server, uuid: uuid::Uuid) -> PathBuf {
-    Path::new(&server.config.system.backup_directory)
+fn get_backup_path(config: &crate::config::Config, uuid: uuid::Uuid) -> PathBuf {
+    Path::new(&config.system.backup_directory)
         .join("zfs")
         .join(uuid.to_string())
 }
@@ -26,18 +26,26 @@ fn get_snapshot_name(uuid: uuid::Uuid) -> String {
 }
 
 #[inline]
-pub fn get_snapshot_path(server: &crate::server::Server, uuid: uuid::Uuid) -> PathBuf {
-    server
-        .filesystem
-        .base_path
+pub fn get_snapshot_path(
+    config: &crate::config::Config,
+    server_uuid: uuid::Uuid,
+    uuid: uuid::Uuid,
+) -> PathBuf {
+    Path::new(&config.system.data_directory)
+        .join(server_uuid.to_string())
         .join(".zfs")
         .join("snapshot")
         .join(get_snapshot_name(uuid))
 }
 
 #[inline]
-pub fn get_ignored(server: &crate::server::Server, uuid: uuid::Uuid) -> PathBuf {
-    get_backup_path(server, uuid).join("ignored")
+pub fn get_ignored_path(config: &crate::config::Config, uuid: uuid::Uuid) -> PathBuf {
+    get_backup_path(config, uuid).join("ignored")
+}
+
+#[inline]
+pub fn get_dataset_path(config: &crate::config::Config, uuid: uuid::Uuid) -> PathBuf {
+    get_backup_path(config, uuid).join("dataset")
 }
 
 pub async fn create_backup(
@@ -46,8 +54,8 @@ pub async fn create_backup(
     ignore: ignore::gitignore::Gitignore,
     ignore_raw: String,
 ) -> Result<RawServerBackup, anyhow::Error> {
-    let backup_path = get_backup_path(&server, uuid);
-    let ignored_path = get_ignored(&server, uuid);
+    let backup_path = get_backup_path(&server.config, uuid);
+    let ignored_path = get_ignored_path(&server.config, uuid);
     let snapshot_name = get_snapshot_name(uuid);
 
     tokio::fs::create_dir_all(&backup_path).await?;
@@ -136,8 +144,8 @@ pub async fn restore_backup(
     progress: Arc<AtomicU64>,
     total: Arc<AtomicU64>,
 ) -> Result<(), anyhow::Error> {
-    let ignored_path = get_ignored(&server, uuid);
-    let snapshot_path = get_snapshot_path(&server, uuid);
+    let ignored_path = get_ignored_path(&server.config, uuid);
+    let snapshot_path = get_snapshot_path(&server.config, server.uuid, uuid);
 
     let mut override_builder = OverrideBuilder::new(&snapshot_path);
 
@@ -286,11 +294,18 @@ pub async fn restore_backup(
 }
 
 pub async fn download_backup(
-    server: &crate::server::Server,
+    config: &crate::config::Config,
     uuid: uuid::Uuid,
 ) -> Result<ApiResponse, anyhow::Error> {
-    let ignored_path = get_ignored(server, uuid);
-    let snapshot_path = get_snapshot_path(server, uuid);
+    let ignored_path = get_ignored_path(config, uuid);
+    let dataset_path = get_dataset_path(config, uuid);
+
+    let dataset = tokio::fs::read_to_string(&dataset_path).await?;
+    let server_uuid = dataset
+        .split_once("server-")
+        .map(|(_, uuid)| uuid::Uuid::parse_str(uuid))
+        .ok_or_else(|| anyhow::anyhow!("Failed to parse dataset name: {}", dataset))??;
+    let snapshot_path = get_snapshot_path(config, server_uuid, uuid);
     let snapshot_name = get_snapshot_name(uuid);
 
     if !Path::new(&snapshot_path).exists() {
@@ -299,7 +314,6 @@ pub async fn download_backup(
 
     let (writer, reader) = tokio::io::duplex(crate::BUFFER_SIZE);
 
-    let server = server.clone();
     tokio::task::spawn_blocking(move || {
         let writer = tokio_util::io::SyncIoBridge::new(writer);
         let writer = flate2::write::GzEncoder::new(writer, flate2::Compression::default());
@@ -335,17 +349,8 @@ pub async fn download_backup(
 
             let metadata = match entry.metadata() {
                 Ok(metadata) => metadata,
-                Err(_) => {
-                    continue;
-                }
+                Err(_) => continue,
             };
-
-            if server
-                .filesystem
-                .is_ignored_sync(entry.path(), metadata.is_dir())
-            {
-                continue;
-            }
 
             if metadata.is_dir() {
                 tar.append_dir(path, entry.path()).ok();
@@ -377,17 +382,18 @@ pub async fn download_backup(
 }
 
 pub async fn delete_backup(
-    server: &crate::server::Server,
+    config: &crate::config::Config,
     uuid: uuid::Uuid,
 ) -> Result<(), anyhow::Error> {
-    let backup_path = get_backup_path(server, uuid);
+    let backup_path = get_backup_path(config, uuid);
+    let dataset_path = get_dataset_path(config, uuid);
     let snapshot_name = get_snapshot_name(uuid);
 
-    if !backup_path.exists() {
+    if tokio::fs::metadata(&dataset_path).await.is_err() {
         return Ok(());
     }
 
-    if let Ok(dataset_name) = tokio::fs::read_to_string(backup_path.join("dataset")).await {
+    if let Ok(dataset_name) = tokio::fs::read_to_string(dataset_path).await {
         let output = Command::new("zfs")
             .arg("destroy")
             .arg(format!("{}@{}", dataset_name.trim(), snapshot_name))
@@ -408,10 +414,10 @@ pub async fn delete_backup(
 }
 
 pub async fn list_backups(
-    server: &crate::server::Server,
+    config: &crate::config::Config,
 ) -> Result<Vec<uuid::Uuid>, anyhow::Error> {
     let mut backups = Vec::new();
-    let path = Path::new(&server.config.system.backup_directory).join("zfs");
+    let path = Path::new(&config.system.backup_directory).join("zfs");
 
     if tokio::fs::metadata(&path).await.is_err() {
         return Ok(backups);

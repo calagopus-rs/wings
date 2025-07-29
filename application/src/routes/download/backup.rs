@@ -20,7 +20,7 @@ mod get {
         #[serde(flatten)]
         pub base: crate::remote::jwt::BasePayload,
 
-        pub server_uuid: uuid::Uuid,
+        pub server_uuid: Option<uuid::Uuid>,
         pub backup_uuid: uuid::Uuid,
         pub unique_id: String,
     }
@@ -64,34 +64,33 @@ mod get {
                 .ok();
         }
 
-        let server = state
-            .server_manager
-            .get_servers()
-            .await
-            .iter()
-            .find(|s| s.uuid == payload.server_uuid)
-            .cloned();
-
-        let server = match server {
-            Some(server) => server,
-            None => {
+        if let Some(server_uuid) = payload.server_uuid {
+            let server = state
+                .server_manager
+                .get_servers()
+                .await
+                .iter()
+                .any(|s| s.uuid == server_uuid);
+            if !server {
                 return ApiResponse::error("server not found")
                     .with_status(StatusCode::NOT_FOUND)
                     .ok();
             }
-        };
+        }
 
-        let backups = crate::server::backup::InternalBackup::list(&server).await;
-        let backup = match backups.into_iter().find(|b| b.uuid == payload.backup_uuid) {
-            Some(backup) => backup,
-            None => {
-                return ApiResponse::error("backup not found")
-                    .with_status(StatusCode::NOT_FOUND)
-                    .ok();
-            }
-        };
+        let backup =
+            match crate::server::backup::InternalBackup::find(&state.config, payload.backup_uuid)
+                .await
+            {
+                Some(backup) => backup,
+                None => {
+                    return ApiResponse::error("backup not found")
+                        .with_status(StatusCode::NOT_FOUND)
+                        .ok();
+                }
+            };
 
-        match backup.download(&server).await {
+        match backup.download(&state.config).await {
             Ok(response) => response,
             Err(err) => {
                 tracing::error!("failed to download backup: {:#?}", err);

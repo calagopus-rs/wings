@@ -24,43 +24,43 @@ use std::{
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 
 #[inline]
-fn get_tar_file_name(server: &crate::server::Server, uuid: uuid::Uuid) -> PathBuf {
-    Path::new(&server.config.system.backup_directory).join(format!("{uuid}.tar"))
+fn get_tar_file_name(config: &crate::config::Config, uuid: uuid::Uuid) -> PathBuf {
+    Path::new(&config.system.backup_directory).join(format!("{uuid}.tar"))
 }
 
 #[inline]
-fn get_tar_gz_file_name(server: &crate::server::Server, uuid: uuid::Uuid) -> PathBuf {
-    Path::new(&server.config.system.backup_directory).join(format!("{uuid}.tar.gz"))
+fn get_tar_gz_file_name(config: &crate::config::Config, uuid: uuid::Uuid) -> PathBuf {
+    Path::new(&config.system.backup_directory).join(format!("{uuid}.tar.gz"))
 }
 
 #[inline]
-fn get_tar_zstd_file_name(server: &crate::server::Server, uuid: uuid::Uuid) -> PathBuf {
-    Path::new(&server.config.system.backup_directory).join(format!("{uuid}.tar.zst"))
+fn get_tar_zstd_file_name(config: &crate::config::Config, uuid: uuid::Uuid) -> PathBuf {
+    Path::new(&config.system.backup_directory).join(format!("{uuid}.tar.zst"))
 }
 
 #[inline]
-fn get_zip_file_name(server: &crate::server::Server, uuid: uuid::Uuid) -> PathBuf {
-    Path::new(&server.config.system.backup_directory).join(format!("{uuid}.zip"))
+fn get_zip_file_name(config: &crate::config::Config, uuid: uuid::Uuid) -> PathBuf {
+    Path::new(&config.system.backup_directory).join(format!("{uuid}.zip"))
 }
 
 #[inline]
-fn get_file_name(server: &crate::server::Server, uuid: uuid::Uuid) -> PathBuf {
-    match server.config.system.backups.wings.archive_format {
-        crate::config::SystemBackupsWingsArchiveFormat::Tar => get_tar_file_name(server, uuid),
-        crate::config::SystemBackupsWingsArchiveFormat::TarGz => get_tar_gz_file_name(server, uuid),
+fn get_file_name(config: &crate::config::Config, uuid: uuid::Uuid) -> PathBuf {
+    match config.system.backups.wings.archive_format {
+        crate::config::SystemBackupsWingsArchiveFormat::Tar => get_tar_file_name(config, uuid),
+        crate::config::SystemBackupsWingsArchiveFormat::TarGz => get_tar_gz_file_name(config, uuid),
         crate::config::SystemBackupsWingsArchiveFormat::TarZstd => {
-            get_tar_zstd_file_name(server, uuid)
+            get_tar_zstd_file_name(config, uuid)
         }
-        crate::config::SystemBackupsWingsArchiveFormat::Zip => get_zip_file_name(server, uuid),
+        crate::config::SystemBackupsWingsArchiveFormat::Zip => get_zip_file_name(config, uuid),
     }
 }
 
 #[inline]
 pub async fn get_first_file_name(
-    server: &crate::server::Server,
+    config: &crate::config::Config,
     uuid: uuid::Uuid,
 ) -> Result<(crate::config::SystemBackupsWingsArchiveFormat, PathBuf), anyhow::Error> {
-    let file_name = get_tar_file_name(server, uuid);
+    let file_name = get_tar_file_name(config, uuid);
     if tokio::fs::metadata(&file_name).await.is_ok() {
         return Ok((
             crate::config::SystemBackupsWingsArchiveFormat::Tar,
@@ -68,7 +68,7 @@ pub async fn get_first_file_name(
         ));
     }
 
-    let file_name = get_tar_gz_file_name(server, uuid);
+    let file_name = get_tar_gz_file_name(config, uuid);
     if tokio::fs::metadata(&file_name).await.is_ok() {
         return Ok((
             crate::config::SystemBackupsWingsArchiveFormat::TarGz,
@@ -76,7 +76,7 @@ pub async fn get_first_file_name(
         ));
     }
 
-    let file_name = get_tar_zstd_file_name(server, uuid);
+    let file_name = get_tar_zstd_file_name(config, uuid);
     if tokio::fs::metadata(&file_name).await.is_ok() {
         return Ok((
             crate::config::SystemBackupsWingsArchiveFormat::TarZstd,
@@ -84,7 +84,7 @@ pub async fn get_first_file_name(
         ));
     }
 
-    let file_name = get_zip_file_name(server, uuid);
+    let file_name = get_zip_file_name(config, uuid);
     if tokio::fs::metadata(&file_name).await.is_ok() {
         return Ok((
             crate::config::SystemBackupsWingsArchiveFormat::Zip,
@@ -102,7 +102,7 @@ pub async fn create_backup(
     total: Arc<AtomicU64>,
     ignore: ignore::gitignore::Gitignore,
 ) -> Result<RawServerBackup, anyhow::Error> {
-    let file_name = get_file_name(&server, uuid);
+    let file_name = get_file_name(&server.config, uuid);
     let writer = tokio::fs::File::create(&file_name).await?;
 
     let total_task = {
@@ -220,7 +220,7 @@ pub async fn restore_backup(
     progress: Arc<AtomicU64>,
     total: Arc<AtomicU64>,
 ) -> Result<(), anyhow::Error> {
-    let (file_format, file_name) = get_first_file_name(&server, uuid).await?;
+    let (file_format, file_name) = get_first_file_name(&server.config, uuid).await?;
     let file = tokio::fs::File::open(&file_name).await?;
 
     match file_format {
@@ -456,10 +456,10 @@ pub async fn restore_backup(
 }
 
 pub async fn download_backup(
-    server: &crate::server::Server,
+    config: &crate::config::Config,
     uuid: uuid::Uuid,
 ) -> Result<ApiResponse, anyhow::Error> {
-    let (file_format, file_name) = get_first_file_name(server, uuid).await?;
+    let (file_format, file_name) = get_first_file_name(config, uuid).await?;
     let file = tokio::fs::File::open(&file_name).await?;
 
     let mut headers = HeaderMap::with_capacity(3);
@@ -507,10 +507,10 @@ pub async fn download_backup(
 }
 
 pub async fn delete_backup(
-    server: &crate::server::Server,
+    config: &crate::config::Config,
     uuid: uuid::Uuid,
 ) -> Result<(), anyhow::Error> {
-    let (_, file_name) = get_first_file_name(server, uuid).await?;
+    let (_, file_name) = get_first_file_name(config, uuid).await?;
 
     tokio::fs::remove_file(file_name).await?;
 
@@ -518,10 +518,10 @@ pub async fn delete_backup(
 }
 
 pub async fn list_backups(
-    server: &crate::server::Server,
+    config: &crate::config::Config,
 ) -> Result<Vec<uuid::Uuid>, anyhow::Error> {
     let mut backups = Vec::new();
-    let path = Path::new(&server.config.system.backup_directory);
+    let path = Path::new(&config.system.backup_directory);
 
     let mut entries = tokio::fs::read_dir(path).await?;
     while let Some(entry) = entries.next_entry().await? {
