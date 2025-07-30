@@ -21,6 +21,15 @@ use utoipa::ToSchema;
 
 pub mod multi_reader;
 
+struct AbortGuard(Arc<AtomicBool>);
+
+impl Drop for AbortGuard {
+    #[inline]
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+}
+
 #[derive(Clone, Copy)]
 pub enum CompressionType {
     None,
@@ -370,10 +379,15 @@ impl Archive {
                 }
             }
             ArchiveType::Zip => {
+                let abort = Arc::new(AtomicBool::new(false));
+
+                let guard = AbortGuard(Arc::clone(&abort));
                 let filesystem = self.server.filesystem.base_dir().await?;
 
+                let file = Arc::new(self.file.into_std().await);
                 tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
-                    let file = Arc::new(self.file.try_into_std().unwrap());
+                    let is_aborted = || abort.load(Ordering::Relaxed);
+
                     let archive = zip::ZipArchive::new(multi_reader::MultiReader::new(file)?)?;
                     let entry_index = Arc::new(AtomicUsize::new(0));
 
@@ -424,6 +438,10 @@ impl Archive {
                                         .is_ignored_sync(&destination_path, entry.is_dir())
                                     {
                                         continue;
+                                    }
+
+                                    if is_aborted() {
+                                        return Err(anyhow::anyhow!("operation aborted"));
                                     }
 
                                     if entry.is_dir() {
@@ -480,12 +498,19 @@ impl Archive {
                     }
                 })
                 .await??;
+
+                drop(guard);
             }
             ArchiveType::Rar => {
+                let abort = Arc::new(AtomicBool::new(false));
+
+                let guard = AbortGuard(Arc::clone(&abort));
                 let filesystem = self.server.filesystem.base_dir().await?;
 
                 tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
+                    let is_aborted = || abort.load(Ordering::Relaxed);
                     drop(self.file);
+
                     let mut archive =
                         unrar::Archive::new_owned(self.server.filesystem.base_path.join(self.path))
                             .open_for_processing()?;
@@ -500,6 +525,19 @@ impl Archive {
                         if path.is_absolute() {
                             archive = entry.skip()?;
                             continue;
+                        }
+
+                        if self
+                            .server
+                            .filesystem
+                            .is_ignored_sync(path, entry.entry().is_directory())
+                        {
+                            archive = entry.skip()?;
+                            continue;
+                        }
+
+                        if is_aborted() {
+                            return Err(anyhow::anyhow!("operation aborted"));
                         }
 
                         let destination_path = destination.join(path);
@@ -538,14 +576,20 @@ impl Archive {
                     Ok(())
                 })
                 .await??;
+
+                drop(guard);
             }
             ArchiveType::SevenZip => {
+                let abort = Arc::new(AtomicBool::new(false));
+
+                let guard = AbortGuard(Arc::clone(&abort));
                 let filesystem = self.server.filesystem.base_dir().await?;
 
+                let file = Arc::new(self.file.into_std().await);
                 tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
-                    let file = multi_reader::MultiReader::new(Arc::new(
-                        self.file.try_into_std().unwrap(),
-                    ))?;
+                    let is_aborted = || abort.load(Ordering::Relaxed);
+
+                    let file = multi_reader::MultiReader::new(file)?;
                     let archive = sevenz_rust2::Archive::read(&mut file.clone(), &[])?;
 
                     let pool = rayon::ThreadPoolBuilder::new()
@@ -576,7 +620,7 @@ impl Archive {
                                     &mut file,
                                 );
 
-                                let result = folder.for_each_entries(&mut |entry, reader| {
+                                if let Err(err) = folder.for_each_entries(&mut |entry, reader| {
                                     let path = entry.name();
                                     if path.starts_with('/') || path.starts_with('\\') {
                                         return Ok(true);
@@ -589,6 +633,12 @@ impl Archive {
                                         .is_ignored_sync(&destination_path, entry.is_directory())
                                     {
                                         return Ok(true);
+                                    }
+
+                                    if is_aborted() {
+                                        return Err(sevenz_rust2::Error::Other(
+                                            "operation aborted".into(),
+                                        ));
                                     }
 
                                     if entry.is_directory() {
@@ -615,9 +665,7 @@ impl Archive {
                                     }
 
                                     Ok(true)
-                                });
-
-                                if let Err(err) = result {
+                                }) {
                                     error_clone.write().unwrap().replace(err);
                                 }
                             });
@@ -631,12 +679,19 @@ impl Archive {
                     }
                 })
                 .await??;
+
+                drop(guard);
             }
             ArchiveType::Ddup => {
+                let abort = Arc::new(AtomicBool::new(false));
+
+                let guard = AbortGuard(Arc::clone(&abort));
                 let filesystem = self.server.filesystem.base_dir().await?;
 
+                let mut file = self.file.into_std().await;
                 tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
-                    let mut file = self.file.try_into_std().unwrap();
+                    let is_aborted = || abort.load(Ordering::Relaxed);
+
                     file.seek(SeekFrom::Start(0))?;
                     let archive = ddup_bak::archive::Archive::open_file(file)?;
 
@@ -648,6 +703,7 @@ impl Archive {
                     fn recursive_traverse(
                         scope: &rayon::Scope,
                         filesystem: &std::sync::Arc<cap_std::fs::Dir>,
+                        is_aborted: impl Fn() -> bool,
                         server: &crate::server::Server,
                         destination: &Path,
                         entry: ddup_bak::archive::entries::Entry,
@@ -658,6 +714,10 @@ impl Archive {
                             .is_ignored_sync(&destination_path, entry.is_directory())
                         {
                             return Ok(());
+                        }
+
+                        if is_aborted() {
+                            return Err(anyhow::anyhow!("operation aborted"));
                         }
 
                         match entry {
@@ -672,6 +732,7 @@ impl Archive {
                                     recursive_traverse(
                                         scope,
                                         filesystem,
+                                        &is_aborted,
                                         server,
                                         &destination_path,
                                         entry,
@@ -716,6 +777,7 @@ impl Archive {
                             recursive_traverse(
                                 scope,
                                 &filesystem,
+                                is_aborted,
                                 &self.server,
                                 &destination,
                                 entry,
@@ -726,6 +788,8 @@ impl Archive {
                     })
                 })
                 .await??;
+
+                drop(guard);
             }
         }
 
@@ -931,14 +995,6 @@ impl Archive {
         ignored: Vec<ignore::gitignore::Gitignore>,
     ) -> Result<(), anyhow::Error> {
         let abort = Arc::new(AtomicBool::new(false));
-
-        struct AbortGuard(Arc<AtomicBool>);
-        impl Drop for AbortGuard {
-            #[inline]
-            fn drop(&mut self) {
-                self.0.store(true, Ordering::Relaxed);
-            }
-        }
 
         let guard = AbortGuard(Arc::clone(&abort));
         let filesystem = server.filesystem.base_dir().await?;
