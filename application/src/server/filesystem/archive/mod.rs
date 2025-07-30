@@ -690,8 +690,6 @@ impl Archive {
 
                 let mut file = self.file.into_std().await;
                 tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
-                    let is_aborted = || abort.load(Ordering::Relaxed);
-
                     file.seek(SeekFrom::Start(0))?;
                     let archive = ddup_bak::archive::Archive::open_file(file)?;
 
@@ -703,7 +701,7 @@ impl Archive {
                     fn recursive_traverse(
                         scope: &rayon::Scope,
                         filesystem: &std::sync::Arc<cap_std::fs::Dir>,
-                        is_aborted: impl Fn() -> bool,
+                        abort: &Arc<AtomicBool>,
                         server: &crate::server::Server,
                         destination: &Path,
                         entry: ddup_bak::archive::entries::Entry,
@@ -716,7 +714,7 @@ impl Archive {
                             return Ok(());
                         }
 
-                        if is_aborted() {
+                        if abort.load(Ordering::Relaxed) {
                             return Err(anyhow::anyhow!("operation aborted"));
                         }
 
@@ -732,7 +730,7 @@ impl Archive {
                                     recursive_traverse(
                                         scope,
                                         filesystem,
-                                        &is_aborted,
+                                        abort,
                                         server,
                                         &destination_path,
                                         entry,
@@ -777,7 +775,7 @@ impl Archive {
                             recursive_traverse(
                                 scope,
                                 &filesystem,
-                                is_aborted,
+                                &abort,
                                 &self.server,
                                 &destination,
                                 entry,
