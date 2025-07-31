@@ -590,7 +590,8 @@ impl Archive {
                     let is_aborted = || abort.load(Ordering::Relaxed);
 
                     let file = multi_reader::MultiReader::new(file)?;
-                    let archive = sevenz_rust2::Archive::read(&mut file.clone(), &[])?;
+                    let password = sevenz_rust2::Password::empty();
+                    let archive = sevenz_rust2::Archive::read(&mut file.clone(), &password)?;
 
                     let pool = rayon::ThreadPoolBuilder::new()
                         .num_threads(self.server.config.api.file_decompression_threads)
@@ -600,7 +601,7 @@ impl Archive {
                     let error = Arc::new(RwLock::new(None));
 
                     pool.in_place_scope(|scope| {
-                        for folder_index in 0..archive.folders.len() {
+                        for block_index in 0..archive.blocks.len() {
                             let archive = archive.clone();
                             let mut file = file.clone();
                             let filesystem = Arc::clone(&filesystem);
@@ -613,10 +614,12 @@ impl Archive {
                                     return;
                                 }
 
+                                let password = sevenz_rust2::Password::empty();
                                 let folder = sevenz_rust2::BlockDecoder::new(
-                                    folder_index,
+                                    1,
+                                    block_index,
                                     &archive,
-                                    &[],
+                                    &password,
                                     &mut file,
                                 );
 
@@ -1160,6 +1163,133 @@ impl Archive {
                     if let Some(bytes_archived) = &bytes_archived {
                         bytes_archived.fetch_add(source_metadata.len(), Ordering::SeqCst);
                     }
+                }
+            }
+
+            let mut inner = archive.finish()?;
+            inner.flush()?;
+
+            Ok(())
+        })
+        .await??;
+
+        drop(guard);
+
+        Ok(())
+    }
+
+    pub async fn create_7z(
+        server: crate::server::Server,
+        destination: impl Write + Seek + Send + 'static,
+        base: PathBuf,
+        sources: Vec<PathBuf>,
+        bytes_archived: Option<Arc<AtomicU64>>,
+        ignored: Vec<ignore::gitignore::Gitignore>,
+    ) -> Result<(), anyhow::Error> {
+        let abort = Arc::new(AtomicBool::new(false));
+
+        let guard = AbortGuard(Arc::clone(&abort));
+        let filesystem = server.filesystem.base_dir().await?;
+
+        tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
+            let is_aborted = || abort.load(Ordering::Relaxed);
+            let mut archive = sevenz_rust2::ArchiveWriter::new(destination)?;
+
+            for source in sources {
+                let source = base.join(&source);
+                let source = server.filesystem.relative_path(&source);
+
+                let relative = match source.strip_prefix(&base) {
+                    Ok(path) => path,
+                    Err(_) => continue,
+                };
+
+                let source_metadata = match filesystem.symlink_metadata(&source) {
+                    Ok(metadata) => metadata,
+                    Err(_) => continue,
+                };
+
+                if is_aborted() {
+                    return Err(anyhow::anyhow!("operation aborted"));
+                }
+
+                let mut entry = sevenz_rust2::ArchiveEntry::new();
+                entry.name = relative.to_string_lossy().to_string();
+                entry.is_directory = source_metadata.is_dir();
+                if let Ok(mtime) = source_metadata.modified()
+                    && let Ok(mtime) = mtime.into_std().try_into()
+                {
+                    entry.last_modified_date = mtime;
+                }
+
+                if source_metadata.is_dir() {
+                    archive.push_archive_entry(entry, None::<Box<dyn Read + Send>>)?;
+                    if let Some(bytes_archived) = &bytes_archived {
+                        bytes_archived.fetch_add(source_metadata.len(), Ordering::SeqCst);
+                    }
+
+                    let mut walker =
+                        crate::server::filesystem::walker::WalkDir::new(server.clone(), source)?
+                            .with_ignored(&ignored);
+                    while let Some(Ok((_, path))) = walker.next_entry() {
+                        let relative = match path.strip_prefix(&base) {
+                            Ok(path) => path,
+                            Err(_) => continue,
+                        };
+
+                        let metadata = match filesystem.symlink_metadata(&path) {
+                            Ok(metadata) => metadata,
+                            Err(_) => continue,
+                        };
+
+                        if is_aborted() {
+                            return Err(anyhow::anyhow!("operation aborted"));
+                        }
+
+                        let mut entry = sevenz_rust2::ArchiveEntry::new();
+                        entry.name = relative.to_string_lossy().to_string();
+                        entry.is_directory = metadata.is_dir();
+                        if let Ok(mtime) = metadata.modified()
+                            && let Ok(mtime) = mtime.into_std().try_into()
+                        {
+                            entry.last_modified_date = mtime;
+                        }
+
+                        if metadata.is_dir() {
+                            archive.push_archive_entry(entry, None::<Box<dyn Read + Send>>)?;
+                            if let Some(bytes_archived) = &bytes_archived {
+                                bytes_archived.fetch_add(metadata.len(), Ordering::SeqCst);
+                            }
+                        } else if metadata.is_file() {
+                            let file = filesystem.open(&path)?;
+                            let reader: Box<dyn Read + Send> = match &bytes_archived {
+                                Some(bytes_archived) => {
+                                    Box::new(CountingReader::new_with_bytes_read(
+                                        file,
+                                        Arc::clone(bytes_archived),
+                                    ))
+                                }
+                                None => Box::new(file),
+                            };
+
+                            entry.size = metadata.len();
+
+                            archive.push_archive_entry(entry, Some(reader))?;
+                        }
+                    }
+                } else if source_metadata.is_file() {
+                    let file = filesystem.open(&source)?;
+                    let reader: Box<dyn Read + Send> = match &bytes_archived {
+                        Some(bytes_archived) => Box::new(CountingReader::new_with_bytes_read(
+                            file,
+                            Arc::clone(bytes_archived),
+                        )),
+                        None => Box::new(file),
+                    };
+
+                    entry.size = source_metadata.len();
+
+                    archive.push_archive_entry(entry, Some(reader))?;
                 }
             }
 

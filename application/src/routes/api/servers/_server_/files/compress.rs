@@ -24,6 +24,7 @@ mod post {
         TarLz4,
         TarZstd,
         Zip,
+        SevenZip,
     }
 
     #[derive(ToSchema, Deserialize)]
@@ -81,6 +82,7 @@ mod post {
                     ArchiveFormat::TarLz4 => "tar.lz4",
                     ArchiveFormat::TarZstd => "tar.zst",
                     ArchiveFormat::Zip => "zip",
+                    ArchiveFormat::SevenZip => "7z",
                 }
             )
         });
@@ -148,6 +150,28 @@ mod post {
                         .await??;
 
                         crate::server::filesystem::archive::Archive::create_zip(
+                            server,
+                            writer,
+                            root,
+                            data.files.into_iter().map(PathBuf::from).collect(),
+                            None,
+                            vec![ignored],
+                        )
+                        .await
+                    }
+                    ArchiveFormat::SevenZip => {
+                        let writer = tokio::task::spawn_blocking({
+                            let server = server.clone();
+
+                            move || {
+                                crate::server::filesystem::writer::FileSystemWriter::new(
+                                    server, file_name, None, None,
+                                )
+                            }
+                        })
+                        .await??;
+
+                        crate::server::filesystem::archive::Archive::create_7z(
                             server,
                             writer,
                             root,

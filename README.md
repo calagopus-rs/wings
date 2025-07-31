@@ -134,7 +134,7 @@ docker:
 
 - `GET /openapi.json` endpoint for getting a full OpenAPI documentation of the wings api
 - `GET /api/stats` api endpoint for seeing node usage
-- `POST /api/servers/{server}/script` api endpoint for running custom scripts async to the server
+- `POST /api/servers/{server}/script` api endpoint for running custom scripts async on the server
 - `POST /api/servers/{server}/ws/permissions` api endpoint for live updating user permissions on a server
 - `GET /api/servers/{server}/version` api endpoint for getting a version hash for a server
 - `GET /api/servers/{server}/files/fingerprints` api endpoint for getting fingerprints for many files at once

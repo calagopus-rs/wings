@@ -92,7 +92,7 @@ mod get {
                                 hasher.consume(&buffer[..bytes_read]);
                             }
 
-                            format!("{:x}", hasher.compute())
+                            format!("{:x}", hasher.finalize())
                         }
                         Algorithm::Crc32 => {
                             let mut hasher = crc32fast::Hasher::new();

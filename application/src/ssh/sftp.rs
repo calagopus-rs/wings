@@ -1149,7 +1149,7 @@ impl russh_sftp::server::Handler for SftpSession {
                                 hasher.consume(&buffer[..bytes_read]);
                             }
 
-                            (*hasher.compute()).into()
+                            (*hasher.finalize()).into()
                         }
                         "crc32" => {
                             let mut hasher = crc32fast::Hasher::new();
