@@ -65,6 +65,8 @@ WantedBy=multi-user.target
                 return 1;
             }
 
+            println!("systemd reloaded successfully");
+
             if let Err(err) = Command::new("systemctl")
                 .arg("enable")
                 .args(if config.is_some() {
@@ -80,7 +82,11 @@ WantedBy=multi-user.target
                 return 1;
             }
 
-            println!("systemd reloaded successfully");
+            if config.is_some() {
+                println!("service file enabled on startup and started");
+            } else {
+                println!("service file enabled on startup")
+            }
 
             0
         }

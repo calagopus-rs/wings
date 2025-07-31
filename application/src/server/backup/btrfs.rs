@@ -314,7 +314,7 @@ pub async fn download_backup(
     let subvolume_path = get_subvolume_path(config, uuid);
     let ignored_path = get_ignored(config, uuid);
 
-    if !subvolume_path.exists() {
+    if tokio::fs::metadata(&subvolume_path).await.is_err() {
         return Err(anyhow::anyhow!(
             "Backup subvolume does not exist: {}",
             subvolume_path.display()
@@ -404,7 +404,7 @@ pub async fn delete_backup(
 ) -> Result<(), anyhow::Error> {
     let subvolume_path = get_subvolume_path(config, uuid);
 
-    if !subvolume_path.exists() {
+    if tokio::fs::metadata(&subvolume_path).await.is_err() {
         return Ok(());
     }
 

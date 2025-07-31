@@ -135,7 +135,7 @@ pub async fn setup(
         "setting up xfs disk limiter for volume"
     );
 
-    if !filesystem.base_path.exists() {
+    if tokio::fs::metadata(&filesystem.base_path).await.is_err() {
         tokio::fs::create_dir_all(&filesystem.base_path).await?;
     }
 

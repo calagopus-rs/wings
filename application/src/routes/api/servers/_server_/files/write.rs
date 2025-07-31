@@ -83,7 +83,21 @@ mod post {
             0
         };
 
-        let parent = path.parent().unwrap();
+        let parent = match path.parent() {
+            Some(parent) => parent,
+            None => {
+                return ApiResponse::error("file has no parent")
+                    .with_status(StatusCode::EXPECTATION_FAILED)
+                    .ok();
+            }
+        };
+
+        if server.filesystem.is_ignored(parent, true).await {
+            return ApiResponse::error("parent directory not found")
+                .with_status(StatusCode::EXPECTATION_FAILED)
+                .ok();
+        }
+
         server.filesystem.create_dir_all(parent).await?;
 
         if !server
@@ -106,7 +120,7 @@ mod post {
         file.flush().await?;
         file.sync_all().await?;
 
-        server.filesystem.chown_path(&path).await;
+        server.filesystem.chown_path(&path).await?;
 
         ApiResponse::json(Response {}).ok()
     }

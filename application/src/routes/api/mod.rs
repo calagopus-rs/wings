@@ -1,9 +1,11 @@
-use super::{ApiError, GetState, State};
+use super::{GetState, State};
+use crate::response::ApiResponse;
 use axum::{
     body::Body,
     extract::Request,
     http::{Response, StatusCode},
     middleware::Next,
+    response::IntoResponse,
     routing::any,
 };
 use utoipa_axum::router::OpenApiRouter;
@@ -20,47 +22,31 @@ pub async fn auth(state: GetState, req: Request, next: Next) -> Result<Response<
     let key = req
         .headers()
         .get("Authorization")
-        .map(|v| v.to_str().unwrap())
+        .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_string();
-    let mut parts = key.splitn(2, " ");
-    let r#type = parts.next().unwrap();
-    let token = parts.next();
-
-    if r#type != "Bearer" {
-        return Ok(Response::builder()
-            .status(StatusCode::UNAUTHORIZED)
-            .header("WWW-Authenticate", "Bearer")
-            .header("Content-Type", "application/json")
-            .body(Body::from(
-                serde_json::to_string(&ApiError::new("invalid authorization token")).unwrap(),
-            ))
-            .unwrap());
-    }
-
-    let token = match token {
-        Some(t) => t,
+    let (r#type, token) = match key.split_once(' ') {
+        Some((t, tok)) => (t, tok),
         None => {
-            return Ok(Response::builder()
-                .status(StatusCode::UNAUTHORIZED)
-                .header("WWW-Authenticate", "Bearer")
-                .header("Content-Type", "application/json")
-                .body(Body::from(
-                    serde_json::to_string(&ApiError::new("invalid authorization token")).unwrap(),
-                ))
-                .unwrap());
+            return Ok(ApiResponse::error("invalid authorization header")
+                .with_status(StatusCode::UNAUTHORIZED)
+                .with_header("WWW-Authenticate", "Bearer")
+                .into_response());
         }
     };
 
+    if r#type != "Bearer" {
+        return Ok(ApiResponse::error("invalid authorization header")
+            .with_status(StatusCode::UNAUTHORIZED)
+            .with_header("WWW-Authenticate", "Bearer")
+            .into_response());
+    }
+
     if !constant_time_eq::constant_time_eq(token.as_bytes(), state.config.token.as_bytes()) {
-        return Ok(Response::builder()
-            .status(StatusCode::UNAUTHORIZED)
-            .header("WWW-Authenticate", "Bearer")
-            .header("Content-Type", "application/json")
-            .body(Body::from(
-                serde_json::to_string(&ApiError::new("invalid authorization token")).unwrap(),
-            ))
-            .unwrap());
+        return Ok(ApiResponse::error("invalid authorization token")
+            .with_status(StatusCode::UNAUTHORIZED)
+            .with_header("WWW-Authenticate", "Bearer")
+            .into_response());
     }
 
     Ok(next.run(req).await)

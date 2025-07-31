@@ -81,7 +81,14 @@ mod get {
         };
 
         let path = PathBuf::from(payload.file_path);
-        let file_name = path.file_name().unwrap().to_string_lossy().to_string();
+        let file_name = match path.file_name() {
+            Some(name) => name.to_string_lossy().to_string(),
+            None => {
+                return ApiResponse::error("file not found")
+                    .with_status(StatusCode::NOT_FOUND)
+                    .ok();
+            }
+        };
 
         let mut folder_ascii = "".to_string();
         for c in file_name.chars() {

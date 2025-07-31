@@ -235,7 +235,23 @@ impl ProcessConfiguration {
                             "setting ownership for directory: {}",
                             parent.display()
                         );
-                        server.filesystem.chown_path(&parent).await;
+                        match server.filesystem.chown_path(&parent).await {
+                            Ok(_) => {
+                                tracing::debug!(
+                                    server = %server.uuid,
+                                    "successfully set ownership for directory: {}",
+                                    parent.display()
+                                );
+                            }
+                            Err(e) => {
+                                tracing::error!(
+                                    server = %server.uuid,
+                                    "failed to set ownership for directory {}: {}",
+                                    parent.display(),
+                                    e
+                                );
+                            }
+                        }
                     } else {
                         tracing::debug!(
                             server = %server.uuid,
@@ -351,7 +367,22 @@ impl ProcessConfiguration {
                         file_path
                     );
 
-                    server.filesystem.chown_path(&file_path).await;
+                    match server.filesystem.chown_path(&file_path).await {
+                        Ok(_) => {
+                            tracing::debug!(
+                                server = %server.uuid,
+                                "successfully set ownership for file: {}",
+                                file_path
+                            );
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                server = %server.uuid,
+                                "failed to set ownership for file {}: {}",
+                                file_path, e
+                            );
+                        }
+                    }
 
                     tracing::debug!(
                         server = %server.uuid,

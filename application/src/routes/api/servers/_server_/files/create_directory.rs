@@ -62,7 +62,7 @@ mod post {
         }
 
         server.filesystem.create_dir_all(&destination).await?;
-        server.filesystem.chown_path(&destination).await;
+        server.filesystem.chown_path(&destination).await?;
 
         ApiResponse::json(Response {}).ok()
     }

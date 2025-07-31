@@ -416,24 +416,31 @@ impl Filesystem {
         let new_path: PathBuf = self.relative_path(&new_path.into());
 
         if let Some(parent) = new_path.parent() {
-            if !parent.exists() {
-                self.create_dir_all(parent).await?;
-            }
+            self.create_dir_all(parent).await?;
         }
 
         let metadata = self.metadata(&old_path).await?;
         let is_dir = metadata.is_dir();
 
         let old_parent = self
-            .canonicalize(old_path.parent().unwrap())
+            .canonicalize(match old_path.parent() {
+                Some(parent) => parent,
+                None => return Err(anyhow::anyhow!("failed to get old path parent")),
+            })
             .await
             .unwrap_or_default();
         let new_parent = self
-            .canonicalize(new_path.parent().unwrap())
+            .canonicalize(match new_path.parent() {
+                Some(parent) => parent,
+                None => return Err(anyhow::anyhow!("failed to get new path parent")),
+            })
             .await
             .unwrap_or_default();
 
-        let abs_new_path = new_parent.join(new_path.file_name().unwrap());
+        let abs_new_path = new_parent.join(match new_path.file_name() {
+            Some(name) => name,
+            None => return Err(anyhow::anyhow!("failed to get new path file name")),
+        });
 
         if is_dir {
             let mut disk_usage = self.disk_usage.write().await;
@@ -750,38 +757,44 @@ impl Filesystem {
         self.allocate_in_path_raw(&components, delta, false).await
     }
 
-    pub async fn truncate_root(&self) {
+    pub async fn truncate_root(&self) -> Result<(), anyhow::Error> {
         self.disk_usage.write().await.clear();
         self.disk_usage_cached.store(0, Ordering::Relaxed);
 
-        let mut directory = tokio::fs::read_dir(&self.base_path).await.unwrap();
+        let mut directory = tokio::fs::read_dir(&self.base_path).await?;
         while let Ok(Some(entry)) = directory.next_entry().await {
             let path = entry.path();
 
             if let Ok(metadata) = tokio::fs::symlink_metadata(&path).await {
                 if metadata.is_dir() {
-                    tokio::fs::remove_dir_all(&path).await.ok();
+                    tokio::fs::remove_dir_all(&path).await?;
                 } else {
-                    tokio::fs::remove_file(&path).await.ok();
+                    tokio::fs::remove_file(&path).await?;
                 }
             }
         }
+
+        Ok(())
     }
 
-    pub async fn chown_path(&self, path: impl Into<PathBuf>) {
-        fn recursive_chown(path: &Path, owner_uid: u32, owner_gid: u32) {
-            let metadata = path.symlink_metadata().unwrap();
+    pub async fn chown_path(&self, path: impl Into<PathBuf>) -> Result<(), anyhow::Error> {
+        fn recursive_chown(
+            path: &Path,
+            owner_uid: u32,
+            owner_gid: u32,
+        ) -> Result<(), std::io::Error> {
+            let metadata = path.symlink_metadata()?;
             if metadata.is_dir() {
                 if let Ok(entries) = path.read_dir() {
                     for entry in entries.flatten() {
                         let path = entry.path();
-                        recursive_chown(&path, owner_uid, owner_gid);
+                        recursive_chown(&path, owner_uid, owner_gid)?;
                     }
                 }
 
-                std::os::unix::fs::lchown(path, Some(owner_uid), Some(owner_gid)).ok();
+                std::os::unix::fs::lchown(path, Some(owner_uid), Some(owner_gid))
             } else {
-                std::os::unix::fs::lchown(path, Some(owner_uid), Some(owner_gid)).ok();
+                std::os::unix::fs::lchown(path, Some(owner_uid), Some(owner_gid))
             }
         }
 
@@ -790,12 +803,9 @@ impl Filesystem {
             let owner_uid = self.config.system.user.uid;
             let owner_gid = self.config.system.user.gid;
 
-            move || {
-                recursive_chown(&path, owner_uid, owner_gid);
-            }
+            move || Ok(recursive_chown(&path, owner_uid, owner_gid)?)
         })
-        .await
-        .unwrap()
+        .await?
     }
 
     pub async fn setup_disk_checker(&self, server: &crate::server::Server) {
@@ -949,11 +959,34 @@ impl Filesystem {
         let owner_uid = self.config.system.user.uid;
         let owner_gid = self.config.system.user.gid;
 
-        tokio::task::spawn_blocking(move || {
-            std::os::unix::fs::chown(&base_path, Some(owner_uid), Some(owner_gid)).unwrap();
+        match tokio::task::spawn_blocking({
+            let base_path = base_path.clone();
+
+            move || std::os::unix::fs::chown(base_path, Some(owner_uid), Some(owner_gid))
         })
         .await
-        .unwrap();
+        {
+            Ok(Ok(())) => {
+                tracing::debug!(
+                    path = %base_path.display(),
+                    "set ownership for server base directory"
+                );
+            }
+            Ok(Err(err)) => {
+                tracing::error!(
+                    path = %base_path.display(),
+                    "failed to set ownership for server base directory: {}",
+                    err
+                );
+            }
+            Err(err) => {
+                tracing::error!(
+                    path = %base_path.display(),
+                    "failed to set ownership for server base directory: {}",
+                    err
+                );
+            }
+        }
 
         if self.base_dir.read().await.is_none() {
             match cap_std::fs::Dir::open_ambient_dir(&self.base_path, cap_std::ambient_authority())

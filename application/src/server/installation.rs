@@ -94,10 +94,7 @@ async fn container_config(
                 format!("rw,exec,nosuid,size={}M", server.config.docker.tmpfs_size),
             )])),
             log_config: Some(bollard::secret::HostConfigLogConfig {
-                typ: serde_json::to_value(&server.config.docker.log_config.r#type)
-                    .unwrap()
-                    .as_str()
-                    .map(|s| s.to_string()),
+                typ: Some(server.config.docker.log_config.r#type.to_string()),
                 config: Some(
                     server
                         .config
@@ -377,7 +374,7 @@ pub async fn install_server(
 
     *container_id.lock().await = Some(container.id.clone());
 
-    if let Err(err) = tokio::time::timeout(
+    match tokio::time::timeout(
         if server.config.docker.installer_limits.timeout_seconds > 0 {
             std::time::Duration::from_secs(server.config.docker.installer_limits.timeout_seconds)
         } else {
@@ -400,8 +397,7 @@ pub async fn install_server(
                                 ..Default::default()
                             }),
                         )
-                        .await
-                        .unwrap();
+                        .await?;
 
                     let mut buffer = Vec::with_capacity(1024);
                     let mut line_start = 0;
@@ -491,25 +487,36 @@ pub async fn install_server(
                             ))
                             .ok();
                     }
+
+                    Ok::<_, anyhow::Error>(())
                 }
             };
 
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             client
                 .start_container::<String>(&container.id, None)
-                .await
-                .unwrap();
+                .await?;
 
-            thread.await;
+            thread.await
         },
     )
     .await
     {
-        unset_installing(false).await?;
-        return Err(anyhow::anyhow!(
-            "timeout while waiting for installation: {:#?}",
-            err
-        ));
+        Ok(Ok(())) => {}
+        Ok(Err(err)) => {
+            unset_installing(false).await?;
+            return Err(anyhow::anyhow!(
+                "failed to start installation container: {}",
+                err
+            ));
+        }
+        Err(err) => {
+            unset_installing(false).await?;
+            return Err(anyhow::anyhow!(
+                "timeout while waiting for installation: {:#?}",
+                err
+            ));
+        }
     }
 
     unset_installing(true).await?;
@@ -547,6 +554,11 @@ pub async fn attach_install_container(
                 .as_ref()
                 .is_some_and(|names| names.iter().any(|name| name.contains("installer")))
             {
+                let current_container_id = match container.id {
+                    Some(id) => id,
+                    None => continue,
+                };
+
                 if container
                     .state
                     .is_some_and(|s| s.to_lowercase() == "running")
@@ -554,20 +566,20 @@ pub async fn attach_install_container(
                     tracing::info!(
                         server = %server.uuid,
                         "attaching to existing installation container {}",
-                        container.id.clone().unwrap()
+                        current_container_id
                     );
 
-                    *container_id.lock().await = Some(container.id.unwrap());
+                    *container_id.lock().await = Some(current_container_id);
                 } else {
                     tracing::info!(
                         server = %server.uuid,
                         "found existing installation container {} but it is not running, deleting it",
-                        container.id.clone().unwrap()
+                        current_container_id
                     );
 
                     client
                         .remove_container(
-                            &container.id.unwrap(),
+                            &current_container_id,
                             Some(bollard::container::RemoveContainerOptions {
                                 force: true,
                                 ..Default::default()
@@ -634,17 +646,19 @@ pub async fn attach_install_container(
             ))
     };
 
-    if container_id.lock().await.is_none() {
-        tracing::info!(
-            server = %server.uuid,
-            "no existing installation container found, marking server as installed"
-        );
+    let container_id = container_id.lock().await;
+    let container_id = match container_id.as_ref() {
+        Some(id) => id,
+        None => {
+            tracing::info!(
+                server = %server.uuid,
+                "no existing installation container found, marking server as installed"
+            );
 
-        unset_installing(true).await?;
-        return Ok(());
-    }
-
-    let container_id = container_id.lock().await.clone().unwrap();
+            unset_installing(true).await?;
+            return Ok(());
+        }
+    };
 
     if let Err(err) = tokio::time::timeout(
         if server.config.docker.installer_limits.timeout_seconds > 0 {
@@ -669,8 +683,7 @@ pub async fn attach_install_container(
                                 ..Default::default()
                             }),
                         )
-                        .await
-                        .unwrap();
+                        .await?;
 
                     let mut buffer = Vec::with_capacity(1024);
                     let mut line_start = 0;
@@ -760,27 +773,34 @@ pub async fn attach_install_container(
                             ))
                             .ok();
                     }
+
+                    Ok::<_, anyhow::Error>(())
                 }
             };
 
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-            client
-                .start_container::<String>(&container_id, None)
-                .await
-                .unwrap();
+            client.start_container::<String>(container_id, None).await?;
 
             let wait_thread = {
                 let client = Arc::clone(client);
 
                 async move {
                     client
-                        .wait_container::<String>(&container_id, None)
+                        .wait_container::<String>(container_id, None)
                         .next()
                         .await;
+
+                    Ok::<_, anyhow::Error>(())
                 }
             };
 
-            tokio::join!(thread, wait_thread);
+            match tokio::try_join!(thread, wait_thread) {
+                Ok(_) => Ok(()),
+                Err(err) => Err(anyhow::anyhow!(
+                    "failed to start installation container: {}",
+                    err
+                )),
+            }
         },
     )
     .await

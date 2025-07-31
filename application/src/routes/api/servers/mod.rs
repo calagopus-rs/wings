@@ -24,7 +24,10 @@ mod get {
 }
 
 mod post {
-    use crate::routes::{ApiError, GetState};
+    use crate::{
+        response::{ApiResponse, ApiResponseResult},
+        routes::{ApiError, GetState},
+    };
     use axum::http::StatusCode;
     use serde::{Deserialize, Serialize};
     use utoipa::ToSchema;
@@ -48,7 +51,7 @@ mod post {
     pub async fn route(
         state: GetState,
         axum::Json(data): axum::Json<Payload>,
-    ) -> (StatusCode, axum::Json<serde_json::Value>) {
+    ) -> ApiResponseResult {
         if state
             .server_manager
             .get_servers()
@@ -56,16 +59,12 @@ mod post {
             .iter()
             .any(|s| s.uuid == data.uuid)
         {
-            return (
-                StatusCode::CONFLICT,
-                axum::Json(
-                    serde_json::to_value(ApiError::new("server with this uuid already exists"))
-                        .unwrap(),
-                ),
-            );
+            return ApiResponse::error("server with this uuid already exists")
+                .with_status(StatusCode::CONFLICT)
+                .ok();
         }
 
-        let mut server_data = state.config.client.server(data.uuid).await.unwrap();
+        let mut server_data = state.config.client.server(data.uuid).await?;
         server_data.settings.start_on_completion = Some(data.start_on_completion);
 
         state
@@ -73,10 +72,7 @@ mod post {
             .create_server(server_data, !data.skip_scripts)
             .await;
 
-        (
-            StatusCode::OK,
-            axum::Json(serde_json::to_value(Response {}).unwrap()),
-        )
+        ApiResponse::json(Response {}).ok()
     }
 }
 

@@ -108,16 +108,31 @@ mod post {
             format!("{base_name}{suffix}{extension}")
         }
 
+        let parent = match location.parent() {
+            Some(parent) => parent,
+            None => {
+                return ApiResponse::error("file has no parent")
+                    .with_status(StatusCode::EXPECTATION_FAILED)
+                    .ok();
+            }
+        };
+
+        if server.filesystem.is_ignored(parent, true).await {
+            return ApiResponse::error("parent directory not found")
+                .with_status(StatusCode::EXPECTATION_FAILED)
+                .ok();
+        }
+
         let new_name = if let Some(name) = data.name {
             name
         } else {
             generate_new_name(&server, &location).await
         };
-        let file_name = location.parent().unwrap().join(&new_name);
+        let file_name = parent.join(&new_name);
 
         if !server
             .filesystem
-            .allocate_in_path(location.parent().unwrap(), metadata.len() as i64)
+            .allocate_in_path(parent, metadata.len() as i64)
             .await
         {
             return ApiResponse::error("failed to allocate space")

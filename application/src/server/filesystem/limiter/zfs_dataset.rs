@@ -131,7 +131,7 @@ pub async fn setup(
     let pool_name = get_pool_from_path(&filesystem.base_path).await?;
     let dataset_name = format!("{}/server-{}", pool_name, filesystem.uuid);
 
-    if !filesystem.base_path.exists() {
+    if tokio::fs::metadata(&filesystem.base_path).await.is_err() {
         let output = Command::new("zfs")
             .arg("create")
             .arg("-o")

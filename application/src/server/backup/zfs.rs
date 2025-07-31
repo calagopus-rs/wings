@@ -308,7 +308,7 @@ pub async fn download_backup(
     let snapshot_path = get_snapshot_path(config, server_uuid, uuid);
     let snapshot_name = get_snapshot_name(uuid);
 
-    if !Path::new(&snapshot_path).exists() {
+    if tokio::fs::metadata(&snapshot_path).await.is_err() {
         return Err(anyhow::anyhow!("Snapshot {} does not exist", snapshot_name));
     }
 

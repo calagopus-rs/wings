@@ -110,7 +110,7 @@ mod post {
             }
         }
 
-        server.filesystem.chown_path(&root).await;
+        server.filesystem.chown_path(&root).await?;
 
         ApiResponse::json(Response {}).ok()
     }

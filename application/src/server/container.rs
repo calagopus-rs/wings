@@ -48,6 +48,7 @@ impl Container {
             ..Default::default()
         }));
 
+        let server_uuid = server.uuid;
         let mut stream = client
             .attach_container::<String>(
                 &docker_id,
@@ -194,7 +195,9 @@ impl Container {
             stdin,
             stdin_reciever: tokio::task::spawn(async move {
                 while let Some(data) = stdin_reciever.recv().await {
-                    stream.input.write_all(data.as_bytes()).await.unwrap();
+                    if let Err(err) = stream.input.write_all(data.as_bytes()).await {
+                        tracing::error!(server = %server_uuid, error = %err, "failed to write to container stdin");
+                    }
                 }
             }),
 
@@ -301,7 +304,13 @@ impl Container {
 
                                 check_startup(&line);
                                 if allow_ratelimit().await {
-                                    stdout_sender.send(line).unwrap();
+                                    if let Err(err) = stdout_sender.send(line) {
+                                        tracing::error!(
+                                            server = %server_uuid,
+                                            error = %err,
+                                            "failed to send stdout line"
+                                        );
+                                    }
                                 }
 
                                 line_start = newline_pos + 1;
@@ -315,7 +324,13 @@ impl Container {
 
                                 check_startup(&line);
                                 if allow_ratelimit().await {
-                                    stdout_sender.send(line).unwrap();
+                                    if let Err(err) = stdout_sender.send(line) {
+                                        tracing::error!(
+                                            server = %server_uuid,
+                                            error = %err,
+                                            "failed to send stdout line"
+                                        );
+                                    }
                                 }
 
                                 line_start += 512;
@@ -330,7 +345,13 @@ impl Container {
                                 .trim()
                                 .to_string();
                                 if allow_ratelimit().await {
-                                    stdout_sender.send(line).unwrap();
+                                    if let Err(err) = stdout_sender.send(line) {
+                                        tracing::error!(
+                                            server = %server_uuid,
+                                            error = %err,
+                                            "failed to send stdout line"
+                                        );
+                                    }
                                 }
 
                                 line_start += 512;
@@ -351,7 +372,13 @@ impl Container {
                     let line = String::from_utf8_lossy(&buffer[line_start..])
                         .trim()
                         .to_string();
-                    stdout_sender.send(line).unwrap();
+                    if let Err(err) = stdout_sender.send(line) {
+                        tracing::error!(
+                            server = %server_uuid,
+                            error = %err,
+                            "failed to send remaining stdout line"
+                        );
+                    }
                 }
             }),
         })

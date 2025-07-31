@@ -192,7 +192,7 @@ impl AsyncFileSystemWriter {
                 .await?;
         }
 
-        server.filesystem.chown_path(&destination).await;
+        server.filesystem.chown_path(&destination).await?;
 
         Ok(Self {
             server,

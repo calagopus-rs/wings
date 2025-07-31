@@ -325,7 +325,22 @@ impl InternalBackup {
         );
 
         if truncate_directory {
-            server.filesystem.truncate_root().await;
+            if let Err(err) = server.filesystem.truncate_root().await {
+                tracing::error!(
+                    server = %server.uuid,
+                    "failed to truncate root directory before restoring backup: {:#?}",
+                    err
+                );
+
+                server.restoring.store(false, Ordering::SeqCst);
+                server
+                    .config
+                    .client
+                    .set_backup_restore_status(self.uuid, false)
+                    .await?;
+
+                return Err(err);
+            }
         }
 
         let progress = Arc::new(AtomicU64::new(0));

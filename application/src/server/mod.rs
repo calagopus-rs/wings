@@ -564,7 +564,16 @@ impl Server {
                     continue;
                 }
 
-                let container = container.id.clone().unwrap();
+                let container = match container.id {
+                    Some(id) => id,
+                    None => {
+                        tracing::warn!(
+                            server = %self.uuid,
+                            "container ID is missing, cannot attach"
+                        );
+                        continue;
+                    }
+                };
                 let container = Arc::new(
                     container::Container::new(
                         container.to_string(),
@@ -879,7 +888,7 @@ impl Server {
                         )
                         .await;
 
-                        self.filesystem.chown_path(&self.filesystem.base_path).await;
+                        self.filesystem.chown_path(&self.filesystem.base_path).await?;
                     }
 
                     self.pull_image(
@@ -1175,7 +1184,10 @@ impl Server {
         .await;
 
         let mut stream = client.wait_container::<String>(
-            &self.container.read().await.as_ref().unwrap().docker_id,
+            match &self.container.read().await.as_ref() {
+                Some(container) => &container.docker_id,
+                None => return Ok(()),
+            },
             None,
         );
 
@@ -1210,7 +1222,16 @@ impl Server {
             .await
         {
             for container in containers {
-                let container = container.id.clone().unwrap();
+                let container = match container.id {
+                    Some(id) => id,
+                    None => {
+                        tracing::warn!(
+                            server = %self.uuid,
+                            "container ID is missing, cannot remove"
+                        );
+                        continue;
+                    }
+                };
 
                 if let Err(err) = client
                     .remove_container(

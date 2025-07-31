@@ -25,7 +25,7 @@ pub async fn get_repository(
     }
 
     let path = PathBuf::from(&config.system.backup_directory);
-    if path.join(".ddup-bak").exists() {
+    if tokio::fs::metadata(path.join(".ddup-bak")).await.is_ok() {
         let repository = Arc::new(
             tokio::task::spawn_blocking(move || {
                 ddup_bak::repository::Repository::open(&path, None, None).unwrap()

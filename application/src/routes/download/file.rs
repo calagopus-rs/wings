@@ -82,6 +82,15 @@ mod get {
 
         let path = Path::new(&payload.file_path);
 
+        let file_name = match path.file_name() {
+            Some(name) => name.to_string_lossy().to_string(),
+            None => {
+                return ApiResponse::error("file not found")
+                    .with_status(StatusCode::NOT_FOUND)
+                    .ok();
+            }
+        };
+
         if let Some((backup, path)) = server.filesystem.backup_fs(&server, path).await {
             match crate::server::filesystem::backup::reader(backup, &server, &path).await {
                 Ok((reader, size)) => {
@@ -92,9 +101,7 @@ mod get {
                         "Content-Disposition",
                         format!(
                             "attachment; filename={}",
-                            serde_json::Value::String(
-                                path.file_name().unwrap().to_str().unwrap().to_string(),
-                            )
+                            serde_json::Value::String(file_name)
                         )
                         .parse()?,
                     );
@@ -155,7 +162,7 @@ mod get {
             "Content-Disposition",
             format!(
                 "attachment; filename={}",
-                serde_json::Value::String(path.file_name().unwrap().to_str().unwrap().to_string())
+                serde_json::Value::String(file_name)
             )
             .parse()?,
         );

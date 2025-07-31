@@ -2,7 +2,6 @@ use std::{
     io::{Read, Seek, SeekFrom},
     pin::Pin,
     task::{Context, Poll},
-    thread,
     time::{Duration, Instant},
 };
 use tokio::io::{AsyncRead, AsyncSeek, ReadBuf};
@@ -51,7 +50,7 @@ impl<R: Read> Read for LimitedReader<R> {
                 let actual_sleep = sleep_duration.min(max_sleep);
 
                 if !actual_sleep.is_zero() {
-                    thread::sleep(actual_sleep);
+                    std::thread::sleep(actual_sleep);
                 }
             }
         }

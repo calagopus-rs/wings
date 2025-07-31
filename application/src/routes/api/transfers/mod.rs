@@ -42,18 +42,23 @@ mod post {
             .and_then(|v| v.to_str().ok())
             .unwrap_or("")
             .to_string();
-        let mut parts = key.splitn(2, " ");
-        let r#type = parts.next().unwrap();
-        let token = parts.next();
+        let (r#type, token) = match key.split_once(' ') {
+            Some((t, tok)) => (t, tok),
+            None => {
+                return ApiResponse::error("invalid authorization header")
+                    .with_status(StatusCode::UNAUTHORIZED)
+                    .with_header("WWW-Authenticate", "Bearer")
+                    .ok();
+            }
+        };
 
-        if r#type != "Bearer" || token.is_none() {
-            return ApiResponse::error("invalid token format")
+        if r#type != "Bearer" {
+            return ApiResponse::error("invalid authorization header")
                 .with_status(StatusCode::UNAUTHORIZED)
                 .ok();
         }
 
-        let payload: crate::remote::jwt::BasePayload = match state.config.jwt.verify(token.unwrap())
-        {
+        let payload: crate::remote::jwt::BasePayload = match state.config.jwt.verify(token) {
             Ok(payload) => payload,
             Err(_) => {
                 return ApiResponse::error("invalid token")

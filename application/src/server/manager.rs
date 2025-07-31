@@ -1,12 +1,14 @@
 use super::{Server, state::ServerState};
 use std::{
     collections::HashMap,
-    fs::File,
-    io::{Seek, Write},
     path::Path,
     sync::{Arc, atomic::Ordering},
 };
-use tokio::sync::{RwLock, Semaphore};
+use tokio::{
+    fs::File,
+    io::{AsyncSeekExt, AsyncWriteExt},
+    sync::{RwLock, Semaphore},
+};
 
 pub struct Manager {
     config: Arc<crate::config::Config>,
@@ -92,7 +94,18 @@ impl Manager {
                             state
                         );
 
-                        server.attach_container(&client).await.unwrap();
+                        match server.attach_container(&client).await {
+                            Ok(_) => {
+                                tracing::debug!(server = %server.uuid, "server attached successfully");
+                            }
+                            Err(err) => {
+                                tracing::error!(
+                                    server = %server.uuid,
+                                    error = %err,
+                                    "failed to attach server container"
+                                );
+                            }
+                        }
 
                         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                         if matches!(state, ServerState::Running | ServerState::Starting)
@@ -116,36 +129,61 @@ impl Manager {
 
         tokio::spawn({
             let servers = Arc::clone(&servers);
-            let mut states_file = File::create(&states_path).unwrap();
 
             async move {
+                let mut states_file = match File::create(&states_path).await {
+                    Ok(file) => file,
+                    Err(err) => {
+                        tracing::error!("failed to create states.json file: {:#?}", err);
+                        return;
+                    }
+                };
+
+                let mut run_inner = async || -> Result<(), anyhow::Error> {
+                    let servers = servers.read().await;
+                    let states: HashMap<_, _> = servers
+                        .iter()
+                        .map(|s| (s.uuid, s.state.get_state()))
+                        .collect();
+
+                    states_file.set_len(0).await?;
+                    states_file.seek(std::io::SeekFrom::Start(0)).await?;
+                    states_file
+                        .write_all(serde_json::to_string(&states)?.as_bytes())
+                        .await?;
+                    states_file.flush().await?;
+                    states_file.sync_all().await?;
+
+                    Ok(())
+                };
+
                 loop {
                     tokio::time::sleep(std::time::Duration::from_secs(10)).await;
 
-                    let servers = servers
-                        .read()
-                        .await
-                        .iter()
-                        .map(|s| (s.uuid, s.state.get_state()))
-                        .collect::<HashMap<_, _>>();
-
-                    states_file.set_len(0).unwrap();
-                    states_file.seek(std::io::SeekFrom::Start(0)).unwrap();
-                    serde_json::to_writer(&mut states_file, &servers).unwrap();
-                    states_file.flush().unwrap();
-                    states_file.sync_all().unwrap();
+                    match run_inner().await {
+                        Ok(_) => {}
+                        Err(err) => {
+                            tracing::error!("failed to write states.json file: {:#?}", err);
+                            return;
+                        }
+                    }
                 }
             }
         });
 
         tokio::spawn({
             let servers = Arc::clone(&servers);
-            let mut installing_file = File::create(&installing_path).unwrap();
 
             async move {
-                loop {
-                    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                let mut installing_file = match File::create(&installing_path).await {
+                    Ok(file) => file,
+                    Err(err) => {
+                        tracing::error!("failed to create installing.json file: {:#?}", err);
+                        return;
+                    }
+                };
 
+                let mut run_inner = async || -> Result<(), anyhow::Error> {
                     let mut installing = HashMap::new();
                     for server in servers.read().await.iter() {
                         if let Some((reinstall, installation_script)) =
@@ -156,11 +194,27 @@ impl Manager {
                         }
                     }
 
-                    installing_file.set_len(0).unwrap();
-                    installing_file.seek(std::io::SeekFrom::Start(0)).unwrap();
-                    serde_json::to_writer(&mut installing_file, &installing).unwrap();
-                    installing_file.flush().unwrap();
-                    installing_file.sync_all().unwrap();
+                    installing_file.set_len(0).await?;
+                    installing_file.seek(std::io::SeekFrom::Start(0)).await?;
+                    installing_file
+                        .write_all(serde_json::to_string(&installing)?.as_bytes())
+                        .await?;
+                    installing_file.flush().await?;
+                    installing_file.sync_all().await?;
+
+                    Ok(())
+                };
+
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+
+                    match run_inner().await {
+                        Ok(_) => {}
+                        Err(err) => {
+                            tracing::error!("failed to write installing.json file: {:#?}", err);
+                            return;
+                        }
+                    }
                 }
             }
         });

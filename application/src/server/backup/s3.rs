@@ -407,7 +407,7 @@ pub async fn delete_backup(
     uuid: uuid::Uuid,
 ) -> Result<(), anyhow::Error> {
     let file_name = get_file_name(config, uuid);
-    if file_name.exists() {
+    if tokio::fs::metadata(&file_name).await.is_ok() {
         tokio::fs::remove_file(&file_name).await?;
     }
 

@@ -464,7 +464,9 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::NoSuchFile);
         }
 
-        self.server.filesystem.chown_path(path).await;
+        if self.server.filesystem.chown_path(path).await.is_err() {
+            return Err(StatusCode::NoSuchFile);
+        }
         if let Some(permissions) = attrs.permissions {
             let mut permissions = cap_std::fs::Permissions::from_mode(permissions);
             permissions.set_mode(permissions.mode() & 0o777);

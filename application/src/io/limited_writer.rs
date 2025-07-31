@@ -3,7 +3,6 @@ use std::{
     io::{Seek, SeekFrom, Write},
     pin::Pin,
     task::{Context, Poll},
-    thread,
     time::{Duration, Instant},
 };
 use tokio::io::{AsyncSeek, AsyncWrite};
@@ -52,7 +51,7 @@ impl<W: Write> Write for LimitedWriter<W> {
                 let actual_sleep = sleep_duration.min(max_sleep);
 
                 if !actual_sleep.is_zero() {
-                    thread::sleep(actual_sleep);
+                    std::thread::sleep(actual_sleep);
                 }
             }
         }

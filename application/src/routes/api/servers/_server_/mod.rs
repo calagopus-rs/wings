@@ -1,10 +1,11 @@
 use super::State;
-use crate::routes::{ApiError, GetState};
+use crate::{response::ApiResponse, routes::GetState};
 use axum::{
     body::Body,
     extract::{Path, Request},
     http::{Response, StatusCode},
     middleware::Next,
+    response::IntoResponse,
 };
 use utoipa_axum::{router::OpenApiRouter, routes};
 
@@ -32,23 +33,15 @@ pub async fn auth(
         Some(uuid) => match uuid.parse::<uuid::Uuid>() {
             Ok(uuid) => uuid,
             Err(_) => {
-                return Ok(Response::builder()
-                    .status(StatusCode::BAD_REQUEST)
-                    .header("Content-Type", "application/json")
-                    .body(Body::from(
-                        serde_json::to_string(&ApiError::new("invalid server uuid")).unwrap(),
-                    ))
-                    .unwrap());
+                return Ok(ApiResponse::error("invalid server uuid")
+                    .with_status(StatusCode::BAD_REQUEST)
+                    .into_response());
             }
         },
         None => {
-            return Ok(Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .header("Content-Type", "application/json")
-                .body(Body::from(
-                    serde_json::to_string(&ApiError::new("missing server uuid")).unwrap(),
-                ))
-                .unwrap());
+            return Ok(ApiResponse::error("missing server uuid")
+                .with_status(StatusCode::BAD_REQUEST)
+                .into_response());
         }
     };
 
@@ -62,13 +55,9 @@ pub async fn auth(
     {
         Some(server) => server,
         None => {
-            return Ok(Response::builder()
-                .status(StatusCode::NOT_FOUND)
-                .header("Content-Type", "application/json")
-                .body(Body::from(
-                    serde_json::to_string(&ApiError::new("server not found")).unwrap(),
-                ))
-                .unwrap());
+            return Ok(ApiResponse::error("server not found")
+                .with_status(StatusCode::NOT_FOUND)
+                .into_response());
         }
     };
 
@@ -98,7 +87,10 @@ mod get {
 }
 
 mod delete {
-    use crate::routes::{GetState, api::servers::_server_::GetServer};
+    use crate::{
+        response::{ApiResponse, ApiResponseResult},
+        routes::{GetState, api::servers::_server_::GetServer},
+    };
     use serde::Serialize;
     use utoipa::ToSchema;
 
@@ -114,10 +106,10 @@ mod delete {
             example = "123e4567-e89b-12d3-a456-426614174000",
         ),
     ))]
-    pub async fn route(state: GetState, server: GetServer) -> axum::Json<serde_json::Value> {
+    pub async fn route(state: GetState, server: GetServer) -> ApiResponseResult {
         state.server_manager.delete_server(&server).await;
 
-        axum::Json(serde_json::to_value(Response {}).unwrap())
+        ApiResponse::json(Response {}).ok()
     }
 }
 

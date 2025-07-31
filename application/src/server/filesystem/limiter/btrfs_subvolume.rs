@@ -84,7 +84,7 @@ pub async fn setup(
         "setting up btrfs disk limiter for volume"
     );
 
-    if !filesystem.base_path.exists() {
+    if tokio::fs::metadata(&filesystem.base_path).await.is_err() {
         let output = Command::new("btrfs")
             .arg("subvolume")
             .arg("create")
