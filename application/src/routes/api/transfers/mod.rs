@@ -112,6 +112,8 @@ mod post {
             let server = server.clone();
 
             async move {
+                let mut backups = Vec::new();
+
                 while let Ok(Some(field)) = multipart.next_field().await {
                     if let Some("archive") = field.name() {
                         let file_name = field.file_name().unwrap_or("archive.tar.gz").to_string();
@@ -223,6 +225,21 @@ mod post {
                             field.name().unwrap_or("unknown")
                         );
 
+                        let backup_uuid = match field
+                            .name()
+                            .and_then(|n| n.strip_prefix("backup-"))
+                            .and_then(|n| uuid::Uuid::from_str(n).ok())
+                        {
+                            Some(uuid) => uuid,
+                            None => {
+                                tracing::warn!(
+                                    "invalid backup field name: {}",
+                                    field.name().unwrap_or("unknown")
+                                );
+                                continue;
+                            }
+                        };
+
                         let file_name = match field.file_name() {
                             Some(name) => name.to_string(),
                             None => {
@@ -279,6 +296,8 @@ mod post {
                                     continue;
                                 }
 
+                                backups.push(backup_uuid);
+
                                 tracing::debug!(
                                     "backup file {} transferred successfully",
                                     file_name.display()
@@ -298,7 +317,7 @@ mod post {
                 state
                     .config
                     .client
-                    .set_server_transfer(subject, true)
+                    .set_server_transfer(subject, true, backups)
                     .await?;
                 server
                     .transferring

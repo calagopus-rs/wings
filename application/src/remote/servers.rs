@@ -90,6 +90,7 @@ pub async fn set_server_transfer(
     client: &Client,
     uuid: uuid::Uuid,
     successful: bool,
+    backups: Vec<uuid::Uuid>,
 ) -> Result<(), anyhow::Error> {
     client
         .client
@@ -99,6 +100,9 @@ pub async fn set_server_transfer(
             uuid,
             if successful { "success" } else { "failure" }
         ))
+        .json(&json!({
+            "backups": backups
+        }))
         .send()
         .await?;
 

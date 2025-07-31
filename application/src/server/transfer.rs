@@ -105,7 +105,7 @@ impl OutgoingServerTransfer {
         server
             .config
             .client
-            .set_server_transfer(server.uuid, false)
+            .set_server_transfer(server.uuid, false, Vec::new())
             .await
             .ok();
         server.outgoing_transfer.write().await.take();

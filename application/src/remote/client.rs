@@ -126,9 +126,10 @@ impl Client {
         &self,
         uuid: uuid::Uuid,
         successful: bool,
+        backups: Vec<uuid::Uuid>,
     ) -> Result<(), anyhow::Error> {
         tracing::info!("setting server transfer status");
-        super::servers::set_server_transfer(self, uuid, successful).await
+        super::servers::set_server_transfer(self, uuid, successful, backups).await
     }
 
     #[tracing::instrument(skip(self))]
