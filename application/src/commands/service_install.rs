@@ -5,7 +5,7 @@ use tokio::process::Command;
 
 pub async fn service_install(
     matches: &ArgMatches,
-    _config: Option<&Arc<crate::config::Config>>,
+    config: Option<&Arc<crate::config::Config>>,
 ) -> i32 {
     let r#override = *matches.get_one::<bool>("override").unwrap();
 
@@ -67,6 +67,11 @@ WantedBy=multi-user.target
 
             if let Err(err) = Command::new("systemctl")
                 .arg("enable")
+                .args(if config.is_some() {
+                    &["--now"]
+                } else {
+                    &[] as &[&str]
+                })
                 .arg("wings.service")
                 .output()
                 .await
