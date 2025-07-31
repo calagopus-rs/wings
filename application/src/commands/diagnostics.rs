@@ -2,7 +2,7 @@ use clap::ArgMatches;
 use colored::Colorize;
 use dialoguer::{Confirm, theme::ColorfulTheme};
 use serde::Deserialize;
-use std::{fmt::Write, path::Path, sync::Arc};
+use std::{collections::VecDeque, fmt::Write, path::Path, sync::Arc};
 use tokio::{fs::File, io::AsyncBufReadExt};
 
 pub async fn diagnostics(matches: &ArgMatches, config: Option<&Arc<crate::config::Config>>) -> i32 {
@@ -131,27 +131,28 @@ pub async fn diagnostics(matches: &ArgMatches, config: Option<&Arc<crate::config
     match File::open(Path::new(&config.system.log_directory).join("wings.log")).await {
         Ok(file) => {
             let mut reader = tokio::io::BufReader::new(file);
-            let mut all_lines = Vec::new();
+            let mut all_lines = VecDeque::new();
             let mut line = String::new();
+            all_lines.reserve_exact(log_lines);
 
-            while reader.read_line(&mut line).await.unwrap() > 0 {
+            while match reader.read_line(&mut line).await {
+                Ok(n) => n,
+                Err(err) => {
+                    eprintln!("{}: {err}", "failed to read wings log file".red());
+                    return 1;
+                }
+            } > 0
+            {
                 if !line.trim().is_empty() {
-                    all_lines.push(line.clone());
+                    if all_lines.len() == log_lines {
+                        all_lines.pop_front();
+                    }
+                    all_lines.push_back(line.clone());
                 }
                 line.clear();
             }
 
-            let lines_to_display = if all_lines.len() > log_lines {
-                all_lines
-                    .iter()
-                    .skip(all_lines.len() - log_lines)
-                    .cloned()
-                    .collect::<Vec<_>>()
-            } else {
-                all_lines
-            };
-
-            for line in lines_to_display {
+            for line in all_lines {
                 let mut result_line = String::new();
                 let mut chars = line.chars().peekable();
 
@@ -173,13 +174,20 @@ pub async fn diagnostics(matches: &ArgMatches, config: Option<&Arc<crate::config
             }
         }
         Err(err) => {
-            writeln!(output, "failed to read wings-rs logs: {err}").unwrap();
+            eprintln!("{}: {err}", "failed to read wings log file".red());
+            return 1;
         }
     }
 
     if !include_endpoints {
         output = output
-            .replace(&config.remote, "{redacted}")
+            .replace(
+                config
+                    .remote
+                    .trim_start_matches("https://")
+                    .trim_start_matches("http://"),
+                "{redacted}",
+            )
             .replace(&config.api.host.to_string(), "{redacted}")
             .replace(&config.system.sftp.bind_address.to_string(), "{redacted}");
 
@@ -206,7 +214,7 @@ pub async fn diagnostics(matches: &ArgMatches, config: Option<&Arc<crate::config
     }
 
     let client = reqwest::Client::new();
-    let response: Response = client
+    let response = match client
         .post("https://api.pastes.dev/post")
         .header(
             "User-Agent",
@@ -217,10 +225,23 @@ pub async fn diagnostics(matches: &ArgMatches, config: Option<&Arc<crate::config
         .body(output)
         .send()
         .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    {
+        Ok(response) => response,
+        Err(err) => {
+            eprintln!("{}: {err}", "failed to upload diagnostics report".red());
+            return 1;
+        }
+    };
+    let response: Response = match response.json().await {
+        Ok(response) => response,
+        Err(err) => {
+            eprintln!(
+                "{}: {err}",
+                "failed to parse response from pastes.dev".red()
+            );
+            return 1;
+        }
+    };
 
     #[derive(Deserialize)]
     struct Response {

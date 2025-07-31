@@ -695,6 +695,7 @@ impl Config {
     pub fn open(
         path: &str,
         debug: bool,
+        ignore_debug: bool,
         ignore_certificate_errors: bool,
     ) -> Result<(Arc<Self>, WorkerGuard), anyhow::Error> {
         let file = File::open(path).context(format!("failed to open config file {path}"))?;
@@ -752,7 +753,7 @@ impl Config {
                 .with_level(true)
                 .with_file(true)
                 .with_line_number(true)
-                .with_max_level(if config.debug {
+                .with_max_level(if config.debug && !ignore_debug {
                     tracing::Level::DEBUG
                 } else {
                     tracing::Level::INFO

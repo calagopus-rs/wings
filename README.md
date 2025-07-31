@@ -149,6 +149,7 @@ docker:
 - add support for opening individual compressed file (e.g. `.log.gz`) in `GET /api/servers/{server}/files/contents`
 - add (real) folder size support on `GET /api/servers/{server}/files/list-directory`
 - add multithreading support to `POST /api/servers/{server}/files/decompress`
+- add zip and 7z support to `POST /api/servers/{server}/files/compress`
 - add support for `ignored_files` in the file upload jwt
 - allow transferring backups in server transfers
 
@@ -174,3 +175,7 @@ docker:
 - add [`restic`](https://github.com/restic/restic) backup driver
 - add ability to create `zip` archives on `wings` backup driver
 - add ability to browse backups (for some drivers)
+
+### cli
+
+- add `service-install` command to automatically setup a service for wings

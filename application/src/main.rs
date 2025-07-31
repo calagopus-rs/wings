@@ -70,6 +70,20 @@ fn cli() -> Command {
                 .arg_required_else_help(false),
         )
         .subcommand(
+            Command::new("service-install")
+                .about("Installs the Wings service on the system.")
+                .arg(
+                    Arg::new("override")
+                        .help("set to true to override an existing service file")
+                        .num_args(0)
+                        .long("override")
+                        .default_value("false")
+                        .value_parser(clap::value_parser!(bool))
+                        .required(false),
+                )
+                .arg_required_else_help(false),
+        )
+        .subcommand(
             Command::new("configure")
                 .about("Use a token to configure wings automatically.")
                 .arg(
@@ -217,12 +231,24 @@ async fn main() {
         .get_one::<bool>("ignore_certificate_errors")
         .copied()
         .unwrap_or(false);
-    let config = wings_rs::config::Config::open(config_path, debug, ignore_certificate_errors);
+    let config = wings_rs::config::Config::open(
+        config_path,
+        debug,
+        matches.subcommand().is_some(),
+        ignore_certificate_errors,
+    );
 
     match matches.subcommand() {
         Some(("version", sub_matches)) => std::process::exit(
             wings_rs::commands::version::version(sub_matches, config.as_ref().ok().map(|c| &c.0))
                 .await,
+        ),
+        Some(("service-install", sub_matches)) => std::process::exit(
+            wings_rs::commands::service_install::service_install(
+                sub_matches,
+                config.as_ref().ok().map(|c| &c.0),
+            )
+            .await,
         ),
         Some(("configure", sub_matches)) => std::process::exit(
             wings_rs::commands::configure::configure(
