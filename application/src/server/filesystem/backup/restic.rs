@@ -134,12 +134,15 @@ fn restic_entry_to_directory_entry(
         _ => 0,
     };
 
-    let mime = if matches!(entry.r#type, ResticEntryType::File) {
+    let mime = if matches!(entry.r#type, ResticEntryType::Dir) {
         "inode/directory"
     } else if matches!(entry.r#type, ResticEntryType::Symlink) {
         "inode/symlink"
     } else {
-        "application/octet-stream"
+        new_mime_guess::from_path(&entry.path)
+            .iter_raw()
+            .next()
+            .unwrap_or("application/octet-stream")
     };
 
     let mut mode_str = String::new();

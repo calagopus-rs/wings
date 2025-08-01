@@ -10,6 +10,19 @@ use std::{
     sync::Arc,
 };
 
+fn validate_username(username: &str) -> bool {
+    let (_, server) = match username.split_once('.') {
+        Some((prefix, suffix)) => (prefix, suffix),
+        None => return false,
+    };
+
+    if server.len() != 8 || !server.chars().all(|c| c.is_ascii_hexdigit()) {
+        return false;
+    }
+
+    true
+}
+
 pub struct SshSession {
     pub state: State,
     pub server: Option<crate::server::Server>,
@@ -49,6 +62,13 @@ impl russh::server::Handler for SshSession {
 
     async fn auth_password(&mut self, username: &str, password: &str) -> Result<Auth, Self::Error> {
         if self.state.config.system.sftp.disable_password_auth {
+            return Ok(Auth::Reject {
+                proceed_with_methods: Some(self.get_auth_methods()),
+                partial_success: false,
+            });
+        }
+
+        if !validate_username(username) {
             return Ok(Auth::Reject {
                 proceed_with_methods: Some(self.get_auth_methods()),
                 partial_success: false,
@@ -115,6 +135,13 @@ impl russh::server::Handler for SshSession {
         username: &str,
         public_key: &russh::keys::ssh_key::PublicKey,
     ) -> Result<Auth, Self::Error> {
+        if !validate_username(username) {
+            return Ok(Auth::Reject {
+                proceed_with_methods: Some(self.get_auth_methods()),
+                partial_success: false,
+            });
+        }
+
         let (user, server, permissions, ignored_files) = match self
             .state
             .config
