@@ -84,8 +84,11 @@ async fn get_files_for_backup(
         .arg("ls")
         .arg(format!("latest:{}", base_path.display()))
         .arg("/")
+        .arg("--tag")
+        .arg(uuid.to_string())
         .arg("--recursive")
         .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
         .spawn()?;
     drop(configuration);
 
@@ -134,15 +137,13 @@ fn restic_entry_to_directory_entry(
         _ => 0,
     };
 
-    let mime = if matches!(entry.r#type, ResticEntryType::Dir) {
-        "inode/directory"
-    } else if matches!(entry.r#type, ResticEntryType::Symlink) {
-        "inode/symlink"
-    } else {
-        new_mime_guess::from_path(&entry.path)
+    let mime = match entry.r#type {
+        ResticEntryType::Dir => "inode/directory",
+        ResticEntryType::Symlink => "inode/symlink",
+        _ => new_mime_guess::from_path(&entry.path)
             .iter_raw()
             .next()
-            .unwrap_or("application/octet-stream")
+            .unwrap_or("application/octet-stream"),
     };
 
     let mut mode_str = String::new();
