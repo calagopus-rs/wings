@@ -7,8 +7,14 @@ mod post {
         routes::{ApiError, GetState, api::servers::_server_::GetServer},
     };
     use axum::http::StatusCode;
-    use serde::Serialize;
+    use serde::{Deserialize, Serialize};
     use utoipa::ToSchema;
+
+    #[derive(ToSchema, Deserialize)]
+    pub struct Payload {
+        #[serde(default)]
+        truncate_directory: bool,
+    }
 
     #[derive(ToSchema, Serialize)]
     struct Response {}
@@ -23,7 +29,11 @@ mod post {
             example = "123e4567-e89b-12d3-a456-426614174000",
         ),
     ))]
-    pub async fn route(state: GetState, server: GetServer) -> ApiResponseResult {
+    pub async fn route(
+        state: GetState,
+        server: GetServer,
+        axum::Json(data): axum::Json<Payload>,
+    ) -> ApiResponseResult {
         if server.is_locked_state() {
             return ApiResponse::error("server is locked")
                 .with_status(StatusCode::CONFLICT)
@@ -36,6 +46,16 @@ mod post {
         server.sync_configuration(&state.docker).await;
 
         tokio::spawn(async move {
+            if data.truncate_directory {
+                if let Err(err) = server.filesystem.truncate_root().await {
+                    tracing::error!(
+                        server = %server.uuid,
+                        "failed to truncate root directory before reinstalling server: {:#?}",
+                        err
+                    );
+                }
+            }
+
             if let Err(err) =
                 crate::server::installation::install_server(&server, &state.docker, true, false)
                     .await
