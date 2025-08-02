@@ -196,7 +196,16 @@ impl InternalBackup {
             .websocket
             .send(crate::server::websocket::WebsocketMessage::new(
                 crate::server::websocket::WebsocketEvent::ServerBackupCompleted,
-                &[uuid.to_string(), serde_json::to_string(&backup).unwrap()],
+                &[
+                    uuid.to_string(),
+                    serde_json::json!({
+                        "checksum_type": backup.checksum_type,
+                        "checksum": backup.checksum,
+                        "size": backup.size,
+                        "successful": backup.successful,
+                    })
+                    .to_string(),
+                ],
             ))?;
         server.configuration.write().await.backups.push(uuid);
 
