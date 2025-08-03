@@ -7,14 +7,9 @@ mod post {
         routes::{ApiError, GetState, api::servers::_server_::GetServer},
     };
     use axum::http::StatusCode;
-    use ignore::{WalkBuilder, WalkState};
     use serde::{Deserialize, Serialize};
-    use std::{
-        fs::File,
-        io::Read,
-        path::PathBuf,
-        sync::{Arc, Mutex},
-    };
+    use std::{path::PathBuf, sync::Arc};
+    use tokio::{io::AsyncReadExt, sync::RwLock};
     use utoipa::ToSchema;
 
     #[derive(ToSchema, Deserialize)]
@@ -72,95 +67,69 @@ mod post {
                 .ok();
         }
 
-        let results = Arc::new(Mutex::new(Vec::new()));
-        let root = server.filesystem.base_path.join(&root);
+        let results = Arc::new(RwLock::new(Vec::new()));
 
-        tokio::task::spawn_blocking({
-            let results = Arc::clone(&results);
-            let runtime = tokio::runtime::Handle::current();
+        let ignored = &[server.filesystem.get_ignored().await];
+        let mut walker =
+            crate::server::filesystem::walker::AsyncWalkDir::new((*server).clone(), root.clone())
+                .await?
+                .with_ignored(ignored);
 
-            move || {
-                WalkBuilder::new(&root)
-                    .hidden(false)
-                    .git_ignore(false)
-                    .ignore(false)
-                    .git_exclude(false)
-                    .follow_links(false)
-                    .threads(state.config.api.file_search_threads)
-                    .build_parallel()
-                    .run(move || {
-                        let server = Arc::clone(&server);
+        walker
+            .run_multithreaded(
+                state.config.api.file_search_threads,
+                Arc::new({
+                    let results = Arc::clone(&results);
+                    let query = Arc::new(data.query.clone());
+                    let root = Arc::new(root.clone());
+
+                    move |is_dir, path: PathBuf| {
+                        let server = server.clone();
                         let results = Arc::clone(&results);
-                        let query = data.query.clone();
-                        let root = root.clone();
-                        let runtime = runtime.clone();
+                        let query = Arc::clone(&query);
+                        let root = Arc::clone(&root);
 
-                        Box::new(move |entry| {
-                            let entry = match entry {
-                                Ok(entry) => entry,
-                                Err(_) => return WalkState::Continue,
-                            };
-                            let path = entry.path();
-
-                            let metadata = match entry.metadata() {
-                                Ok(metadata) => metadata,
-                                Err(_) => return WalkState::Continue,
-                            };
-
-                            if server.filesystem.is_ignored_sync(path, metadata.is_dir()) {
-                                return WalkState::Continue;
+                        async move {
+                            if is_dir || results.read().await.len() >= limit {
+                                return;
                             }
+
+                            let metadata = match server.filesystem.symlink_metadata(&path).await {
+                                Ok(metadata) => metadata,
+                                Err(_) => return,
+                            };
 
                             if !metadata.is_file() {
-                                return WalkState::Continue;
+                                return;
                             }
 
-                            if path.to_str().is_some_and(|s| s.contains(&query)) {
-                                let mut buffer = [0; 128];
-                                let mut file = match File::open(path) {
-                                    Ok(file) => file,
-                                    Err(_) => return WalkState::Continue,
-                                };
-                                let bytes_read = match file.read(&mut buffer) {
-                                    Ok(bytes_read) => bytes_read,
-                                    Err(_) => return WalkState::Continue,
-                                };
-
-                                let mut results = results.lock().unwrap();
-                                if results.len() >= limit {
-                                    return WalkState::Quit;
-                                }
-
-                                let mut entry =
-                                    runtime.block_on(server.filesystem.to_api_entry_buffer(
-                                        path.to_path_buf(),
-                                        &cap_std::fs::Metadata::from_just_metadata(metadata),
-                                        Some(&buffer[..bytes_read]),
-                                        None,
-                                        None,
-                                    ));
-                                entry.name = match path.strip_prefix(&root) {
+                            if path.to_string_lossy().contains(query.as_ref()) {
+                                let mut entry = server
+                                    .filesystem
+                                    .to_api_entry(path.to_path_buf(), metadata)
+                                    .await;
+                                entry.name = match path.strip_prefix(root.as_ref()) {
                                     Ok(path) => path.to_string_lossy().to_string(),
-                                    Err(_) => return WalkState::Continue,
+                                    Err(_) => return,
                                 };
 
-                                results.push(entry);
-                                return WalkState::Continue;
+                                results.write().await.push(entry);
+                                return;
                             }
 
                             if data.include_content && metadata.len() <= max_size {
                                 let mut buffer = [0; 8192];
-                                let mut file = match File::open(path) {
+                                let mut file = match server.filesystem.open(&path).await {
                                     Ok(file) => file,
-                                    Err(_) => return WalkState::Continue,
+                                    Err(_) => return,
                                 };
-                                let mut bytes_read = match file.read(&mut buffer) {
+                                let mut bytes_read = match file.read(&mut buffer).await {
                                     Ok(bytes_read) => bytes_read,
-                                    Err(_) => return WalkState::Continue,
+                                    Err(_) => return,
                                 };
 
-                                if std::str::from_utf8(&buffer[..bytes_read.min(128)]).is_err() {
-                                    return WalkState::Continue;
+                                if !crate::is_valid_utf8_slice(&buffer[..bytes_read.min(128)]) {
+                                    return;
                                 }
 
                                 let mut last_content = String::with_capacity(8192 * 2);
@@ -168,36 +137,30 @@ mod post {
                                     let content = String::from_utf8_lossy(&buffer[..bytes_read]);
                                     last_content.push_str(&content);
 
-                                    if last_content.contains(&query) {
-                                        let mut results = results.lock().unwrap();
-                                        if results.len() >= limit {
-                                            return WalkState::Quit;
-                                        }
-
-                                        let mut entry = runtime.block_on(
-                                            server.filesystem.to_api_entry_buffer(
+                                    if last_content.contains(query.as_ref()) {
+                                        let mut entry = server
+                                            .filesystem
+                                            .to_api_entry_buffer(
                                                 path.to_path_buf(),
-                                                &cap_std::fs::Metadata::from_just_metadata(
-                                                    metadata,
-                                                ),
+                                                &metadata,
                                                 Some(&buffer[..bytes_read]),
                                                 None,
                                                 None,
-                                            ),
-                                        );
-                                        entry.name = match path.strip_prefix(&root) {
+                                            )
+                                            .await;
+                                        entry.name = match path.strip_prefix(root.as_ref()) {
                                             Ok(path) => path.to_string_lossy().to_string(),
-                                            Err(_) => return WalkState::Continue,
+                                            Err(_) => return,
                                         };
 
-                                        results.push(entry);
+                                        results.write().await.push(entry);
                                         break;
                                     }
 
                                     last_content.clear();
                                     last_content.push_str(&content);
 
-                                    bytes_read = match file.read(&mut buffer) {
+                                    bytes_read = match file.read(&mut buffer).await {
                                         Ok(bytes_read) => bytes_read,
                                         Err(_) => break,
                                     };
@@ -207,16 +170,14 @@ mod post {
                                     }
                                 }
                             }
-
-                            WalkState::Continue
-                        })
-                    });
-            }
-        })
-        .await?;
+                        }
+                    }
+                }),
+            )
+            .await?;
 
         ApiResponse::json(Response {
-            results: &results.lock().unwrap(),
+            results: &results.read().await,
         })
         .ok()
     }

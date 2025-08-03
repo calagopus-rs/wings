@@ -1,4 +1,5 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
+use tokio::sync::Semaphore;
 
 pub struct AsyncWalkDir<'a> {
     server: crate::server::Server,
@@ -53,6 +54,41 @@ impl<'a> AsyncWalkDir<'a> {
         }
 
         None
+    }
+
+    pub async fn run_multithreaded<F, Fut>(
+        &mut self,
+        threads: usize,
+        func: Arc<F>,
+    ) -> Result<(), anyhow::Error>
+    where
+        F: Fn(bool, PathBuf) -> Fut + Send + Sync + 'static,
+        Fut: futures::Future<Output = ()> + Send + 'static,
+    {
+        let semaphore = Arc::new(Semaphore::new(threads));
+
+        while let Some(entry) = self.next_entry().await {
+            match entry {
+                Ok((is_dir, path)) => {
+                    let semaphore = Arc::clone(&semaphore);
+                    let func = Arc::clone(&func);
+
+                    let permit = match semaphore.acquire_owned().await {
+                        Ok(permit) => permit,
+                        Err(_) => break,
+                    };
+                    tokio::spawn(async move {
+                        let _permit = permit;
+                        func(is_dir, path).await;
+                    });
+                }
+                Err(err) => return Err(err),
+            }
+        }
+
+        semaphore.acquire_many(threads as u32).await.ok();
+
+        Ok(())
     }
 }
 
