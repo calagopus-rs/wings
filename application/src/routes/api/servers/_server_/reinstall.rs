@@ -6,7 +6,7 @@ mod post {
         response::{ApiResponse, ApiResponseResult},
         routes::{ApiError, GetState, api::servers::_server_::GetServer},
     };
-    use axum::http::StatusCode;
+    use axum::{extract::rejection::JsonRejection, http::StatusCode};
     use serde::{Deserialize, Serialize};
     use utoipa::ToSchema;
 
@@ -32,8 +32,15 @@ mod post {
     pub async fn route(
         state: GetState,
         server: GetServer,
-        axum::Json(data): axum::Json<Payload>,
+        data: Result<axum::Json<Payload>, JsonRejection>,
     ) -> ApiResponseResult {
+        let data = match data {
+            Ok(data) => data.0,
+            Err(_) => Payload {
+                truncate_directory: false,
+            },
+        };
+
         if server.is_locked_state() {
             return ApiResponse::error("server is locked")
                 .with_status(StatusCode::CONFLICT)
