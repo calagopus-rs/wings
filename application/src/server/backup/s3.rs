@@ -161,18 +161,7 @@ pub async fn create_backup(
             writer,
             Path::new(""),
             sources,
-            match server.config.system.backups.wings.archive_format {
-                crate::config::SystemBackupsWingsArchiveFormat::Tar => {
-                    crate::server::filesystem::archive::CompressionType::None
-                }
-                crate::config::SystemBackupsWingsArchiveFormat::TarGz => {
-                    crate::server::filesystem::archive::CompressionType::Gz
-                }
-                crate::config::SystemBackupsWingsArchiveFormat::TarZstd => {
-                    crate::server::filesystem::archive::CompressionType::Zstd
-                }
-                _ => unreachable!(),
-            },
+            crate::server::filesystem::archive::CompressionType::Gz,
             server.config.system.backups.compression_level,
             Some(Arc::clone(&progress)),
             &[ignore],
