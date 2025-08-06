@@ -80,7 +80,13 @@ pub async fn configure(matches: &ArgMatches, config: Option<&Arc<crate::config::
         .send()
         .await;
     let response = match response {
-        Ok(response) => response.json::<crate::config::InnerConfig>().await,
+        Ok(response) => crate::remote::into_json(match response.text().await {
+            Ok(text) => text,
+            Err(err) => {
+                eprintln!("{} {:#?}", "failed to connect to panel:".red(), err);
+                return 1;
+            }
+        }),
         Err(err) => {
             eprintln!("{} {:#?}", "failed to connect to panel:".red(), err);
             return 1;

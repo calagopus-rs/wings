@@ -9,6 +9,7 @@ use utoipa::ToSchema;
 #[schema(rename_all = "lowercase")]
 pub enum ServerConfigurationFileParser {
     File,
+    #[serde(alias = "yml")]
     Yaml,
     Properties,
     Ini,

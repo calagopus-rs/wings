@@ -9,7 +9,7 @@ pub mod jwt;
 pub mod servers;
 
 #[inline]
-fn into_json<T: DeserializeOwned>(value: String) -> Result<T, anyhow::Error> {
+pub fn into_json<T: DeserializeOwned>(value: String) -> Result<T, anyhow::Error> {
     match serde_json::from_str(&value) {
         Ok(json) => Ok(json),
         Err(err) => Err(anyhow::anyhow!(
