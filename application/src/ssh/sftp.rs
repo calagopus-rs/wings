@@ -389,36 +389,34 @@ impl russh_sftp::server::Handler for SftpSession {
             Err(_) => return Err(StatusCode::NoSuchFile),
         };
 
-        let metadata = match self.server.filesystem.symlink_metadata(&path).await {
-            Ok(metadata) => metadata,
-            Err(_) => return Err(StatusCode::NoSuchFile),
-        };
-        if !metadata.is_dir() {
-            return Err(StatusCode::NoSuchFile);
-        }
+        if let Ok(metadata) = self.server.filesystem.symlink_metadata(&path).await {
+            if !metadata.is_dir() {
+                return Err(StatusCode::NoSuchFile);
+            }
 
-        if self.is_ignored(&path, true).await {
-            return Err(StatusCode::NoSuchFile);
-        }
+            if self.is_ignored(&path, true).await {
+                return Err(StatusCode::NoSuchFile);
+            }
 
-        if path != self.server.filesystem.base_path
-            && self.server.filesystem.truncate_path(&path).await.is_err()
-        {
-            return Err(StatusCode::NoSuchFile);
-        }
+            if path != self.server.filesystem.base_path
+                && self.server.filesystem.truncate_path(&path).await.is_err()
+            {
+                return Err(StatusCode::NoSuchFile);
+            }
 
-        self.server
-            .activity
-            .log_activity(Activity {
-                event: ActivityEvent::SftpDelete,
-                user: Some(self.user_uuid),
-                ip: self.user_ip,
-                metadata: Some(json!({
-                    "files": [self.server.filesystem.relative_path(&path)],
-                })),
-                timestamp: chrono::Utc::now(),
-            })
-            .await;
+            self.server
+                .activity
+                .log_activity(Activity {
+                    event: ActivityEvent::SftpDelete,
+                    user: Some(self.user_uuid),
+                    ip: self.user_ip,
+                    metadata: Some(json!({
+                        "files": [self.server.filesystem.relative_path(&path)],
+                    })),
+                    timestamp: chrono::Utc::now(),
+                })
+                .await;
+        }
 
         Ok(Status {
             id,
@@ -448,10 +446,16 @@ impl russh_sftp::server::Handler for SftpSession {
 
         let path = Path::new(&path);
 
-        if self.server.filesystem.symlink_metadata(&path).await.is_ok()
-            || self.is_ignored(path, true).await
-        {
+        if self.is_ignored(path, true).await {
             return Err(StatusCode::NoSuchFile);
+        }
+        if self.server.filesystem.symlink_metadata(&path).await.is_ok() {
+            return Ok(Status {
+                id,
+                status_code: StatusCode::Ok,
+                error_message: "Ok".to_string(),
+                language_tag: "en-US".to_string(),
+            });
         }
 
         if self.server.filesystem.create_dir(&path).await.is_err() {
@@ -459,17 +463,21 @@ impl russh_sftp::server::Handler for SftpSession {
         }
 
         if self.server.filesystem.chown_path(path).await.is_err() {
-            return Err(StatusCode::NoSuchFile);
+            return Err(StatusCode::Failure);
         }
         if let Some(permissions) = attrs.permissions {
             let mut permissions = cap_std::fs::Permissions::from_mode(permissions);
             permissions.set_mode(permissions.mode() & 0o777);
 
-            self.server
+            if self
+                .server
                 .filesystem
                 .set_permissions(&path, permissions)
                 .await
-                .unwrap()
+                .is_err()
+            {
+                return Err(StatusCode::Failure);
+            }
         }
 
         self.server

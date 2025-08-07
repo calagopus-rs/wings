@@ -19,7 +19,10 @@ mod post {
         archive_format: crate::server::transfer::TransferArchiveFormat,
         #[serde(default, deserialize_with = "crate::deserialize::deserialize_optional")]
         compression_level: Option<crate::server::filesystem::archive::CompressionLevel>,
-        #[serde(default, deserialize_with = "crate::deserialize::deserialize_defaultable")]
+        #[serde(
+            default,
+            deserialize_with = "crate::deserialize::deserialize_defaultable"
+        )]
         backups: Vec<uuid::Uuid>,
         #[serde(default)]
         delete_backups: bool,
