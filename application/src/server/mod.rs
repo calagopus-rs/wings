@@ -199,171 +199,170 @@ impl Server {
                     });
                 }
 
-                if let Some(status) = container_state.status {
-                    match status {
-                        ContainerStateStatusEnum::RUNNING => {
-                            if !matches!(
-                                server.state.get_state(),
-                                state::ServerState::Running
-                                    | state::ServerState::Starting
-                                    | state::ServerState::Stopping,
-                            ) {
-                                server.state.set_state(state::ServerState::Running);
-                            }
+                match container_state.status {
+                    Some(ContainerStateStatusEnum::RUNNING) => {
+                        if !matches!(
+                            server.state.get_state(),
+                            state::ServerState::Running
+                                | state::ServerState::Starting
+                                | state::ServerState::Stopping,
+                        ) {
+                            server.state.set_state(state::ServerState::Running);
                         }
-                        ContainerStateStatusEnum::EMPTY
-                        | ContainerStateStatusEnum::DEAD
-                        | ContainerStateStatusEnum::EXITED => {
-                            server.state.set_state(state::ServerState::Offline);
+                    }
+                    Some(ContainerStateStatusEnum::EMPTY)
+                    | Some(ContainerStateStatusEnum::DEAD)
+                    | Some(ContainerStateStatusEnum::EXITED)
+                    | None => {
+                        server.state.set_state(state::ServerState::Offline);
 
-                            tracing::debug!(
-                                server = %server.uuid,
-                                restarting = %server.restarting.load(Ordering::SeqCst),
-                                stopping = %server.stopping.load(Ordering::SeqCst),
-                                crash_handled = %server.crash_handled.load(Ordering::SeqCst),
-                                "container state changed to {:?}, handling crash",
-                                status
-                            );
+                        tracing::debug!(
+                            server = %server.uuid,
+                            restarting = %server.restarting.load(Ordering::SeqCst),
+                            stopping = %server.stopping.load(Ordering::SeqCst),
+                            crash_handled = %server.crash_handled.load(Ordering::SeqCst),
+                            "container state changed to {:?}, handling crash",
+                            container_state.status
+                        );
 
-                            if server.restarting.load(Ordering::SeqCst) {
-                                server
-                                    .crash_handled
-                                    .store(true, Ordering::SeqCst);
-                                server
-                                    .restarting
-                                    .store(false, Ordering::SeqCst);
-                                server
-                                    .stopping
-                                    .store(false, Ordering::SeqCst);
+                        if server.restarting.load(Ordering::SeqCst) {
+                            server
+                                .crash_handled
+                                .store(true, Ordering::SeqCst);
+                            server
+                                .restarting
+                                .store(false, Ordering::SeqCst);
+                            server
+                                .stopping
+                                .store(false, Ordering::SeqCst);
 
-                                let client = Arc::clone(&client);
-                                let server = server.clone();
-                                tokio::spawn(async move {
-                                    if let Err(err) = server.start(&client, Some(std::time::Duration::from_secs(5))).await {
-                                        tracing::error!(
-                                            server = %server.uuid,
-                                            "failed to start server after stopping to restart: {}",
-                                            err
-                                        );
-                                    }
-                                });
-                            } else if server.stopping.load(Ordering::SeqCst)
+                            let client = Arc::clone(&client);
+                            let server = server.clone();
+                            tokio::spawn(async move {
+                                if let Err(err) = server.start(&client, Some(std::time::Duration::from_secs(5))).await {
+                                    tracing::error!(
+                                        server = %server.uuid,
+                                        "failed to start server after stopping to restart: {}",
+                                        err
+                                    );
+                                }
+                            });
+                        } else if server.stopping.load(Ordering::SeqCst)
+                        {
+                            server
+                                .crash_handled
+                                .store(true, Ordering::SeqCst);
+                            server
+                                .stopping
+                                .store(false, Ordering::SeqCst);
+                            if server.config.docker.delete_container_on_stop {
+                                server.destroy_container(&client).await;
+                            }
+                        } else if server.config.system.crash_detection.enabled
+                            && !server
+                                .crash_handled
+                                .load(Ordering::SeqCst)
+                        {
+                            server
+                                .crash_handled
+                                .store(true, Ordering::SeqCst);
+
+                            if container_state.exit_code.is_some_and(|code| code == 0)
+                                && !container_state.oom_killed.unwrap_or(false)
+                                && !server
+                                    .config
+                                    .system
+                                    .crash_detection
+                                    .detect_clean_exit_as_crash
                             {
-                                server
-                                    .crash_handled
-                                    .store(true, Ordering::SeqCst);
-                                server
-                                    .stopping
-                                    .store(false, Ordering::SeqCst);
+                                tracing::debug!(
+                                    server = %server.uuid,
+                                    "container exited cleanly, not restarting due to crash detection settings"
+                                );
                                 if server.config.docker.delete_container_on_stop {
                                     server.destroy_container(&client).await;
                                 }
-                            } else if server.config.system.crash_detection.enabled
-                                && !server
-                                    .crash_handled
-                                    .load(Ordering::SeqCst)
-                            {
-                                server
-                                    .crash_handled
-                                    .store(true, Ordering::SeqCst);
 
-                                if container_state.exit_code.is_some_and(|code| code == 0)
-                                    && !container_state.oom_killed.unwrap_or(false)
-                                    && !server
-                                        .config
-                                        .system
-                                        .crash_detection
-                                        .detect_clean_exit_as_crash
+                                return;
+                            }
+
+                            server.log_daemon_with_prelude("---------- Detected server process in a crashed state! ----------").await;
+                            server
+                                .log_daemon_with_prelude(&format!(
+                                    "Exit code: {}",
+                                    container_state.exit_code.unwrap_or_default()
+                                ))
+                                .await;
+                            server
+                                .log_daemon_with_prelude(&format!(
+                                    "Out of memory: {}",
+                                    container_state.oom_killed.unwrap_or(false)
+                                ))
+                                .await;
+
+                            let mut last_crash_lock = server.last_crash.lock().await;
+                            if let Some(last_crash) = *last_crash_lock {
+                                if last_crash.elapsed().as_secs()
+                                    < server.config.system.crash_detection.timeout
                                 {
                                     tracing::debug!(
                                         server = %server.uuid,
-                                        "container exited cleanly, not restarting due to crash detection settings"
+                                        "last crash was less than {} seconds ago, aborting automatic restart",
+                                        server.config.system.crash_detection.timeout
                                     );
+
+                                    server.log_daemon_with_prelude(
+                                        &format!(
+                                            "Aborting automatic restart, last crash occurred less than {} seconds ago.",
+                                            server.config.system.crash_detection.timeout
+                                        ),
+                                    ).await;
                                     if server.config.docker.delete_container_on_stop {
                                         server.destroy_container(&client).await;
                                     }
 
                                     return;
-                                }
-
-                                server.log_daemon_with_prelude("---------- Detected server process in a crashed state! ----------").await;
-                                server
-                                    .log_daemon_with_prelude(&format!(
-                                        "Exit code: {}",
-                                        container_state.exit_code.unwrap_or_default()
-                                    ))
-                                    .await;
-                                server
-                                    .log_daemon_with_prelude(&format!(
-                                        "Out of memory: {}",
-                                        container_state.oom_killed.unwrap_or(false)
-                                    ))
-                                    .await;
-
-                                let mut last_crash_lock = server.last_crash.lock().await;
-                                if let Some(last_crash) = *last_crash_lock {
-                                    if last_crash.elapsed().as_secs()
-                                        < server.config.system.crash_detection.timeout
-                                    {
-                                        tracing::debug!(
-                                            server = %server.uuid,
-                                            "last crash was less than {} seconds ago, aborting automatic restart",
-                                            server.config.system.crash_detection.timeout
-                                        );
-
-                                        server.log_daemon_with_prelude(
-                                            &format!(
-                                                "Aborting automatic restart, last crash occurred less than {} seconds ago.",
-                                                server.config.system.crash_detection.timeout
-                                            ),
-                                        ).await;
-                                        if server.config.docker.delete_container_on_stop {
-                                            server.destroy_container(&client).await;
-                                        }
-
-                                        return;
-                                    } else {
-                                        tracing::debug!(
-                                            server = %server.uuid,
-                                            "last crash was more than {} seconds ago, restarting server",
-                                            server.config.system.crash_detection.timeout
-                                        );
-
-                                        last_crash_lock.replace(std::time::Instant::now());
-                                    }
                                 } else {
                                     tracing::debug!(
                                         server = %server.uuid,
-                                        "no previous crash recorded, restarting server"
+                                        "last crash was more than {} seconds ago, restarting server",
+                                        server.config.system.crash_detection.timeout
                                     );
 
                                     last_crash_lock.replace(std::time::Instant::now());
                                 }
-
-                                drop(last_crash_lock);
-
-                                tracing::info!(
+                            } else {
+                                tracing::debug!(
                                     server = %server.uuid,
-                                    "restarting server due to crash"
+                                    "no previous crash recorded, restarting server"
                                 );
 
-                                let client = Arc::clone(&client);
-                                let server = server.clone();
-                                tokio::spawn(async move {
-                                    if let Err(err) = server.start(&client, Some(std::time::Duration::from_secs(5))).await {
-                                        tracing::error!(
-                                            server = %server.uuid,
-                                            "failed to start server after crash: {}",
-                                            err
-                                        );
-                                    }
-                                });
+                                last_crash_lock.replace(std::time::Instant::now());
                             }
 
-                            break;
+                            drop(last_crash_lock);
+
+                            tracing::info!(
+                                server = %server.uuid,
+                                "restarting server due to crash"
+                            );
+
+                            let client = Arc::clone(&client);
+                            let server = server.clone();
+                            tokio::spawn(async move {
+                                if let Err(err) = server.start(&client, Some(std::time::Duration::from_secs(5))).await {
+                                    tracing::error!(
+                                        server = %server.uuid,
+                                        "failed to start server after crash: {}",
+                                        err
+                                    );
+                                }
+                            });
                         }
-                        _ => {}
+
+                        break;
                     }
+                    _ => {}
                 }
             }
         }));
