@@ -668,6 +668,22 @@ impl Filesystem {
         Ok(())
     }
 
+    pub async fn hard_link(
+        &self,
+        target: impl Into<PathBuf>,
+        link: impl Into<PathBuf>,
+    ) -> Result<(), anyhow::Error> {
+        let filesystem = self.base_dir().await?;
+
+        let target = self.relative_path(&target.into());
+        let link = self.relative_path(&link.into());
+
+        tokio::task::spawn_blocking(move || filesystem.hard_link(target, &filesystem, link))
+            .await??;
+
+        Ok(())
+    }
+
     /// Allocates (or deallocates) space for a path in the filesystem.
     /// Updates both the disk_usage map for directories and the cached total.
     ///

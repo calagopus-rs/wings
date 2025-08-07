@@ -181,6 +181,9 @@ impl russh_sftp::server::Handler for SftpSession {
                 ("space-available".to_string(), "6".to_string()),
                 ("limits@openssh.com".to_string(), "1".to_string()),
                 ("statvfs@openssh.com".to_string(), "2".to_string()),
+                ("hardlink@openssh.com".to_string(), "1".to_string()),
+                ("fsync@openssh.com".to_string(), "1".to_string()),
+                ("lsetstat@openssh.com".to_string(), "1".to_string()),
             ]),
         })
     }
@@ -808,7 +811,10 @@ impl russh_sftp::server::Handler for SftpSession {
             Err(_) => return Err(StatusCode::NoSuchFile),
         };
 
-        if self.is_ignored(&targetpath, metadata.is_dir()).await {
+        if !metadata.is_file()
+            || self.is_ignored(&targetpath, metadata.is_dir()).await
+            || self.is_ignored(&linkpath, false).await
+        {
             return Err(StatusCode::NoSuchFile);
         }
 
@@ -819,7 +825,7 @@ impl russh_sftp::server::Handler for SftpSession {
             .await
             .is_err()
         {
-            return Err(StatusCode::NoSuchFile);
+            return Err(StatusCode::Failure);
         }
 
         self.server
@@ -1537,6 +1543,163 @@ impl russh_sftp::server::Handler for SftpSession {
                         .into(),
                     },
                 ))
+            }
+            "hardlink@openssh.com" => {
+                #[derive(Deserialize)]
+                struct HardlinkRequest {
+                    target: String,
+                    link_name: String,
+                }
+
+                let request: HardlinkRequest = match russh_sftp::de::from_bytes(&mut data.into()) {
+                    Ok(request) => request,
+                    Err(_) => return Err(StatusCode::BadMessage),
+                };
+
+                if self.state.config.system.sftp.read_only {
+                    return Err(StatusCode::PermissionDenied);
+                }
+
+                if !self.has_permission(Permission::FileCreate).await {
+                    return Err(StatusCode::PermissionDenied);
+                }
+
+                let linkpath = PathBuf::from(request.link_name);
+                let targetpath = PathBuf::from(request.target);
+
+                if linkpath == targetpath {
+                    return Err(StatusCode::NoSuchFile);
+                }
+
+                let targetpath = match self.server.filesystem.canonicalize(&targetpath).await {
+                    Ok(path) => path,
+                    Err(_) => return Err(StatusCode::NoSuchFile),
+                };
+
+                let metadata = match self.server.filesystem.symlink_metadata(&targetpath).await {
+                    Ok(metadata) => metadata,
+                    Err(_) => return Err(StatusCode::NoSuchFile),
+                };
+
+                if !metadata.is_file()
+                    || self.is_ignored(&targetpath, metadata.is_dir()).await
+                    || self.is_ignored(&linkpath, false).await
+                {
+                    return Err(StatusCode::NoSuchFile);
+                }
+
+                if self
+                    .server
+                    .filesystem
+                    .hard_link(&targetpath, &linkpath)
+                    .await
+                    .is_err()
+                {
+                    return Err(StatusCode::Failure);
+                }
+
+                self.server
+                    .activity
+                    .log_activity(Activity {
+                        event: ActivityEvent::SftpCreate,
+                        user: Some(self.user_uuid),
+                        ip: self.user_ip,
+                        metadata: Some(json!({
+                            "files": [self.server.filesystem.relative_path(&linkpath)],
+                        })),
+                        timestamp: chrono::Utc::now(),
+                    })
+                    .await;
+
+                Ok(russh_sftp::protocol::Packet::Status(Status {
+                    id,
+                    status_code: StatusCode::Ok,
+                    error_message: "Ok".to_string(),
+                    language_tag: "en-US".to_string(),
+                }))
+            }
+            "fsync@openssh.com" => {
+                #[derive(Deserialize)]
+                struct FsyncRequest {
+                    handle: String,
+                }
+
+                let request: FsyncRequest = match russh_sftp::de::from_bytes(&mut data.into()) {
+                    Ok(request) => request,
+                    Err(_) => return Err(StatusCode::BadMessage),
+                };
+
+                if self.state.config.system.sftp.read_only {
+                    return Err(StatusCode::PermissionDenied);
+                }
+
+                if !self.has_permission(Permission::FileUpdate).await {
+                    return Err(StatusCode::PermissionDenied);
+                }
+
+                let handle = match self.handles.get_mut(&request.handle) {
+                    Some(ServerHandle::File(handle)) => handle,
+                    _ => return Err(StatusCode::NoSuchFile),
+                };
+
+                tokio::task::spawn_blocking({
+                    let file = Arc::clone(&handle.file);
+
+                    move || file.sync_all()
+                })
+                .await
+                .map_err(|_| StatusCode::Failure)?
+                .map_err(|_| StatusCode::Failure)?;
+
+                Ok(russh_sftp::protocol::Packet::Status(Status {
+                    id,
+                    status_code: StatusCode::Ok,
+                    error_message: "Ok".to_string(),
+                    language_tag: "en-US".to_string(),
+                }))
+            }
+            "lsetstat@openssh.com" => {
+                #[derive(Deserialize)]
+                struct LsetStatRequest {
+                    handle: String,
+                    attrs: russh_sftp::protocol::FileAttributes,
+                }
+
+                let request: LsetStatRequest = match russh_sftp::de::from_bytes(&mut data.into()) {
+                    Ok(request) => request,
+                    Err(_) => return Err(StatusCode::BadMessage),
+                };
+
+                if self.state.config.system.sftp.read_only {
+                    return Err(StatusCode::PermissionDenied);
+                }
+
+                if !self.has_permission(Permission::FileUpdate).await {
+                    return Err(StatusCode::PermissionDenied);
+                }
+
+                let handle = match self.handles.get_mut(&request.handle) {
+                    Some(ServerHandle::File(handle)) => handle,
+                    _ => return Err(StatusCode::NoSuchFile),
+                };
+
+                if let Some(permissions) = request.attrs.permissions {
+                    let mut permissions = cap_std::fs::Permissions::from_mode(permissions);
+                    permissions.set_mode(permissions.mode() & 0o777);
+
+                    self.server
+                        .filesystem
+                        .set_permissions(&handle.path, permissions)
+                        .await
+                        .map_err(|_| StatusCode::Failure)?;
+                }
+
+                Ok(russh_sftp::protocol::Packet::Status(Status {
+                    id,
+                    status_code: StatusCode::Ok,
+                    error_message: "Ok".to_string(),
+                    language_tag: "en-US".to_string(),
+                }))
             }
             _ => Err(StatusCode::OpUnsupported),
         }

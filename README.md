@@ -165,6 +165,9 @@ docker:
 - add support for the [space-available](https://datatracker.ietf.org/doc/html/draft-ietf-secsh-filexfer-extensions-00#section-4) sftp extension
 - add support for the [limits@openssh.com](https://github.com/openssh/openssh-portable/blob/master/PROTOCOL#L597) sftp extension
 - add support for the [statvfs@openssh.com](https://github.com/openssh/openssh-portable/blob/master/PROTOCOL#L510) sftp extension
+- add support for the [hardlink@openssh.com](https://github.com/openssh/openssh-portable/blob/master/PROTOCOL#L478) sftp extension
+- add support for the [fsync@openssh.com](https://github.com/openssh/openssh-portable/blob/master/PROTOCOL#L494) sftp extension
+- add support for the [lsetstat@openssh.com](https://github.com/openssh/openssh-portable/blob/master/PROTOCOL#L508) sftp extension
 - properly support egg `file_denylist`
 
 ### backups
