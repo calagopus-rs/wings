@@ -376,9 +376,9 @@ impl Filesystem {
         }
     }
 
-    pub async fn truncate_path(&self, path: &Path) -> Result<(), anyhow::Error> {
+    pub async fn truncate_path(&self, path: impl AsRef<Path>) -> Result<(), anyhow::Error> {
         let filesystem = self.base_dir().await?;
-        let path = self.relative_path(path);
+        let path = self.relative_path(path.as_ref());
 
         let metadata = self.symlink_metadata(&path).await?;
 
@@ -408,12 +408,12 @@ impl Filesystem {
 
     pub async fn rename_path(
         &self,
-        old_path: impl Into<PathBuf>,
-        new_path: impl Into<PathBuf>,
+        old_path: impl AsRef<Path>,
+        new_path: impl AsRef<Path>,
     ) -> Result<(), anyhow::Error> {
         let filesystem = self.base_dir().await?;
-        let old_path: PathBuf = self.relative_path(&old_path.into());
-        let new_path: PathBuf = self.relative_path(&new_path.into());
+        let old_path = self.relative_path(old_path.as_ref());
+        let new_path = self.relative_path(new_path.as_ref());
 
         if let Some(parent) = new_path.parent() {
             self.create_dir_all(parent).await?;
@@ -468,28 +468,28 @@ impl Filesystem {
         Ok(())
     }
 
-    pub async fn create_dir_all(&self, path: impl Into<PathBuf>) -> Result<(), anyhow::Error> {
+    pub async fn create_dir_all(&self, path: impl AsRef<Path>) -> Result<(), anyhow::Error> {
         let filesystem = self.base_dir().await?;
 
-        let path = self.relative_path(&path.into());
+        let path = self.relative_path(path.as_ref());
         tokio::task::spawn_blocking(move || filesystem.create_dir_all(path)).await??;
 
         Ok(())
     }
 
-    pub async fn create_dir(&self, path: impl Into<PathBuf>) -> Result<(), anyhow::Error> {
+    pub async fn create_dir(&self, path: impl AsRef<Path>) -> Result<(), anyhow::Error> {
         let filesystem = self.base_dir().await?;
 
-        let path = self.relative_path(&path.into());
+        let path = self.relative_path(path.as_ref());
         tokio::task::spawn_blocking(move || filesystem.create_dir(path)).await??;
 
         Ok(())
     }
 
-    pub async fn metadata(&self, path: impl Into<PathBuf>) -> Result<Metadata, anyhow::Error> {
+    pub async fn metadata(&self, path: impl AsRef<Path>) -> Result<Metadata, anyhow::Error> {
         let filesystem = self.base_dir().await?;
 
-        let path = self.relative_path(&path.into());
+        let path = self.relative_path(path.as_ref());
         let metadata = if path.components().next().is_none() {
             cap_std::fs::Metadata::from_just_metadata(tokio::fs::metadata(&self.base_path).await?)
         } else {
@@ -501,11 +501,11 @@ impl Filesystem {
 
     pub async fn symlink_metadata(
         &self,
-        path: impl Into<PathBuf>,
+        path: impl AsRef<Path>,
     ) -> Result<Metadata, anyhow::Error> {
         let filesystem = self.base_dir().await?;
 
-        let path = self.relative_path(&path.into());
+        let path = self.relative_path(path.as_ref());
         let metadata = if path.components().next().is_none() {
             cap_std::fs::Metadata::from_just_metadata(
                 tokio::fs::symlink_metadata(&self.base_path).await?,
@@ -517,10 +517,10 @@ impl Filesystem {
         Ok(metadata)
     }
 
-    pub async fn canonicalize(&self, path: impl Into<PathBuf>) -> Result<PathBuf, anyhow::Error> {
+    pub async fn canonicalize(&self, path: impl AsRef<Path>) -> Result<PathBuf, anyhow::Error> {
         let filesystem = self.base_dir().await?;
 
-        let path = self.relative_path(&path.into());
+        let path = self.relative_path(path.as_ref());
         if path.components().next().is_none() {
             return Ok(path);
         }
@@ -531,10 +531,10 @@ impl Filesystem {
         Ok(canonicalized)
     }
 
-    pub async fn read_link(&self, path: impl Into<PathBuf>) -> Result<PathBuf, anyhow::Error> {
+    pub async fn read_link(&self, path: impl AsRef<Path>) -> Result<PathBuf, anyhow::Error> {
         let filesystem = self.base_dir().await?;
 
-        let path = self.relative_path(&path.into());
+        let path = self.relative_path(path.as_ref());
         let link = tokio::task::spawn_blocking(move || filesystem.read_link(path)).await??;
 
         Ok(link)
@@ -542,53 +542,49 @@ impl Filesystem {
 
     pub async fn read_link_contents(
         &self,
-        path: impl Into<PathBuf>,
+        path: impl AsRef<Path>,
     ) -> Result<PathBuf, anyhow::Error> {
         let filesystem = self.base_dir().await?;
 
-        let path = self.relative_path(&path.into());
+        let path = self.relative_path(path.as_ref());
         let link_contents =
             tokio::task::spawn_blocking(move || filesystem.read_link_contents(path)).await??;
 
         Ok(link_contents)
     }
 
-    pub async fn read_to_string(&self, path: impl Into<PathBuf>) -> Result<String, anyhow::Error> {
+    pub async fn read_to_string(&self, path: impl AsRef<Path>) -> Result<String, anyhow::Error> {
         let filesystem = self.base_dir().await?;
 
-        let path = self.relative_path(&path.into());
+        let path = self.relative_path(path.as_ref());
         let content =
             tokio::task::spawn_blocking(move || filesystem.read_to_string(path)).await??;
 
         Ok(content)
     }
 
-    pub async fn open(&self, path: impl Into<PathBuf>) -> Result<tokio::fs::File, anyhow::Error> {
+    pub async fn open(&self, path: impl AsRef<Path>) -> Result<tokio::fs::File, anyhow::Error> {
         let filesystem = self.base_dir().await?;
 
-        let path = self.relative_path(&path.into());
+        let path = self.relative_path(path.as_ref());
         let file = tokio::task::spawn_blocking(move || filesystem.open(path)).await??;
 
         Ok(tokio::fs::File::from_std(file.into_std()))
     }
 
-    pub async fn write(
-        &self,
-        path: impl Into<PathBuf>,
-        data: Vec<u8>,
-    ) -> Result<(), anyhow::Error> {
+    pub async fn write(&self, path: impl AsRef<Path>, data: Vec<u8>) -> Result<(), anyhow::Error> {
         let filesystem = self.base_dir().await?;
 
-        let path = self.relative_path(&path.into());
+        let path = self.relative_path(path.as_ref());
         tokio::task::spawn_blocking(move || filesystem.write(path, data)).await??;
 
         Ok(())
     }
 
-    pub async fn create(&self, path: impl Into<PathBuf>) -> Result<tokio::fs::File, anyhow::Error> {
+    pub async fn create(&self, path: impl AsRef<Path>) -> Result<tokio::fs::File, anyhow::Error> {
         let filesystem = self.base_dir().await?;
 
-        let path = self.relative_path(&path.into());
+        let path = self.relative_path(path.as_ref());
         let file = tokio::task::spawn_blocking(move || filesystem.create(path)).await??;
 
         Ok(tokio::fs::File::from_std(file.into_std()))
@@ -596,13 +592,13 @@ impl Filesystem {
 
     pub async fn copy(
         &self,
-        from: impl Into<PathBuf>,
-        to: impl Into<PathBuf>,
+        from: impl AsRef<Path>,
+        to: impl AsRef<Path>,
     ) -> Result<u64, anyhow::Error> {
         let filesystem = self.base_dir().await?;
 
-        let from = self.relative_path(&from.into());
-        let to = self.relative_path(&to.into());
+        let from = self.relative_path(from.as_ref());
+        let to = self.relative_path(to.as_ref());
 
         let bytes_copied =
             tokio::task::spawn_blocking(move || filesystem.copy(from, &filesystem, to)).await??;
@@ -612,22 +608,22 @@ impl Filesystem {
 
     pub async fn set_permissions(
         &self,
-        path: impl Into<PathBuf>,
+        path: impl AsRef<Path>,
         permissions: cap_std::fs::Permissions,
     ) -> Result<(), anyhow::Error> {
         let filesystem = self.base_dir().await?;
 
-        let path = self.relative_path(&path.into());
+        let path = self.relative_path(path.as_ref());
         tokio::task::spawn_blocking(move || filesystem.set_permissions(path, permissions))
             .await??;
 
         Ok(())
     }
 
-    pub async fn read_dir(&self, path: impl Into<PathBuf>) -> Result<AsyncReadDir, anyhow::Error> {
+    pub async fn read_dir(&self, path: impl AsRef<Path>) -> Result<AsyncReadDir, anyhow::Error> {
         let filesystem = self.base_dir().await?;
 
-        let path = self.relative_path(&path.into());
+        let path = self.relative_path(path.as_ref());
 
         Ok(if path.components().next().is_none() {
             AsyncReadDir::Tokio(AsyncTokioReadDir(
@@ -641,10 +637,10 @@ impl Filesystem {
         })
     }
 
-    pub fn read_dir_sync(&self, path: impl Into<PathBuf>) -> Result<ReadDir, anyhow::Error> {
+    pub fn read_dir_sync(&self, path: impl AsRef<Path>) -> Result<ReadDir, anyhow::Error> {
         let filesystem = self.sync_base_dir()?;
 
-        let path = self.relative_path(&path.into());
+        let path = self.relative_path(path.as_ref());
 
         Ok(if path.components().next().is_none() {
             ReadDir::Std(StdReadDir(std::fs::read_dir(&self.base_path)?))
@@ -655,13 +651,13 @@ impl Filesystem {
 
     pub async fn symlink(
         &self,
-        target: impl Into<PathBuf>,
-        link: impl Into<PathBuf>,
+        target: impl AsRef<Path>,
+        link: impl AsRef<Path>,
     ) -> Result<(), anyhow::Error> {
         let filesystem = self.base_dir().await?;
 
-        let target = self.relative_path(&target.into());
-        let link = self.relative_path(&link.into());
+        let target = self.relative_path(target.as_ref());
+        let link = self.relative_path(link.as_ref());
 
         tokio::task::spawn_blocking(move || filesystem.symlink(target, link)).await??;
 
@@ -670,13 +666,13 @@ impl Filesystem {
 
     pub async fn hard_link(
         &self,
-        target: impl Into<PathBuf>,
-        link: impl Into<PathBuf>,
+        target: impl AsRef<Path>,
+        link: impl AsRef<Path>,
     ) -> Result<(), anyhow::Error> {
         let filesystem = self.base_dir().await?;
 
-        let target = self.relative_path(&target.into());
-        let link = self.relative_path(&link.into());
+        let target = self.relative_path(target.as_ref());
+        let link = self.relative_path(link.as_ref());
 
         tokio::task::spawn_blocking(move || filesystem.hard_link(target, &filesystem, link))
             .await??;
