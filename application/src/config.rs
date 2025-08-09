@@ -388,8 +388,6 @@ nestify::nest! {
             pub activity_send_count: usize,
             #[serde(default = "system_check_permissions_on_boot")]
             pub check_permissions_on_boot: bool,
-            #[serde(default)]
-            pub check_permissions_on_boot_mounts: bool,
             #[serde(default = "system_check_permissions_on_boot_threads")]
             pub check_permissions_on_boot_threads: usize,
             #[serde(default = "system_websocket_log_count")]
