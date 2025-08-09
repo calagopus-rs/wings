@@ -600,15 +600,15 @@ impl Filesystem {
         if !metadata.is_dir() {
             let path = self.relative_path(path.as_ref());
             let cap_filesystem = self.cap_filesystem.clone();
-            let owner_uid = self.config.system.user.uid;
-            let owner_gid = self.config.system.user.gid;
+            let owner_uid = rustix::fs::Uid::from_raw(self.config.system.user.uid);
+            let owner_gid = rustix::fs::Gid::from_raw(self.config.system.user.gid);
 
             tokio::task::spawn_blocking(move || {
                 Ok::<_, anyhow::Error>(rustix::fs::chownat(
                     cap_filesystem.get_inner()?.as_fd(),
                     path,
-                    Some(rustix::fs::Uid::from_raw(owner_uid)),
-                    Some(rustix::fs::Gid::from_raw(owner_gid)),
+                    Some(owner_uid),
+                    Some(owner_gid),
                     rustix::fs::AtFlags::SYMLINK_NOFOLLOW,
                 )?)
             })
@@ -620,8 +620,8 @@ impl Filesystem {
                     self.config.system.check_permissions_on_boot_threads,
                     Arc::new({
                         let cap_filesystem = self.cap_filesystem.clone();
-                        let owner_uid = self.config.system.user.uid;
-                        let owner_gid = self.config.system.user.gid;
+                        let owner_uid = rustix::fs::Uid::from_raw(self.config.system.user.uid);
+                        let owner_gid = rustix::fs::Gid::from_raw(self.config.system.user.gid);
 
                         move |_, path: PathBuf| {
                             let cap_filesystem = cap_filesystem.clone();
@@ -631,8 +631,8 @@ impl Filesystem {
                                     Ok::<_, anyhow::Error>(rustix::fs::chownat(
                                         cap_filesystem.get_inner()?.as_fd(),
                                         path,
-                                        Some(rustix::fs::Uid::from_raw(owner_uid)),
-                                        Some(rustix::fs::Gid::from_raw(owner_gid)),
+                                        Some(owner_uid),
+                                        Some(owner_gid),
                                         rustix::fs::AtFlags::SYMLINK_NOFOLLOW,
                                     )?)
                                 })
