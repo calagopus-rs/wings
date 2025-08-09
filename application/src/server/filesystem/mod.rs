@@ -124,14 +124,10 @@ impl Filesystem {
                                     ));
                                 }
                             };
-                            let total_entry_size =
-                                tmp_disk_usage.entries.values().map(|e| e.size).sum::<u64>();
 
                             *disk_usage.write().await = tmp_disk_usage;
-                            disk_usage_cached.store(
-                                total_size.load(Ordering::Relaxed) + total_entry_size,
-                                Ordering::Relaxed,
-                            );
+                            disk_usage_cached
+                                .store(total_size.load(Ordering::Relaxed), Ordering::Relaxed);
 
                             tracing::debug!(
                                 path = %cap_filesystem.base_path.display(),
@@ -600,8 +596,8 @@ impl Filesystem {
         if !metadata.is_dir() {
             let path = self.relative_path(path.as_ref());
             let cap_filesystem = self.cap_filesystem.clone();
-            let owner_uid = rustix::fs::Uid::from_raw(self.config.system.user.uid);
-            let owner_gid = rustix::fs::Gid::from_raw(self.config.system.user.gid);
+            let owner_uid = rustix::fs::Uid::from_raw_unchecked(self.config.system.user.uid);
+            let owner_gid = rustix::fs::Gid::from_raw_unchecked(self.config.system.user.gid);
 
             tokio::task::spawn_blocking(move || {
                 Ok::<_, anyhow::Error>(rustix::fs::chownat(
@@ -614,30 +610,28 @@ impl Filesystem {
             })
             .await?
         } else {
+            let cap_filesystem = self.cap_filesystem.clone();
+            let owner_uid = rustix::fs::Uid::from_raw_unchecked(self.config.system.user.uid);
+            let owner_gid = rustix::fs::Gid::from_raw_unchecked(self.config.system.user.gid);
+
             self.async_walk_dir(path)
                 .await?
                 .run_multithreaded(
                     self.config.system.check_permissions_on_boot_threads,
-                    Arc::new({
-                        let cap_filesystem = self.cap_filesystem.clone();
-                        let owner_uid = rustix::fs::Uid::from_raw(self.config.system.user.uid);
-                        let owner_gid = rustix::fs::Gid::from_raw(self.config.system.user.gid);
+                    Arc::new(move |_, path: PathBuf| {
+                        let cap_filesystem = cap_filesystem.clone();
 
-                        move |_, path: PathBuf| {
-                            let cap_filesystem = cap_filesystem.clone();
-
-                            async move {
-                                tokio::task::spawn_blocking(move || {
-                                    Ok::<_, anyhow::Error>(rustix::fs::chownat(
-                                        cap_filesystem.get_inner()?.as_fd(),
-                                        path,
-                                        Some(owner_uid),
-                                        Some(owner_gid),
-                                        rustix::fs::AtFlags::SYMLINK_NOFOLLOW,
-                                    )?)
-                                })
-                                .await?
-                            }
+                        async move {
+                            tokio::task::spawn_blocking(move || {
+                                Ok::<_, anyhow::Error>(rustix::fs::chownat(
+                                    cap_filesystem.get_inner()?.as_fd(),
+                                    path,
+                                    Some(owner_uid),
+                                    Some(owner_gid),
+                                    rustix::fs::AtFlags::SYMLINK_NOFOLLOW,
+                                )?)
+                            })
+                            .await?
                         }
                     }),
                 )

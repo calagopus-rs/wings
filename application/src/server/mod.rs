@@ -1038,8 +1038,7 @@ impl Server {
                         }
                         "command" => {
                             if let Some(stdin) = self.container_stdin().await {
-                                let command = stop.value.clone().unwrap_or_default();
-                                let mut command = command.to_string();
+                                let mut command = stop.value.clone().unwrap_or_default();
                                 command.push('\n');
 
                                 if let Err(err) = stdin.send(command).await {
