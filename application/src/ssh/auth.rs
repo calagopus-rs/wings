@@ -11,11 +11,15 @@ use std::{
 };
 
 fn validate_username(username: &str) -> bool {
-    let (_, server) = match username.split_once('.') {
-        Some((prefix, suffix)) => (prefix, suffix),
+    let splits = username.split('.').collect::<Vec<_>>();
+    if splits.len() < 2 {
+        return false;
+    }
+
+    let server = match splits.last() {
+        Some(server) => server,
         None => return false,
     };
-
     if server.len() != 8 || !server.chars().all(|c| c.is_ascii_hexdigit()) {
         return false;
     }
