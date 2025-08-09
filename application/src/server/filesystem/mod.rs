@@ -595,34 +595,54 @@ impl Filesystem {
     }
 
     pub async fn chown_path(&self, path: impl AsRef<Path>) -> Result<(), anyhow::Error> {
-        self.async_walk_dir(path)
+        let metadata = self.async_metadata(path.as_ref()).await?;
+
+        if !metadata.is_dir() {
+            let path = self.relative_path(path.as_ref());
+            let cap_filesystem = self.cap_filesystem.clone();
+            let owner_uid = self.config.system.user.uid;
+            let owner_gid = self.config.system.user.gid;
+
+            tokio::task::spawn_blocking(move || {
+                Ok::<_, anyhow::Error>(rustix::fs::chownat(
+                    cap_filesystem.get_inner()?.as_fd(),
+                    path,
+                    Some(rustix::fs::Uid::from_raw(owner_uid)),
+                    Some(rustix::fs::Gid::from_raw(owner_gid)),
+                    rustix::fs::AtFlags::SYMLINK_NOFOLLOW,
+                )?)
+            })
             .await?
-            .run_multithreaded(
-                self.config.system.check_permissions_on_boot_threads,
-                Arc::new({
-                    let cap_filesystem = self.cap_filesystem.clone();
-                    let owner_uid = self.config.system.user.uid;
-                    let owner_gid = self.config.system.user.gid;
+        } else {
+            self.async_walk_dir(path)
+                .await?
+                .run_multithreaded(
+                    self.config.system.check_permissions_on_boot_threads,
+                    Arc::new({
+                        let cap_filesystem = self.cap_filesystem.clone();
+                        let owner_uid = self.config.system.user.uid;
+                        let owner_gid = self.config.system.user.gid;
 
-                    move |_, path: PathBuf| {
-                        let cap_filesystem = cap_filesystem.clone();
+                        move |_, path: PathBuf| {
+                            let cap_filesystem = cap_filesystem.clone();
 
-                        async move {
-                            tokio::task::spawn_blocking(move || {
-                                Ok::<_, anyhow::Error>(rustix::fs::chownat(
-                                    cap_filesystem.get_inner()?.as_fd(),
-                                    path,
-                                    Some(rustix::fs::Uid::from_raw(owner_uid)),
-                                    Some(rustix::fs::Gid::from_raw(owner_gid)),
-                                    rustix::fs::AtFlags::SYMLINK_NOFOLLOW,
-                                )?)
-                            })
-                            .await?
+                            async move {
+                                tokio::task::spawn_blocking(move || {
+                                    Ok::<_, anyhow::Error>(rustix::fs::chownat(
+                                        cap_filesystem.get_inner()?.as_fd(),
+                                        path,
+                                        Some(rustix::fs::Uid::from_raw(owner_uid)),
+                                        Some(rustix::fs::Gid::from_raw(owner_gid)),
+                                        rustix::fs::AtFlags::SYMLINK_NOFOLLOW,
+                                    )?)
+                                })
+                                .await?
+                            }
                         }
-                    }
-                }),
-            )
-            .await
+                    }),
+                )
+                .await
+        }
     }
 
     pub async fn setup(&self) {
