@@ -858,7 +858,7 @@ impl Server {
             .execute_action(
                 state::ServerState::Starting,
                 |_| async {
-                    self.filesystem.setup(self).await;
+                    self.filesystem.setup().await;
                     self.destroy_container(client).await;
 
                     self.sync_configuration(client).await;

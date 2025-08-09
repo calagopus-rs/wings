@@ -1046,7 +1046,7 @@ impl russh_sftp::server::Handler for SftpSession {
         if !self
             .server
             .filesystem
-            .allocate_in_path_raw(
+            .async_allocate_in_path_slice(
                 &handle.path_components[0..handle.path_components.len() - 1],
                 data.len() as i64,
                 false,
@@ -1400,7 +1400,11 @@ impl russh_sftp::server::Handler for SftpSession {
                 if !self
                     .server
                     .filesystem
-                    .allocate_in_path(destination_path.parent().unwrap(), metadata.len() as i64)
+                    .async_allocate_in_path(
+                        destination_path.parent().unwrap(),
+                        metadata.len() as i64,
+                        false,
+                    )
                     .await
                 {
                     return Err(StatusCode::Failure);

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, path::Path};
 
 #[derive(Default)]
 pub struct DiskUsage {
@@ -7,22 +7,74 @@ pub struct DiskUsage {
 }
 
 impl DiskUsage {
-    pub fn get_size(&self, path: &[String]) -> Option<u64> {
-        if path.is_empty() {
+    pub fn get_size(&self, path: &Path) -> Option<u64> {
+        if path == Path::new("") || path == Path::new("/") {
             return Some(self.size);
         }
 
-        let (name, rest) = (path[0].as_str(), &path[1..]);
-        self.entries.get(name).and_then(|usage| {
-            if rest.is_empty() {
-                Some(usage.size)
-            } else {
-                usage.get_size(rest)
+        let mut current = self;
+        for component in path.components() {
+            let name = component.as_os_str().to_str()?;
+            match current.entries.get(name) {
+                Some(usage) => current = usage,
+                None => return None,
             }
-        })
+        }
+
+        Some(current.size)
     }
 
-    pub fn update_size(&mut self, path: &[String], delta: i64) {
+    pub fn update_size(&mut self, path: &Path, delta: i64) {
+        if path == Path::new("") || path == Path::new("/") {
+            return;
+        }
+
+        let mut current = self;
+        for component in path.components() {
+            current = {
+                if current
+                    .entries
+                    .contains_key(component.as_os_str().to_str().unwrap())
+                {
+                    // this is perfectly safe, we have a mutable reference to `current`
+                    // and we know the entry exists (using check above)
+                    let entry = current
+                        .entries
+                        .get_mut(component.as_os_str().to_str().unwrap_or_default())
+                        .unwrap();
+
+                    if delta >= 0 {
+                        entry.size = entry.size.saturating_add(delta as u64);
+                    } else {
+                        entry.size = entry.size.saturating_sub(delta.unsigned_abs());
+                    }
+
+                    entry
+                } else {
+                    let entry = current
+                        .entries
+                        .entry(
+                            component
+                                .as_os_str()
+                                .to_str()
+                                .unwrap_or_default()
+                                .to_string(),
+                        )
+                        .or_default();
+
+                    if delta >= 0 {
+                        entry.size = entry.size.saturating_add(delta as u64);
+                    } else {
+                        entry.size = entry.size.saturating_sub(delta.unsigned_abs());
+                    }
+
+                    entry
+                }
+            }
+        }
+    }
+
+    pub fn update_size_slice(&mut self, path: &[String], delta: i64) {
         if path.is_empty() {
             return;
         }
@@ -30,25 +82,44 @@ impl DiskUsage {
         let mut current = self;
         for component in path {
             current = {
-                let entry = current.entries.entry(component.clone()).or_default();
+                if current.entries.contains_key(component) {
+                    // this is perfectly safe, we have a mutable reference to `current`
+                    // and we know the entry exists (using check above)
+                    let entry = current.entries.get_mut(component).unwrap();
 
-                if delta >= 0 {
-                    entry.size = entry.size.saturating_add(delta as u64);
+                    if delta >= 0 {
+                        entry.size = entry.size.saturating_add(delta as u64);
+                    } else {
+                        entry.size = entry.size.saturating_sub(delta.unsigned_abs());
+                    }
+
+                    entry
                 } else {
-                    entry.size = entry.size.saturating_sub(delta.unsigned_abs());
-                }
+                    let entry = current.entries.entry(component.clone()).or_default();
 
-                entry
+                    if delta >= 0 {
+                        entry.size = entry.size.saturating_add(delta as u64);
+                    } else {
+                        entry.size = entry.size.saturating_sub(delta.unsigned_abs());
+                    }
+
+                    entry
+                }
             }
         }
     }
 
-    pub fn remove_path(&mut self, path: &[String]) -> Option<DiskUsage> {
-        if path.is_empty() {
+    pub fn remove_path(&mut self, path: &Path) -> Option<DiskUsage> {
+        if path == Path::new("") || path == Path::new("/") {
             return None;
         }
 
-        self.recursive_remove(path)
+        self.recursive_remove(
+            &path
+                .components()
+                .map(|c| c.as_os_str().to_str().unwrap_or_default().to_string())
+                .collect::<Vec<_>>(),
+        )
     }
 
     fn recursive_remove(&mut self, path: &[String]) -> Option<DiskUsage> {

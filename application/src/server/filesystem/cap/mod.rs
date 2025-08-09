@@ -42,7 +42,7 @@ impl CapFilesystem {
     }
 
     #[inline]
-    async fn async_get_inner(&self) -> Result<Arc<cap_std::fs::Dir>, anyhow::Error> {
+    pub async fn async_get_inner(&self) -> Result<Arc<cap_std::fs::Dir>, anyhow::Error> {
         let inner = self.inner.read().await;
 
         inner
@@ -51,7 +51,7 @@ impl CapFilesystem {
     }
 
     #[inline]
-    fn get_inner(&self) -> Result<Arc<cap_std::fs::Dir>, anyhow::Error> {
+    pub fn get_inner(&self) -> Result<Arc<cap_std::fs::Dir>, anyhow::Error> {
         let inner = self.inner.blocking_read();
 
         inner

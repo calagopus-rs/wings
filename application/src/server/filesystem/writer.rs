@@ -67,7 +67,7 @@ impl FileSystemWriter {
 
     fn allocate_accumulated(&mut self) -> std::io::Result<()> {
         if self.accumulated_bytes > 0 {
-            if !self.server.filesystem.allocate_in_path_raw_sync(
+            if !self.server.filesystem.allocate_in_path_slice(
                 &self.parent,
                 self.accumulated_bytes,
                 self.ignorant,
@@ -220,7 +220,7 @@ impl AsyncFileSystemWriter {
             self.allocation_in_progress = Some(Box::pin(async move {
                 server
                     .filesystem
-                    .allocate_in_path_raw(&parent, bytes, ignorant)
+                    .async_allocate_in_path_slice(&parent, bytes, ignorant)
                     .await
             }));
 
@@ -367,7 +367,7 @@ impl Drop for AsyncFileSystemWriter {
                 tokio::spawn(async move {
                     server
                         .filesystem
-                        .allocate_in_path_raw(&parent, bytes, ignorant)
+                        .async_allocate_in_path_slice(&parent, bytes, ignorant)
                         .await;
                 });
             }

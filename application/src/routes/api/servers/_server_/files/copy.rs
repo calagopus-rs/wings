@@ -137,7 +137,7 @@ mod post {
 
         if !server
             .filesystem
-            .allocate_in_path(parent, metadata.len() as i64)
+            .async_allocate_in_path(parent, metadata.len() as i64, false)
             .await
         {
             return ApiResponse::error("failed to allocate space")

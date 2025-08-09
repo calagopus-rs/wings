@@ -102,7 +102,7 @@ mod post {
 
         if !server
             .filesystem
-            .allocate_in_path(parent, content_size - old_content_size)
+            .async_allocate_in_path(parent, content_size - old_content_size, false)
             .await
         {
             return ApiResponse::error("failed to allocate space")

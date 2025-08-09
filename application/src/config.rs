@@ -89,6 +89,9 @@ fn system_passwd_directory() -> String {
 fn system_disk_check_interval() -> u64 {
     150
 }
+fn system_disk_check_threads() -> usize {
+    2
+}
 fn system_activity_send_interval() -> u64 {
     60
 }
@@ -97,6 +100,9 @@ fn system_activity_send_count() -> usize {
 }
 fn system_check_permissions_on_boot() -> bool {
     true
+}
+fn system_check_permissions_on_boot_threads() -> usize {
+    4
 }
 fn system_websocket_log_count() -> usize {
     150
@@ -366,6 +372,8 @@ nestify::nest! {
 
             #[serde(default = "system_disk_check_interval")]
             pub disk_check_interval: u64,
+            #[serde(default = "system_disk_check_threads")]
+            pub disk_check_threads: usize,
             #[serde(default)]
             pub disk_limiter_mode: #[derive(Deserialize, Serialize, Default)] #[serde(rename_all = "snake_case")] pub enum SystemDiskLimiterMode {
                 #[default]
@@ -380,6 +388,10 @@ nestify::nest! {
             pub activity_send_count: usize,
             #[serde(default = "system_check_permissions_on_boot")]
             pub check_permissions_on_boot: bool,
+            #[serde(default)]
+            pub check_permissions_on_boot_mounts: bool,
+            #[serde(default = "system_check_permissions_on_boot_threads")]
+            pub check_permissions_on_boot_threads: usize,
             #[serde(default = "system_websocket_log_count")]
             pub websocket_log_count: usize,
 
