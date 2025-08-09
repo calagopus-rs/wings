@@ -36,12 +36,12 @@ mod get {
     ) -> (StatusCode, axum::Json<serde_json::Value>) {
         let mut entries = Vec::new();
 
-        let path = match server.filesystem.canonicalize(&data.directory).await {
+        let path = match server.filesystem.async_canonicalize(&data.directory).await {
             Ok(path) => path,
             Err(_) => PathBuf::from(data.directory),
         };
 
-        let metadata = server.filesystem.metadata(&path).await;
+        let metadata = server.filesystem.async_metadata(&path).await;
         if let Ok(metadata) = metadata {
             if !metadata.is_dir() || server.filesystem.is_ignored(&path, metadata.is_dir()).await {
                 return (
@@ -56,10 +56,10 @@ mod get {
             );
         }
 
-        let mut directory = server.filesystem.read_dir(&path).await.unwrap();
+        let mut directory = server.filesystem.async_read_dir(&path).await.unwrap();
         while let Some(Ok((_, entry))) = directory.next_entry().await {
             let path = path.join(entry);
-            let metadata = match server.filesystem.symlink_metadata(&path).await {
+            let metadata = match server.filesystem.async_symlink_metadata(&path).await {
                 Ok(metadata) => metadata,
                 Err(_) => continue,
             };
