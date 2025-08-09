@@ -35,12 +35,12 @@ mod post {
         server: GetServer,
         axum::Json(data): axum::Json<Payload>,
     ) -> ApiResponseResult {
-        let path = match server.filesystem.canonicalize(&data.path).await {
+        let path = match server.filesystem.async_canonicalize(&data.path).await {
             Ok(path) => path,
             Err(_) => PathBuf::from(data.path),
         };
 
-        let metadata = server.filesystem.metadata(&path).await;
+        let metadata = server.filesystem.async_metadata(&path).await;
         if !metadata.map(|m| m.is_dir()).unwrap_or(true) {
             return ApiResponse::error("path is not a directory")
                 .with_status(StatusCode::EXPECTATION_FAILED)
@@ -61,7 +61,7 @@ mod post {
                 .ok();
         }
 
-        server.filesystem.create_dir_all(&destination).await?;
+        server.filesystem.async_create_dir_all(&destination).await?;
         server.filesystem.chown_path(&destination).await?;
 
         ApiResponse::json(Response {}).ok()

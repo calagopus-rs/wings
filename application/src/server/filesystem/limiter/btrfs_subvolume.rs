@@ -24,11 +24,11 @@ static DISK_USAGE: LazyLock<Arc<RwLock<DiskUsageMap>>> = LazyLock::new(|| {
 
                         *qgroup = line.next().unwrap_or("").to_string();
 
-                        if let Some(used_space) = line.next() {
-                            if let Ok(used_space) = used_space.parse::<i64>() {
-                                *server_usage = used_space;
-                                continue;
-                            }
+                        if let Some(used_space) = line.next()
+                            && let Ok(used_space) = used_space.parse::<i64>()
+                        {
+                            *server_usage = used_space;
+                            continue;
                         }
                     }
 
@@ -43,13 +43,12 @@ static DISK_USAGE: LazyLock<Arc<RwLock<DiskUsageMap>>> = LazyLock::new(|| {
                         Ok(output) if output.status.success() => {
                             let output_str = String::from_utf8_lossy(&output.stdout);
                             for line in output_str.lines() {
-                                if line.ends_with(server) {
-                                    if let Some(used_space) = line.split_whitespace().nth(1) {
-                                        if let Ok(used_space) = used_space.parse::<i64>() {
-                                            *server_usage = used_space;
-                                            break;
-                                        }
-                                    }
+                                if line.ends_with(server)
+                                    && let Some(used_space) = line.split_whitespace().nth(1)
+                                    && let Ok(used_space) = used_space.parse::<i64>()
+                                {
+                                    *server_usage = used_space;
+                                    break;
                                 }
                             }
 
@@ -143,10 +142,10 @@ pub async fn attach(
 pub async fn disk_usage(
     filesystem: &crate::server::filesystem::Filesystem,
 ) -> Result<u64, std::io::Error> {
-    if let Some(usage) = DISK_USAGE.read().await.get(&filesystem.uuid.to_string()) {
-        if usage.2 >= 0 {
-            return Ok(usage.2 as u64);
-        }
+    if let Some(usage) = DISK_USAGE.read().await.get(&filesystem.uuid.to_string())
+        && usage.2 >= 0
+    {
+        return Ok(usage.2 as u64);
     }
 
     Err(std::io::Error::other(format!(

@@ -83,12 +83,12 @@ mod post {
         server: GetServer,
         axum::Json(data): axum::Json<Payload>,
     ) -> ApiResponseResult {
-        let path = match server.filesystem.canonicalize(&data.root).await {
+        let path = match server.filesystem.async_canonicalize(&data.root).await {
             Ok(path) => path,
             Err(_) => PathBuf::from(data.root),
         };
 
-        let metadata = server.filesystem.symlink_metadata(&path).await;
+        let metadata = server.filesystem.async_symlink_metadata(&path).await;
         if !metadata.map(|m| m.is_dir()).unwrap_or(true) {
             return ApiResponse::error("root is not a directory")
                 .with_status(StatusCode::EXPECTATION_FAILED)
@@ -96,7 +96,7 @@ mod post {
         }
 
         if let Some(file_name) = &data.file_name {
-            let metadata = server.filesystem.metadata(path.join(file_name)).await;
+            let metadata = server.filesystem.async_metadata(path.join(file_name)).await;
             if !metadata.map(|m| m.is_file()).unwrap_or(true) {
                 return ApiResponse::error("file is not a file")
                     .with_status(StatusCode::EXPECTATION_FAILED)
@@ -120,7 +120,7 @@ mod post {
                 .ok();
         }
 
-        server.filesystem.create_dir_all(&path).await?;
+        server.filesystem.async_create_dir_all(&path).await?;
         let download = Arc::new(RwLock::new(
             match crate::server::filesystem::pull::Download::new(
                 server.0.clone(),

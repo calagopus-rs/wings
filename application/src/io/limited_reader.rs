@@ -151,12 +151,12 @@ impl<R: AsyncRead + Unpin> AsyncRead for AsyncLimitedReader<R> {
             }
         }
 
-        if this.delay_future.is_none() {
-            if let Some(delay_duration) = this.calculate_delay() {
-                let delay = Box::pin(tokio::time::sleep(delay_duration));
-                this.delay_future = Some(delay);
-                return self.poll_read(cx, buf);
-            }
+        if this.delay_future.is_none()
+            && let Some(delay_duration) = this.calculate_delay()
+        {
+            let delay = Box::pin(tokio::time::sleep(delay_duration));
+            this.delay_future = Some(delay);
+            return self.poll_read(cx, buf);
         }
 
         let filled_before = buf.filled().len();

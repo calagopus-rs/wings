@@ -32,7 +32,7 @@ mod post {
         server: GetServer,
         axum::Json(data): axum::Json<Payload>,
     ) -> ApiResponseResult {
-        let location = match server.filesystem.canonicalize(data.location).await {
+        let location = match server.filesystem.async_canonicalize(data.location).await {
             Ok(path) => path,
             Err(_) => {
                 return ApiResponse::error("file not found")
@@ -41,7 +41,7 @@ mod post {
             }
         };
 
-        let metadata = match server.filesystem.metadata(&location).await {
+        let metadata = match server.filesystem.async_metadata(&location).await {
             Ok(metadata) => {
                 if !metadata.is_file()
                     || server
@@ -92,7 +92,12 @@ mod post {
                 let new_name = format!("{base_name}{suffix}{extension}");
                 let new_path = parent.join(&new_name);
 
-                if server.filesystem.symlink_metadata(&new_path).await.is_err() {
+                if server
+                    .filesystem
+                    .async_symlink_metadata(&new_path)
+                    .await
+                    .is_err()
+                {
                     return new_name;
                 }
 
@@ -140,8 +145,11 @@ mod post {
                 .ok();
         }
 
-        server.filesystem.copy(&location, &file_name).await?;
-        let metadata = server.filesystem.metadata(&file_name).await?;
+        server
+            .filesystem
+            .async_copy(&location, &server.filesystem, &file_name)
+            .await?;
+        let metadata = server.filesystem.async_metadata(&file_name).await?;
 
         ApiResponse::json(server.filesystem.to_api_entry(file_name, metadata).await).ok()
     }

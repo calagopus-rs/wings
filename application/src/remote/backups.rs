@@ -19,16 +19,23 @@ pub struct RawServerBackup {
     pub parts: Vec<RawServerBackupPart>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct BackupConfigurationsRestic {
+#[derive(Debug, Clone, Deserialize)]
+pub struct ResticBackupConfiguration {
     pub repository: String,
+    pub password_file: Option<String>,
     pub retry_lock_seconds: u64,
     pub environment: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Deserialize, Default)]
-pub struct BackupConfigurations {
-    pub restic: Option<BackupConfigurationsRestic>,
+impl ResticBackupConfiguration {
+    #[inline]
+    pub fn password(&self) -> Vec<String> {
+        if let Some(password_file) = &self.password_file {
+            vec!["--password-file".into(), password_file.clone()]
+        } else {
+            Vec::new()
+        }
+    }
 }
 
 pub async fn set_backup_status(
@@ -87,11 +94,14 @@ pub async fn backup_upload_urls(
     Ok((response.part_size, response.parts))
 }
 
-pub async fn backup_configurations(client: &Client) -> Result<BackupConfigurations, anyhow::Error> {
-    let response: BackupConfigurations = super::into_json(
+pub async fn backup_restic_configuration(
+    client: &Client,
+    uuid: uuid::Uuid,
+) -> Result<ResticBackupConfiguration, anyhow::Error> {
+    let response: ResticBackupConfiguration = super::into_json(
         client
             .client
-            .get(format!("{}/backups", client.url))
+            .get(format!("{}/backups/{}/restic", client.url, uuid))
             .send()
             .await?
             .text()

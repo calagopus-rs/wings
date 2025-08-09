@@ -12,7 +12,6 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
-use tokio::sync::RwLock;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 
@@ -683,7 +682,6 @@ pub struct Config {
 
     pub path: String,
     pub ignore_certificate_errors: bool,
-    pub backup_configurations: RwLock<crate::remote::backups::BackupConfigurations>,
     pub client: crate::remote::client::Client,
     pub jwt: crate::remote::jwt::JwtClient,
 }
@@ -707,7 +705,6 @@ impl Config {
         let jwt = crate::remote::jwt::JwtClient::new(&config.token);
         let mut config = Self {
             inner: UnsafeCell::new(config),
-            backup_configurations: Default::default(),
 
             path: path.to_string(),
             ignore_certificate_errors,
@@ -800,18 +797,17 @@ impl Config {
     ) -> std::net::IpAddr {
         for ip in &self.api.trusted_proxies {
             if connect_info.ip() == *ip {
-                if let Some(forwarded) = headers.get("X-Forwarded-For") {
-                    if let Ok(forwarded) = forwarded.to_str() {
-                        if let Some(ip) = forwarded.split(',').next() {
-                            return ip.parse().unwrap_or_else(|_| connect_info.ip());
-                        }
-                    }
+                if let Some(forwarded) = headers.get("X-Forwarded-For")
+                    && let Ok(forwarded) = forwarded.to_str()
+                    && let Some(ip) = forwarded.split(',').next()
+                {
+                    return ip.parse().unwrap_or_else(|_| connect_info.ip());
                 }
 
-                if let Some(forwarded) = headers.get("X-Real-IP") {
-                    if let Ok(forwarded) = forwarded.to_str() {
-                        return forwarded.parse().unwrap_or_else(|_| connect_info.ip());
-                    }
+                if let Some(forwarded) = headers.get("X-Real-IP")
+                    && let Ok(forwarded) = forwarded.to_str()
+                {
+                    return forwarded.parse().unwrap_or_else(|_| connect_info.ip());
                 }
             }
         }

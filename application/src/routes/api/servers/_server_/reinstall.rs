@@ -53,14 +53,14 @@ mod post {
         server.sync_configuration(&state.docker).await;
 
         tokio::spawn(async move {
-            if data.truncate_directory {
-                if let Err(err) = server.filesystem.truncate_root().await {
-                    tracing::error!(
-                        server = %server.uuid,
-                        "failed to truncate root directory before reinstalling server: {:#?}",
-                        err
-                    );
-                }
+            if data.truncate_directory
+                && let Err(err) = server.filesystem.truncate_root().await
+            {
+                tracing::error!(
+                    server = %server.uuid,
+                    "failed to truncate root directory before reinstalling server: {:#?}",
+                    err
+                );
             }
 
             if let Err(err) =

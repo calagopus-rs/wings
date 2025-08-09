@@ -61,12 +61,12 @@ impl DiskUsage {
             return None;
         }
 
-        if let Some(usage) = self.entries.get_mut(name) {
-            if let Some(removed) = usage.recursive_remove(&path[1..]) {
-                usage.size = usage.size.saturating_sub(removed.size);
+        if let Some(usage) = self.entries.get_mut(name)
+            && let Some(removed) = usage.recursive_remove(&path[1..])
+        {
+            usage.size = usage.size.saturating_sub(removed.size);
 
-                return Some(removed);
-            }
+            return Some(removed);
         }
 
         None

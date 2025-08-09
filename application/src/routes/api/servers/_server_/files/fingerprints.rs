@@ -58,11 +58,11 @@ mod get {
     pub async fn route(server: GetServer, Query(data): Query<Params>) -> ApiResponseResult {
         let mut fingerprint_handles = Vec::new();
         for path_raw in data.files {
-            let path = match server.filesystem.canonicalize(&path_raw).await {
+            let path = match server.filesystem.async_canonicalize(&path_raw).await {
                 Ok(path) => path,
                 Err(_) => continue,
             };
-            let metadata = match server.filesystem.metadata(&path).await {
+            let metadata = match server.filesystem.async_metadata(&path).await {
                 Ok(metadata) => metadata,
                 Err(_) => continue,
             };
@@ -71,7 +71,7 @@ mod get {
                 continue;
             }
 
-            let mut file = match server.filesystem.open(&path).await {
+            let mut file = match server.filesystem.async_open(&path).await {
                 Ok(file) => file,
                 Err(_) => continue,
             };

@@ -332,18 +332,6 @@ async fn main() {
         }
     }
 
-    match config.client.backup_configurations().await {
-        Ok(backup_configurations) => {
-            tracing::info!("remote backup configurations loaded successfully");
-
-            *config.backup_configurations.write().await = backup_configurations;
-        }
-        Err(err) => tracing::warn!(
-            "failed to load remote backup configurations (not using panel-rs?): {:#?}",
-            err
-        ),
-    }
-
     tracing::info!("creating server manager");
     let server_manager = wings_rs::server::manager::Manager::new(
         Arc::clone(&config),
@@ -364,6 +352,9 @@ async fn main() {
 
         docker: Arc::clone(&docker),
         server_manager: Arc::clone(&server_manager),
+        backup_manager: Arc::new(wings_rs::server::backup::manager::BackupManager::new(
+            Arc::clone(&config),
+        )),
         extension_manager: Arc::clone(&extension_manager),
     });
 

@@ -1,7 +1,8 @@
-use crate::server::backup::InternalBackup;
+use crate::server::backup::BrowseBackup;
 use cap_std::fs::{Metadata, PermissionsExt};
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::HashMap,
+    ops::Deref,
     path::{Path, PathBuf},
     pin::Pin,
     sync::{
@@ -15,130 +16,11 @@ use tokio::{
 };
 
 pub mod archive;
-pub mod backup;
+pub mod cap;
 pub mod limiter;
 pub mod pull;
 mod usage;
-pub mod walker;
 pub mod writer;
-
-pub struct AsyncCapReadDir(
-    Option<cap_std::fs::ReadDir>,
-    Option<VecDeque<std::io::Result<(bool, String)>>>,
-);
-
-impl AsyncCapReadDir {
-    async fn next_entry(&mut self) -> Option<std::io::Result<(bool, String)>> {
-        if let Some(buffer) = self.1.as_mut()
-            && !buffer.is_empty()
-        {
-            return buffer.pop_front();
-        }
-
-        let mut read_dir = self.0.take()?;
-        let mut buffer = self.1.take()?;
-
-        match tokio::task::spawn_blocking(move || {
-            for _ in 0..32 {
-                if let Some(entry) = read_dir.next() {
-                    buffer.push_back(entry.map(|e| {
-                        (
-                            e.file_type().is_ok_and(|ft| ft.is_dir()),
-                            e.file_name().to_string_lossy().to_string(),
-                        )
-                    }));
-                } else {
-                    break;
-                }
-            }
-
-            (buffer, read_dir)
-        })
-        .await
-        {
-            Ok((buffer, read_dir)) => {
-                self.0 = Some(read_dir);
-                self.1 = Some(buffer);
-
-                self.1.as_mut()?.pop_front()
-            }
-            Err(_) => None,
-        }
-    }
-}
-
-pub struct AsyncTokioReadDir(tokio::fs::ReadDir);
-
-impl AsyncTokioReadDir {
-    async fn next_entry(&mut self) -> Option<std::io::Result<(bool, String)>> {
-        match self.0.next_entry().await {
-            Ok(Some(entry)) => Some(Ok((
-                entry.file_type().await.is_ok_and(|ft| ft.is_dir()),
-                entry.file_name().to_string_lossy().to_string(),
-            ))),
-            Ok(None) => None,
-            Err(err) => Some(Err(err)),
-        }
-    }
-}
-
-pub enum AsyncReadDir {
-    Cap(AsyncCapReadDir),
-    Tokio(AsyncTokioReadDir),
-}
-
-impl AsyncReadDir {
-    pub async fn next_entry(&mut self) -> Option<std::io::Result<(bool, String)>> {
-        match self {
-            AsyncReadDir::Cap(read_dir) => read_dir.next_entry().await,
-            AsyncReadDir::Tokio(read_dir) => read_dir.next_entry().await,
-        }
-    }
-}
-
-pub struct CapReadDir(cap_std::fs::ReadDir);
-
-impl CapReadDir {
-    pub fn next_entry(&mut self) -> Option<std::io::Result<(bool, String)>> {
-        match self.0.next() {
-            Some(Ok(entry)) => Some(Ok((
-                entry.file_type().is_ok_and(|ft| ft.is_dir()),
-                entry.file_name().to_string_lossy().to_string(),
-            ))),
-            Some(Err(err)) => Some(Err(err)),
-            None => None,
-        }
-    }
-}
-
-pub struct StdReadDir(std::fs::ReadDir);
-
-impl StdReadDir {
-    pub fn next_entry(&mut self) -> Option<std::io::Result<(bool, String)>> {
-        match self.0.next() {
-            Some(Ok(entry)) => Some(Ok((
-                entry.file_type().is_ok_and(|ft| ft.is_dir()),
-                entry.file_name().to_string_lossy().to_string(),
-            ))),
-            Some(Err(err)) => Some(Err(err)),
-            None => None,
-        }
-    }
-}
-
-pub enum ReadDir {
-    Cap(CapReadDir),
-    Std(StdReadDir),
-}
-
-impl ReadDir {
-    pub fn next_entry(&mut self) -> Option<std::io::Result<(bool, String)>> {
-        match self {
-            ReadDir::Cap(read_dir) => read_dir.next_entry(),
-            ReadDir::Std(read_dir) => read_dir.next_entry(),
-        }
-    }
-}
 
 pub struct Filesystem {
     uuid: uuid::Uuid,
@@ -146,7 +28,7 @@ pub struct Filesystem {
     config: Arc<crate::config::Config>,
 
     pub base_path: PathBuf,
-    base_dir: RwLock<Option<Arc<cap_std::fs::Dir>>>,
+    cap_filesystem: cap::CapFilesystem,
 
     disk_limit: AtomicI64,
     disk_usage_cached: Arc<AtomicU64>,
@@ -177,8 +59,8 @@ impl Filesystem {
             disk_checker: Mutex::new(None),
             config: Arc::clone(&config),
 
-            base_path,
-            base_dir: RwLock::new(None),
+            base_path: base_path.clone(),
+            cap_filesystem: cap::CapFilesystem::new_uninitialized(base_path),
 
             disk_limit: AtomicI64::new(disk_limit as i64),
             disk_usage_cached,
@@ -222,17 +104,16 @@ impl Filesystem {
     ) -> RwLockReadGuard<'_, HashMap<uuid::Uuid, Arc<RwLock<pull::Download>>>> {
         if let Ok(mut pulls) = self.pulls.try_write() {
             for key in pulls.keys().cloned().collect::<Vec<_>>() {
-                if let Some(download) = pulls.get(&key) {
-                    if download
+                if let Some(download) = pulls.get(&key)
+                    && download
                         .read()
                         .await
                         .task
                         .as_ref()
                         .map(|t| t.is_finished())
                         .unwrap_or(true)
-                    {
-                        pulls.remove(&key);
-                    }
+                {
+                    pulls.remove(&key);
                 }
             }
         }
@@ -271,39 +152,6 @@ impl Filesystem {
     }
 
     #[inline]
-    pub fn resolve_path(path: &Path) -> PathBuf {
-        let mut result = PathBuf::new();
-
-        for component in path.components() {
-            match component {
-                std::path::Component::ParentDir => {
-                    if !result.as_os_str().is_empty()
-                        && result.components().next_back() != Some(std::path::Component::RootDir)
-                    {
-                        result.pop();
-                    }
-                }
-                _ => {
-                    result.push(component);
-                }
-            }
-        }
-
-        result
-    }
-
-    #[inline]
-    pub fn relative_path(&self, path: &Path) -> PathBuf {
-        Self::resolve_path(if let Ok(path) = path.strip_prefix(&self.base_path) {
-            path
-        } else if let Ok(path) = path.strip_prefix("/") {
-            path
-        } else {
-            path
-        })
-    }
-
-    #[inline]
     pub fn path_to_components(&self, path: &Path) -> Vec<String> {
         self.relative_path(path)
             .components()
@@ -311,35 +159,12 @@ impl Filesystem {
             .collect()
     }
 
-    #[inline]
-    pub async fn base_dir(&self) -> std::io::Result<Arc<cap_std::fs::Dir>> {
-        if let Some(dir) = self.base_dir.read().await.as_ref() {
-            Ok(Arc::clone(dir))
-        } else {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "Base directory not initialized",
-            ))
-        }
-    }
-
-    #[inline]
-    pub fn sync_base_dir(&self) -> std::io::Result<Arc<cap_std::fs::Dir>> {
-        if let Some(dir) = self.base_dir.blocking_read().as_ref() {
-            Ok(Arc::clone(dir))
-        } else {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "Base directory not initialized",
-            ))
-        }
-    }
-
     pub async fn backup_fs(
         &self,
         server: &crate::server::Server,
+        backup_manager: &crate::server::backup::manager::BackupManager,
         path: &Path,
-    ) -> Option<(InternalBackup, PathBuf)> {
+    ) -> Option<(Arc<BrowseBackup>, PathBuf)> {
         if !self.config.system.backups.mounting.enabled {
             return None;
         }
@@ -364,23 +189,26 @@ impl Filesystem {
             return None;
         }
 
-        match crate::server::backup::InternalBackup::find(&server.config, uuid).await {
-            Some(backup) => Some((
+        match backup_manager.browse(server, uuid).await {
+            Ok(Some(backup)) => Some((
                 backup,
                 backup_path
                     .strip_prefix(uuid.to_string())
                     .ok()?
                     .to_path_buf(),
             )),
-            None => None,
+            Ok(None) => None,
+            Err(err) => {
+                tracing::error!(server = %server.uuid, backup = %uuid, "failed to find backup: {}", err);
+                None
+            }
         }
     }
 
     pub async fn truncate_path(&self, path: impl AsRef<Path>) -> Result<(), anyhow::Error> {
-        let filesystem = self.base_dir().await?;
         let path = self.relative_path(path.as_ref());
 
-        let metadata = self.symlink_metadata(&path).await?;
+        let metadata = self.async_symlink_metadata(&path).await?;
 
         let components = self.path_to_components(&path);
         let size = if metadata.is_dir() {
@@ -398,9 +226,9 @@ impl Filesystem {
         }
 
         if metadata.is_dir() {
-            tokio::task::spawn_blocking(move || filesystem.remove_dir_all(path)).await??;
+            self.async_remove_dir_all(path).await?;
         } else {
-            tokio::task::spawn_blocking(move || filesystem.remove_file(path)).await??;
+            self.async_remove_file(path).await?;
         }
 
         Ok(())
@@ -411,26 +239,25 @@ impl Filesystem {
         old_path: impl AsRef<Path>,
         new_path: impl AsRef<Path>,
     ) -> Result<(), anyhow::Error> {
-        let filesystem = self.base_dir().await?;
         let old_path = self.relative_path(old_path.as_ref());
         let new_path = self.relative_path(new_path.as_ref());
 
         if let Some(parent) = new_path.parent() {
-            self.create_dir_all(parent).await?;
+            self.async_create_dir_all(parent).await?;
         }
 
-        let metadata = self.metadata(&old_path).await?;
+        let metadata = self.async_metadata(&old_path).await?;
         let is_dir = metadata.is_dir();
 
         let old_parent = self
-            .canonicalize(match old_path.parent() {
+            .async_canonicalize(match old_path.parent() {
                 Some(parent) => parent,
                 None => return Err(anyhow::anyhow!("failed to get old path parent")),
             })
             .await
             .unwrap_or_default();
         let new_parent = self
-            .canonicalize(match new_path.parent() {
+            .async_canonicalize(match new_path.parent() {
                 Some(parent) => parent,
                 None => return Err(anyhow::anyhow!("failed to get new path parent")),
             })
@@ -462,220 +289,8 @@ impl Filesystem {
             self.allocate_in_path(&new_parent, size).await;
         }
 
-        tokio::task::spawn_blocking(move || filesystem.rename(old_path, &filesystem, new_path))
-            .await??;
-
-        Ok(())
-    }
-
-    pub async fn create_dir_all(&self, path: impl AsRef<Path>) -> Result<(), anyhow::Error> {
-        let filesystem = self.base_dir().await?;
-
-        let path = self.relative_path(path.as_ref());
-        tokio::task::spawn_blocking(move || filesystem.create_dir_all(path)).await??;
-
-        Ok(())
-    }
-
-    pub async fn create_dir(&self, path: impl AsRef<Path>) -> Result<(), anyhow::Error> {
-        let filesystem = self.base_dir().await?;
-
-        let path = self.relative_path(path.as_ref());
-        tokio::task::spawn_blocking(move || filesystem.create_dir(path)).await??;
-
-        Ok(())
-    }
-
-    pub async fn metadata(&self, path: impl AsRef<Path>) -> Result<Metadata, anyhow::Error> {
-        let filesystem = self.base_dir().await?;
-
-        let path = self.relative_path(path.as_ref());
-        let metadata = if path.components().next().is_none() {
-            cap_std::fs::Metadata::from_just_metadata(tokio::fs::metadata(&self.base_path).await?)
-        } else {
-            tokio::task::spawn_blocking(move || filesystem.metadata(path)).await??
-        };
-
-        Ok(metadata)
-    }
-
-    pub async fn symlink_metadata(
-        &self,
-        path: impl AsRef<Path>,
-    ) -> Result<Metadata, anyhow::Error> {
-        let filesystem = self.base_dir().await?;
-
-        let path = self.relative_path(path.as_ref());
-        let metadata = if path.components().next().is_none() {
-            cap_std::fs::Metadata::from_just_metadata(
-                tokio::fs::symlink_metadata(&self.base_path).await?,
-            )
-        } else {
-            tokio::task::spawn_blocking(move || filesystem.symlink_metadata(path)).await??
-        };
-
-        Ok(metadata)
-    }
-
-    pub async fn canonicalize(&self, path: impl AsRef<Path>) -> Result<PathBuf, anyhow::Error> {
-        let filesystem = self.base_dir().await?;
-
-        let path = self.relative_path(path.as_ref());
-        if path.components().next().is_none() {
-            return Ok(path);
-        }
-
-        let canonicalized =
-            tokio::task::spawn_blocking(move || filesystem.canonicalize(path)).await??;
-
-        Ok(canonicalized)
-    }
-
-    pub async fn read_link(&self, path: impl AsRef<Path>) -> Result<PathBuf, anyhow::Error> {
-        let filesystem = self.base_dir().await?;
-
-        let path = self.relative_path(path.as_ref());
-        let link = tokio::task::spawn_blocking(move || filesystem.read_link(path)).await??;
-
-        Ok(link)
-    }
-
-    pub async fn read_link_contents(
-        &self,
-        path: impl AsRef<Path>,
-    ) -> Result<PathBuf, anyhow::Error> {
-        let filesystem = self.base_dir().await?;
-
-        let path = self.relative_path(path.as_ref());
-        let link_contents =
-            tokio::task::spawn_blocking(move || filesystem.read_link_contents(path)).await??;
-
-        Ok(link_contents)
-    }
-
-    pub async fn read_to_string(&self, path: impl AsRef<Path>) -> Result<String, anyhow::Error> {
-        let filesystem = self.base_dir().await?;
-
-        let path = self.relative_path(path.as_ref());
-        let content =
-            tokio::task::spawn_blocking(move || filesystem.read_to_string(path)).await??;
-
-        Ok(content)
-    }
-
-    pub async fn open(&self, path: impl AsRef<Path>) -> Result<tokio::fs::File, anyhow::Error> {
-        let filesystem = self.base_dir().await?;
-
-        let path = self.relative_path(path.as_ref());
-        let file = tokio::task::spawn_blocking(move || filesystem.open(path)).await??;
-
-        Ok(tokio::fs::File::from_std(file.into_std()))
-    }
-
-    pub async fn write(&self, path: impl AsRef<Path>, data: Vec<u8>) -> Result<(), anyhow::Error> {
-        let filesystem = self.base_dir().await?;
-
-        let path = self.relative_path(path.as_ref());
-        tokio::task::spawn_blocking(move || filesystem.write(path, data)).await??;
-
-        Ok(())
-    }
-
-    pub async fn create(&self, path: impl AsRef<Path>) -> Result<tokio::fs::File, anyhow::Error> {
-        let filesystem = self.base_dir().await?;
-
-        let path = self.relative_path(path.as_ref());
-        let file = tokio::task::spawn_blocking(move || filesystem.create(path)).await??;
-
-        Ok(tokio::fs::File::from_std(file.into_std()))
-    }
-
-    pub async fn copy(
-        &self,
-        from: impl AsRef<Path>,
-        to: impl AsRef<Path>,
-    ) -> Result<u64, anyhow::Error> {
-        let filesystem = self.base_dir().await?;
-
-        let from = self.relative_path(from.as_ref());
-        let to = self.relative_path(to.as_ref());
-
-        let bytes_copied =
-            tokio::task::spawn_blocking(move || filesystem.copy(from, &filesystem, to)).await??;
-
-        Ok(bytes_copied)
-    }
-
-    pub async fn set_permissions(
-        &self,
-        path: impl AsRef<Path>,
-        permissions: cap_std::fs::Permissions,
-    ) -> Result<(), anyhow::Error> {
-        let filesystem = self.base_dir().await?;
-
-        let path = self.relative_path(path.as_ref());
-        tokio::task::spawn_blocking(move || filesystem.set_permissions(path, permissions))
-            .await??;
-
-        Ok(())
-    }
-
-    pub async fn read_dir(&self, path: impl AsRef<Path>) -> Result<AsyncReadDir, anyhow::Error> {
-        let filesystem = self.base_dir().await?;
-
-        let path = self.relative_path(path.as_ref());
-
-        Ok(if path.components().next().is_none() {
-            AsyncReadDir::Tokio(AsyncTokioReadDir(
-                tokio::fs::read_dir(&self.base_path).await?,
-            ))
-        } else {
-            AsyncReadDir::Cap(AsyncCapReadDir(
-                Some(tokio::task::spawn_blocking(move || filesystem.read_dir(path)).await??),
-                Some(VecDeque::with_capacity(32)),
-            ))
-        })
-    }
-
-    pub fn read_dir_sync(&self, path: impl AsRef<Path>) -> Result<ReadDir, anyhow::Error> {
-        let filesystem = self.sync_base_dir()?;
-
-        let path = self.relative_path(path.as_ref());
-
-        Ok(if path.components().next().is_none() {
-            ReadDir::Std(StdReadDir(std::fs::read_dir(&self.base_path)?))
-        } else {
-            ReadDir::Cap(CapReadDir(filesystem.read_dir(path)?))
-        })
-    }
-
-    pub async fn symlink(
-        &self,
-        target: impl AsRef<Path>,
-        link: impl AsRef<Path>,
-    ) -> Result<(), anyhow::Error> {
-        let filesystem = self.base_dir().await?;
-
-        let target = self.relative_path(target.as_ref());
-        let link = self.relative_path(link.as_ref());
-
-        tokio::task::spawn_blocking(move || filesystem.symlink(target, link)).await??;
-
-        Ok(())
-    }
-
-    pub async fn hard_link(
-        &self,
-        target: impl AsRef<Path>,
-        link: impl AsRef<Path>,
-    ) -> Result<(), anyhow::Error> {
-        let filesystem = self.base_dir().await?;
-
-        let target = self.relative_path(target.as_ref());
-        let link = self.relative_path(link.as_ref());
-
-        tokio::task::spawn_blocking(move || filesystem.hard_link(target, &filesystem, link))
-            .await??;
+        self.async_rename(old_path, &self.cap_filesystem, new_path)
+            .await?;
 
         Ok(())
     }
@@ -846,48 +461,48 @@ impl Filesystem {
                         {
                             Box::pin(async move {
                                 let mut total_size = 0;
-                                let metadata = match server.filesystem.symlink_metadata(path).await
-                                {
-                                    Ok(metadata) => metadata,
-                                    Err(_) => return 0,
-                                };
+                                let metadata =
+                                    match server.filesystem.async_symlink_metadata(path).await {
+                                        Ok(metadata) => metadata,
+                                        Err(_) => return 0,
+                                    };
 
                                 total_size += metadata.len();
 
-                                if metadata.is_dir() {
-                                    if let Ok(mut entries) = server.filesystem.read_dir(path).await
+                                if metadata.is_dir()
+                                    && let Ok(mut entries) =
+                                        server.filesystem.async_read_dir(path).await
+                                {
+                                    while let Some(Ok((is_dir, file_name))) =
+                                        entries.next_entry().await
                                     {
-                                        while let Some(Ok((is_dir, file_name))) =
-                                            entries.next_entry().await
+                                        let sub_path = path.join(&file_name);
+                                        let metadata = match server
+                                            .filesystem
+                                            .async_symlink_metadata(&sub_path)
+                                            .await
                                         {
-                                            let sub_path = path.join(&file_name);
-                                            let metadata = match server
-                                                .filesystem
-                                                .symlink_metadata(&sub_path)
-                                                .await
-                                            {
-                                                Ok(metadata) => metadata,
-                                                Err(_) => continue,
-                                            };
+                                            Ok(metadata) => metadata,
+                                            Err(_) => continue,
+                                        };
 
-                                            let mut new_path = relative_path.to_vec();
-                                            new_path.push(file_name);
+                                        let mut new_path = relative_path.to_vec();
+                                        new_path.push(file_name);
 
-                                            total_size += metadata.len();
+                                        total_size += metadata.len();
 
-                                            if is_dir {
-                                                let size = recursive_size(
-                                                    server,
-                                                    &sub_path,
-                                                    &new_path,
-                                                    disk_usage,
-                                                    disable_directory_size,
-                                                )
-                                                .await;
+                                        if is_dir {
+                                            let size = recursive_size(
+                                                server,
+                                                &sub_path,
+                                                &new_path,
+                                                disk_usage,
+                                                disable_directory_size,
+                                            )
+                                            .await;
 
-                                                if !disable_directory_size {
-                                                    disk_usage.update_size(&new_path, size as i64);
-                                                }
+                                            if !disable_directory_size {
+                                                disk_usage.update_size(&new_path, size as i64);
                                             }
                                         }
                                     }
@@ -1000,11 +615,11 @@ impl Filesystem {
             }
         }
 
-        if self.base_dir.read().await.is_none() {
+        if self.cap_filesystem.is_uninitialized().await {
             match cap_std::fs::Dir::open_ambient_dir(&self.base_path, cap_std::ambient_authority())
             {
                 Ok(dir) => {
-                    *self.base_dir.write().await = Some(Arc::new(dir));
+                    *self.cap_filesystem.inner.write().await = Some(Arc::new(dir));
                     self.setup_disk_checker(server).await;
                 }
                 Err(err) => {
@@ -1027,11 +642,11 @@ impl Filesystem {
             );
         }
 
-        if self.base_dir.read().await.is_none() {
+        if self.cap_filesystem.is_uninitialized().await {
             match cap_std::fs::Dir::open_ambient_dir(&self.base_path, cap_std::ambient_authority())
             {
                 Ok(dir) => {
-                    *self.base_dir.write().await = Some(Arc::new(dir));
+                    *self.cap_filesystem.inner.write().await = Some(Arc::new(dir));
                     self.setup_disk_checker(server).await;
                 }
                 Err(err) => {
@@ -1064,6 +679,7 @@ impl Filesystem {
         &self,
         path: PathBuf,
         metadata: &Metadata,
+        no_directory_size: bool,
         buffer: Option<&[u8]>,
         symlink_destination: Option<PathBuf>,
         symlink_destination_metadata: Option<Metadata>,
@@ -1071,14 +687,18 @@ impl Filesystem {
         let real_metadata = symlink_destination_metadata.as_ref().unwrap_or(metadata);
         let real_path = symlink_destination.as_ref().unwrap_or(&path);
 
-        let size = if real_metadata.is_dir() && !self.config.api.disable_directory_size {
-            let components = self.path_to_components(real_path);
+        let size = if real_metadata.is_dir() {
+            if !no_directory_size && !self.config.api.disable_directory_size {
+                let components = self.path_to_components(real_path);
 
-            self.disk_usage
-                .read()
-                .await
-                .get_size(&components)
-                .unwrap_or(0)
+                self.disk_usage
+                    .read()
+                    .await
+                    .get_size(&components)
+                    .unwrap_or(0)
+            } else {
+                0
+            }
         } else {
             real_metadata.len()
         };
@@ -1173,8 +793,8 @@ impl Filesystem {
         metadata: Metadata,
     ) -> crate::models::DirectoryEntry {
         let symlink_destination = if metadata.is_symlink() {
-            match self.read_link(&path).await {
-                Ok(link) => self.canonicalize(link).await.ok(),
+            match self.async_read_link(&path).await {
+                Ok(link) => self.async_canonicalize(link).await.ok(),
                 Err(_) => None,
             }
         } else {
@@ -1183,7 +803,7 @@ impl Filesystem {
 
         let symlink_destination_metadata =
             if let Some(symlink_destination) = symlink_destination.clone() {
-                self.symlink_metadata(&symlink_destination).await.ok()
+                self.async_symlink_metadata(&symlink_destination).await.ok()
             } else {
                 None
             };
@@ -1195,13 +815,17 @@ impl Filesystem {
                     .as_ref()
                     .is_some_and(|m| m.is_file()))
         {
-            let mut file = self
-                .open(symlink_destination.as_ref().unwrap_or(&path))
+            match self
+                .async_open(symlink_destination.as_ref().unwrap_or(&path))
                 .await
-                .unwrap();
-            let bytes_read = file.read(&mut buffer).await.unwrap_or(0);
+            {
+                Ok(mut file) => {
+                    let bytes_read = file.read(&mut buffer).await.unwrap_or(0);
 
-            Some(&buffer[..bytes_read])
+                    Some(&buffer[..bytes_read])
+                }
+                Err(_) => None,
+            }
         } else {
             None
         };
@@ -1209,6 +833,7 @@ impl Filesystem {
         self.to_api_entry_buffer(
             path,
             &metadata,
+            false,
             buffer,
             symlink_destination,
             symlink_destination_metadata,
@@ -1216,17 +841,15 @@ impl Filesystem {
         .await
     }
 
-    pub async fn to_api_entry_tokio(
+    pub async fn to_api_entry_cap(
         &self,
+        filesystem: &cap::CapFilesystem,
         path: PathBuf,
-        metadata: std::fs::Metadata,
+        metadata: Metadata,
     ) -> crate::models::DirectoryEntry {
         let symlink_destination = if metadata.is_symlink() {
-            match tokio::fs::read_link(&path).await {
-                Ok(link) => tokio::fs::canonicalize(link)
-                    .await
-                    .ok()
-                    .filter(|p| p.starts_with(&self.base_path)),
+            match filesystem.async_read_link(&path).await {
+                Ok(link) => filesystem.async_canonicalize(link).await.ok(),
                 Err(_) => None,
             }
         } else {
@@ -1235,7 +858,10 @@ impl Filesystem {
 
         let symlink_destination_metadata =
             if let Some(symlink_destination) = symlink_destination.clone() {
-                tokio::fs::symlink_metadata(&symlink_destination).await.ok()
+                filesystem
+                    .async_symlink_metadata(&symlink_destination)
+                    .await
+                    .ok()
             } else {
                 None
             };
@@ -1247,23 +873,37 @@ impl Filesystem {
                     .as_ref()
                     .is_some_and(|m| m.is_file()))
         {
-            let mut file = tokio::fs::File::open(symlink_destination.as_ref().unwrap_or(&path))
+            match filesystem
+                .async_open(symlink_destination.as_ref().unwrap_or(&path))
                 .await
-                .unwrap();
-            let bytes_read = file.read(&mut buffer).await.unwrap_or(0);
+            {
+                Ok(mut file) => {
+                    let bytes_read = file.read(&mut buffer).await.unwrap_or(0);
 
-            Some(&buffer[..bytes_read])
+                    Some(&buffer[..bytes_read])
+                }
+                Err(_) => None,
+            }
         } else {
             None
         };
 
         self.to_api_entry_buffer(
             path,
-            &cap_std::fs::Metadata::from_just_metadata(metadata),
+            &metadata,
+            true,
             buffer,
             symlink_destination,
-            symlink_destination_metadata.map(cap_std::fs::Metadata::from_just_metadata),
+            symlink_destination_metadata,
         )
         .await
+    }
+}
+
+impl Deref for Filesystem {
+    type Target = cap::CapFilesystem;
+
+    fn deref(&self) -> &Self::Target {
+        &self.cap_filesystem
     }
 }

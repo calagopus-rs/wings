@@ -85,13 +85,12 @@ impl Download {
 
         'header_check: {
             if use_header {
-                if let Some(header) = response.headers().get("Content-Disposition") {
-                    if let Ok(header) = header.to_str() {
-                        if let Some(filename) = header.split("filename=").nth(1) {
-                            real_destination.push(filename.trim_matches('"'));
-                            break 'header_check;
-                        }
-                    }
+                if let Some(header) = response.headers().get("Content-Disposition")
+                    && let Ok(header) = header.to_str()
+                    && let Some(filename) = header.split("filename=").nth(1)
+                {
+                    real_destination.push(filename.trim_matches('"'));
+                    break 'header_check;
                 }
 
                 real_destination.push(

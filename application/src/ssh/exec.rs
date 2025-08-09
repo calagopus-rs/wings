@@ -166,7 +166,7 @@ impl ExecSession {
                                 )
                                 .await?;
                             crate::server::filesystem::archive::Archive::create_tar(
-                                self.server.clone(),
+                                self.server.filesystem.clone(),
                                 writer,
                                 base,
                                 paths,

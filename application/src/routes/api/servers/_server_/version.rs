@@ -67,15 +67,15 @@ mod get {
 
                     if server
                         .filesystem
-                        .metadata(path)
+                        .async_metadata(path)
                         .await
                         .is_ok_and(|m| m.is_dir())
                     {
-                        let mut entries = server.filesystem.read_dir(path).await?;
+                        let mut entries = server.filesystem.async_read_dir(path).await?;
 
                         while let Some(Ok((_, entry))) = entries.next_entry().await {
                             if let Ok(mut entries) =
-                                server.filesystem.read_dir(path.join(&entry)).await
+                                server.filesystem.async_read_dir(path.join(&entry)).await
                             {
                                 while let Some(Ok((_, sub_entry))) = entries.next_entry().await {
                                     if sub_entry.ends_with("-server.jar")
@@ -95,15 +95,15 @@ mod get {
 
                     if server
                         .filesystem
-                        .metadata(path)
+                        .async_metadata(path)
                         .await
                         .is_ok_and(|m| m.is_dir())
                     {
-                        let mut entries = server.filesystem.read_dir(path).await?;
+                        let mut entries = server.filesystem.async_read_dir(path).await?;
 
                         while let Some(Ok((_, entry))) = entries.next_entry().await {
                             if let Ok(mut entries) =
-                                server.filesystem.read_dir(path.join(&entry)).await
+                                server.filesystem.async_read_dir(path.join(&entry)).await
                             {
                                 while let Some(Ok((_, sub_entry))) = entries.next_entry().await {
                                     if sub_entry.ends_with("-server.jar")
@@ -118,7 +118,7 @@ mod get {
                     }
                 }
 
-                let mut file = match server.filesystem.open(&jar).await {
+                let mut file = match server.filesystem.async_open(&jar).await {
                     Ok(file) => file,
                     Err(_) => {
                         return ApiResponse::error("version not found")

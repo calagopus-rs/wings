@@ -264,14 +264,13 @@ impl Manager {
                         .await
                         .start_on_completion
                         .is_some_and(|s| s)
+                        && let Err(err) = server.start(&client, None).await
                     {
-                        if let Err(err) = server.start(&client, None).await {
-                            tracing::error!(
-                                server = %server.uuid,
-                                "failed to start server on boot: {}",
-                                err
-                            );
-                        }
+                        tracing::error!(
+                            server = %server.uuid,
+                            "failed to start server on boot: {}",
+                            err
+                        );
                     }
                 }
             });

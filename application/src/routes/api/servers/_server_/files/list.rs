@@ -70,7 +70,7 @@ mod get {
         };
         let page = data.page.unwrap_or(1);
 
-        let path = match server.filesystem.canonicalize(&data.directory).await {
+        let path = match server.filesystem.async_canonicalize(&data.directory).await {
             Ok(path) => path,
             Err(_) => PathBuf::from(data.directory),
         };
@@ -98,17 +98,22 @@ mod get {
                 .unwrap_or(false)
         };
 
-        if let Some((backup, rel_path)) = server.filesystem.backup_fs(&server, &path).await {
+        if let Some((backup, rel_path)) = server
+            .filesystem
+            .backup_fs(&server, &state.backup_manager, &path)
+            .await
+        {
             if is_ignored(&path, true) || server.filesystem.is_ignored(&path, true).await {
                 return ApiResponse::error("path not a directory")
                     .with_status(StatusCode::EXPECTATION_FAILED)
                     .ok();
             }
 
-            let (total, entries) = match crate::server::filesystem::backup::list(
-                backup, &server, &rel_path, per_page, page, is_ignored,
-            )
-            .await
+            let (total, entries) = match backup
+                .read_dir(rel_path, per_page, page, move |path, is_dir| {
+                    is_ignored(&path, is_dir)
+                })
+                .await
             {
                 Ok((total, entries)) => (total, entries),
                 Err(err) => {
@@ -128,7 +133,7 @@ mod get {
             return ApiResponse::json(Response { total, entries }).ok();
         }
 
-        let metadata = server.filesystem.metadata(&path).await;
+        let metadata = server.filesystem.async_metadata(&path).await;
         if let Ok(metadata) = metadata {
             if !metadata.is_dir()
                 || is_ignored(&path, metadata.is_dir())
@@ -144,7 +149,7 @@ mod get {
                 .ok();
         }
 
-        let mut directory = server.filesystem.read_dir(&path).await?;
+        let mut directory = server.filesystem.async_read_dir(&path).await?;
 
         let mut directory_entries = Vec::new();
         let mut other_entries = Vec::new();
@@ -179,7 +184,7 @@ mod get {
                 .take(per_page)
             {
                 let path = path.join(&entry);
-                let metadata = match server.filesystem.symlink_metadata(&path).await {
+                let metadata = match server.filesystem.async_symlink_metadata(&path).await {
                     Ok(metadata) => metadata,
                     Err(_) => continue,
                 };
@@ -192,7 +197,7 @@ mod get {
                 .chain(other_entries.into_iter())
             {
                 let path = path.join(&entry);
-                let metadata = match server.filesystem.symlink_metadata(&path).await {
+                let metadata = match server.filesystem.async_symlink_metadata(&path).await {
                     Ok(metadata) => metadata,
                     Err(_) => continue,
                 };

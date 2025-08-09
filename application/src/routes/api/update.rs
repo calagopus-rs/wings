@@ -93,14 +93,14 @@ mod post {
                 config.api.upload_limit = upload_limit;
             }
         }
-        if let Some(system) = data.system {
-            if let Some(sftp) = system.sftp {
-                if let Some(bind_address) = sftp.bind_address {
-                    config.system.sftp.bind_address = bind_address;
-                }
-                if let Some(bind_port) = sftp.bind_port {
-                    config.system.sftp.bind_port = bind_port;
-                }
+        if let Some(system) = data.system
+            && let Some(sftp) = system.sftp
+        {
+            if let Some(bind_address) = sftp.bind_address {
+                config.system.sftp.bind_address = bind_address;
+            }
+            if let Some(bind_port) = sftp.bind_port {
+                config.system.sftp.bind_port = bind_port;
             }
         }
         if let Some(allowed_origins) = data.allowed_origins {

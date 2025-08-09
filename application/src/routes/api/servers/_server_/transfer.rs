@@ -64,6 +64,7 @@ mod post {
 
         if transfer
             .start(
+                &state.backup_manager,
                 &state.docker,
                 data.url,
                 data.token,

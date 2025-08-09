@@ -91,7 +91,7 @@ impl Server {
         Self(Arc::new(InnerServer {
             uuid: configuration.uuid,
 
-            config,
+            config: Arc::clone(&config),
 
             configuration: RwLock::new(configuration),
             process_configuration: RwLock::new(process_configuration),

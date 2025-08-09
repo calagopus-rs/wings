@@ -122,12 +122,14 @@ impl OutgoingServerTransfer {
 
     pub fn start(
         &mut self,
+        backup_manager: &Arc<super::backup::manager::BackupManager>,
         client: &Arc<bollard::Docker>,
         url: String,
         token: String,
         backups: Vec<uuid::Uuid>,
         delete_backups: bool,
     ) -> Result<(), anyhow::Error> {
+        let backup_manager = Arc::clone(backup_manager);
         let client = Arc::clone(client);
         let bytes_archived = Arc::clone(&self.bytes_archived);
         let archive_format = self.archive_format;
@@ -140,20 +142,19 @@ impl OutgoingServerTransfer {
         );
 
         let old_task = self.task.replace(tokio::spawn(async move {
-            if server.state.get_state() != super::state::ServerState::Offline {
-                if let Err(err) = server
+            if server.state.get_state() != super::state::ServerState::Offline
+                && let Err(err) = server
                     .stop_with_kill_timeout(&client, std::time::Duration::from_secs(15))
                     .await
-                {
-                    tracing::error!(
-                        server = %server.uuid,
-                        "failed to stop server: {:#?}",
-                        err
-                    );
+            {
+                tracing::error!(
+                    server = %server.uuid,
+                    "failed to stop server: {:#?}",
+                    err
+                );
 
-                    Self::transfer_failure(&server).await;
-                    return;
-                }
+                Self::transfer_failure(&server).await;
+                return;
             }
 
             Self::log(&server, "Preparing to stream server data to destination...");
@@ -173,17 +174,13 @@ impl OutgoingServerTransfer {
                 let server = server.clone();
 
                 async move {
-                    let mut directory = server.filesystem.read_dir("").await?;
-                    let mut sources = Vec::new();
-                    while let Some(Ok((_, name))) = directory.next_entry().await {
-                        sources.push(PathBuf::from(name));
-                    }
+                    let sources = server.filesystem.async_read_dir_all("").await?;
 
                     crate::server::filesystem::archive::Archive::create_tar(
-                        server,
+                        server.filesystem.clone(),
                         checksummed_writer,
                         Path::new(""),
-                        sources,
+                        sources.into_iter().map(PathBuf::from).collect(),
                         match archive_format {
                             TransferArchiveFormat::Tar => crate::server::filesystem::archive::CompressionType::None,
                             TransferArchiveFormat::TarGz => crate::server::filesystem::archive::CompressionType::Gz,
@@ -242,20 +239,19 @@ impl OutgoingServerTransfer {
                 );
 
             let mut total_bytes = server.filesystem.limiter_usage().await;
-            let backup_list = super::backup::InternalBackup::list(&server).await;
 
             if !backups.is_empty() {
                 for backup in &backups {
-                    if let Some(backup) = backup_list.iter().find(|b| b.uuid == *backup) {
-                        match backup.adapter {
-                            super::backup::BackupAdapter::Wings => {
-                                let file_name = match super::backup::wings::get_first_file_name(&server.config, backup.uuid).await {
+                    if let Ok(Some(backup)) = backup_manager.find(*backup).await {
+                        match backup.adapter() {
+                            super::backup::adapters::BackupAdapter::Wings => {
+                                let file_name = match super::backup::adapters::wings::WingsBackup::get_first_file_name(&server.config, backup.uuid()).await {
                                     Ok((_, file_name)) => file_name,
                                     Err(err) => {
                                         tracing::error!(
                                             server = %server.uuid,
                                             "failed to get first file name for backup {}: {}",
-                                            backup.uuid,
+                                            backup.uuid(),
                                             err
                                         );
                                         continue;
@@ -283,7 +279,7 @@ impl OutgoingServerTransfer {
                                     .unwrap_or(0);
 
                                 form = form.part(
-                                    format!("backup-{}", backup.uuid),
+                                    format!("backup-{}", backup.uuid()),
                                     reqwest::multipart::Part::stream(reqwest::Body::wrap_stream(
                                         tokio_util::io::ReaderStream::with_capacity(reader, crate::BUFFER_SIZE),
                                     ))
@@ -296,7 +292,7 @@ impl OutgoingServerTransfer {
                                 tracing::warn!(
                                     server = %server.uuid,
                                     "backup {} is not a Wings backup and cannot be transferred, skipping",
-                                    backup.uuid
+                                    backup.uuid()
                                 );
                             }
                         }
@@ -394,30 +390,38 @@ impl OutgoingServerTransfer {
             Self::log(&server, "Finished streaming archive to destination.");
 
             for backup in backups {
-                match backup_list.iter().find(|b| b.uuid == backup) {
-                    Some(backup) => {
+                match backup_manager.find(backup).await {
+                    Ok(Some(backup)) => {
                         if delete_backups {
                             if let Err(err) = backup.delete(&server.config).await {
                                 tracing::error!(
                                     server = %server.uuid,
                                     "failed to delete backup {}: {}",
-                                    backup.uuid,
+                                    backup.uuid(),
                                     err
                                 );
                             } else {
                                 tracing::info!(
                                     server = %server.uuid,
                                     "deleted backup {} after transfer",
-                                    backup.uuid
+                                    backup.uuid()
                                 );
                             }
                         }
                     }
-                    None => {
+                    Ok(None) => {
                         tracing::warn!(
                             server = %server.uuid,
                             "requested backup {} does not exist",
                             backup
+                        );
+                    }
+                    Err(err) => {
+                        tracing::error!(
+                            server = %server.uuid,
+                            "failed to find backup {}: {:#?}",
+                            backup,
+                            err
                         );
                     }
                 }

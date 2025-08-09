@@ -229,17 +229,17 @@ pub async fn handle_ws(
                                 Ok(stdout) => {
                                     let socket_jwt = socket_jwt.read().await;
 
-                                    if let Some(jwt) = socket_jwt.as_ref() {
-                                        if jwt.base.validate(&state.config.jwt).await {
-                                            super::send_message(
-                                                &sender,
-                                                websocket::WebsocketMessage::new(
-                                                    websocket::WebsocketEvent::ServerConsoleOutput,
-                                                    &[stdout],
-                                                ),
-                                            )
-                                            .await;
-                                        }
+                                    if let Some(jwt) = socket_jwt.as_ref()
+                                        && jwt.base.validate(&state.config.jwt).await
+                                    {
+                                        super::send_message(
+                                            &sender,
+                                            websocket::WebsocketMessage::new(
+                                                websocket::WebsocketEvent::ServerConsoleOutput,
+                                                &[stdout],
+                                            ),
+                                        )
+                                        .await;
                                     }
                                 }
                                 Err(RecvError::Closed) => break,

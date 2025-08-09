@@ -91,9 +91,13 @@ mod get {
             }
         };
 
-        if let Some((backup, path)) = server.filesystem.backup_fs(&server, path).await {
-            match crate::server::filesystem::backup::reader(backup, &server, &path).await {
-                Ok((reader, size)) => {
+        if let Some((backup, path)) = server
+            .filesystem
+            .backup_fs(&server, &state.backup_manager, path)
+            .await
+        {
+            match backup.read_file(path.clone()).await {
+                Ok((size, reader)) => {
                     let mut headers = HeaderMap::new();
 
                     headers.insert("Content-Length", size.into());
@@ -128,7 +132,7 @@ mod get {
             }
         }
 
-        let metadata = match server.filesystem.metadata(&path).await {
+        let metadata = match server.filesystem.async_metadata(&path).await {
             Ok(metadata) => {
                 if !metadata.is_file()
                     || server.filesystem.is_ignored(path, metadata.is_dir()).await
@@ -147,7 +151,7 @@ mod get {
             }
         };
 
-        let file = match server.filesystem.open(&path).await {
+        let file = match server.filesystem.async_open(&path).await {
             Ok(file) => file,
             Err(_) => {
                 return ApiResponse::error("file not found")

@@ -40,21 +40,24 @@ mod get {
         server: GetServer,
         Query(data): Query<Params>,
     ) -> ApiResponseResult {
-        let path = match server.filesystem.canonicalize(&data.directory).await {
+        let path = match server.filesystem.async_canonicalize(&data.directory).await {
             Ok(path) => path,
             Err(_) => PathBuf::from(data.directory),
         };
 
-        if let Some((backup, path)) = server.filesystem.backup_fs(&server, &path).await {
-            let mut entries = match crate::server::filesystem::backup::list(
-                backup,
-                &server,
-                &path,
-                Some(state.config.api.directory_entry_limit),
-                1,
-                |_, _| false,
-            )
+        if let Some((backup, path)) = server
+            .filesystem
+            .backup_fs(&server, &state.backup_manager, &path)
             .await
+        {
+            let mut entries = match backup
+                .read_dir(
+                    path.clone(),
+                    Some(state.config.api.directory_entry_limit),
+                    1,
+                    |_, _| false,
+                )
+                .await
             {
                 Ok((_, entries)) => entries,
                 Err(err) => {
@@ -84,7 +87,7 @@ mod get {
             return ApiResponse::json(entries).ok();
         }
 
-        let metadata = server.filesystem.metadata(&path).await;
+        let metadata = server.filesystem.async_metadata(&path).await;
         if let Ok(metadata) = metadata {
             if !metadata.is_dir() || server.filesystem.is_ignored(&path, metadata.is_dir()).await {
                 return ApiResponse::error("path not a directory")
@@ -97,13 +100,13 @@ mod get {
                 .ok();
         }
 
-        let mut directory = server.filesystem.read_dir(&path).await?;
+        let mut directory = server.filesystem.async_read_dir(&path).await?;
 
         let mut entries = Vec::new();
 
         while let Some(Ok((_, entry))) = directory.next_entry().await {
             let path = path.join(entry);
-            let metadata = match server.filesystem.symlink_metadata(&path).await {
+            let metadata = match server.filesystem.async_symlink_metadata(&path).await {
                 Ok(metadata) => metadata,
                 Err(_) => continue,
             };

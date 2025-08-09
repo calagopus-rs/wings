@@ -46,7 +46,7 @@ mod post {
         Query(data): Query<Params>,
         body: Body,
     ) -> ApiResponseResult {
-        let path = match server.filesystem.canonicalize(&data.file).await {
+        let path = match server.filesystem.async_canonicalize(&data.file).await {
             Ok(path) => path,
             Err(_) => PathBuf::from(data.file),
         };
@@ -56,7 +56,7 @@ mod post {
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.parse().ok())
             .unwrap_or(0);
-        let metadata = server.filesystem.metadata(&path).await;
+        let metadata = server.filesystem.async_metadata(&path).await;
 
         if server
             .filesystem
@@ -98,7 +98,7 @@ mod post {
                 .ok();
         }
 
-        server.filesystem.create_dir_all(parent).await?;
+        server.filesystem.async_create_dir_all(parent).await?;
 
         if !server
             .filesystem
@@ -110,7 +110,7 @@ mod post {
                 .ok();
         }
 
-        let mut file = server.filesystem.create(&path).await?;
+        let mut file = server.filesystem.async_create(&path).await?;
         let mut stream = body.into_data_stream();
 
         while let Some(Ok(chunk)) = stream.next().await {

@@ -78,17 +78,14 @@ mod get {
             }
         }
 
-        let backup =
-            match crate::server::backup::InternalBackup::find(&state.config, payload.backup_uuid)
-                .await
-            {
-                Some(backup) => backup,
-                None => {
-                    return ApiResponse::error("backup not found")
-                        .with_status(StatusCode::NOT_FOUND)
-                        .ok();
-                }
-            };
+        let backup = match state.backup_manager.find(payload.backup_uuid).await? {
+            Some(backup) => backup,
+            None => {
+                return ApiResponse::error("backup not found")
+                    .with_status(StatusCode::NOT_FOUND)
+                    .ok();
+            }
+        };
 
         match backup.download(&state.config).await {
             Ok(response) => response,

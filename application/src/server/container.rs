@@ -85,18 +85,16 @@ impl Container {
                         if container_state.status
                             == Some(bollard::secret::ContainerStateStatusEnum::RUNNING)
                         {
-                            if let Some(started_at) = &container_state.started_at {
-                                if let Ok(started_at) =
+                            if let Some(started_at) = &container_state.started_at
+                                && let Ok(started_at) =
                                     chrono::DateTime::parse_from_rfc3339(started_at)
-                                {
-                                    let now = chrono::Utc::now();
-                                    let started_at = started_at.with_timezone(&chrono::Utc);
+                            {
+                                let now = chrono::Utc::now();
+                                let started_at = started_at.with_timezone(&chrono::Utc);
 
-                                    let uptime =
-                                        now.signed_duration_since(started_at).num_milliseconds()
-                                            as u64;
-                                    resource_usage.write().await.uptime = uptime;
-                                }
+                                let uptime =
+                                    now.signed_duration_since(started_at).num_milliseconds() as u64;
+                                resource_usage.write().await.uptime = uptime;
                             }
                         } else {
                             resource_usage.write().await.uptime = 0;
@@ -141,11 +139,11 @@ impl Container {
                         usage.disk_bytes = disk_usage;
                         usage.state = server.state.get_state();
 
-                        if let Some(networks) = stats.networks {
-                            if let Some(network) = networks.values().next() {
-                                usage.network.rx_bytes = network.rx_bytes;
-                                usage.network.tx_bytes = network.tx_bytes;
-                            }
+                        if let Some(networks) = stats.networks
+                            && let Some(network) = networks.values().next()
+                        {
+                            usage.network.rx_bytes = network.rx_bytes;
+                            usage.network.tx_bytes = network.tx_bytes;
                         }
 
                         // TODO: This requires urgent refactoring to handle multiple CPUs correctly (and fix podman support)
@@ -303,14 +301,14 @@ impl Container {
                                         .to_string();
 
                                 check_startup(&line);
-                                if allow_ratelimit().await {
-                                    if let Err(err) = stdout_sender.send(line) {
-                                        tracing::error!(
-                                            server = %server_uuid,
-                                            error = %err,
-                                            "failed to send stdout line"
-                                        );
-                                    }
+                                if allow_ratelimit().await
+                                    && let Err(err) = stdout_sender.send(line)
+                                {
+                                    tracing::error!(
+                                        server = %server_uuid,
+                                        error = %err,
+                                        "failed to send stdout line"
+                                    );
                                 }
 
                                 line_start = newline_pos + 1;
@@ -323,14 +321,14 @@ impl Container {
                                 .to_string();
 
                                 check_startup(&line);
-                                if allow_ratelimit().await {
-                                    if let Err(err) = stdout_sender.send(line) {
-                                        tracing::error!(
-                                            server = %server_uuid,
-                                            error = %err,
-                                            "failed to send stdout line"
-                                        );
-                                    }
+                                if allow_ratelimit().await
+                                    && let Err(err) = stdout_sender.send(line)
+                                {
+                                    tracing::error!(
+                                        server = %server_uuid,
+                                        error = %err,
+                                        "failed to send stdout line"
+                                    );
                                 }
 
                                 line_start += 512;
@@ -344,14 +342,14 @@ impl Container {
                                 )
                                 .trim()
                                 .to_string();
-                                if allow_ratelimit().await {
-                                    if let Err(err) = stdout_sender.send(line) {
-                                        tracing::error!(
-                                            server = %server_uuid,
-                                            error = %err,
-                                            "failed to send stdout line"
-                                        );
-                                    }
+                                if allow_ratelimit().await
+                                    && let Err(err) = stdout_sender.send(line)
+                                {
+                                    tracing::error!(
+                                        server = %server_uuid,
+                                        error = %err,
+                                        "failed to send stdout line"
+                                    );
                                 }
 
                                 line_start += 512;

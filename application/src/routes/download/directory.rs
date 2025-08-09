@@ -112,9 +112,12 @@ mod get {
         );
         headers.insert("Content-Type", "application/gzip".parse()?);
 
-        if let Some((backup, path)) = server.filesystem.backup_fs(&server, &path).await {
-            match crate::server::filesystem::backup::directory_reader(backup, &server, &path).await
-            {
+        if let Some((backup, path)) = server
+            .filesystem
+            .backup_fs(&server, &state.backup_manager, &path)
+            .await
+        {
+            match backup.read_directory_archive(path.clone()).await {
                 Ok(reader) => {
                     return ApiResponse::new(Body::from_stream(
                         tokio_util::io::ReaderStream::with_capacity(reader, crate::BUFFER_SIZE),
@@ -137,7 +140,7 @@ mod get {
             }
         }
 
-        let metadata = server.filesystem.symlink_metadata(&path).await;
+        let metadata = server.filesystem.async_symlink_metadata(&path).await;
         if let Ok(metadata) = metadata {
             if !metadata.is_dir() || server.filesystem.is_ignored(&path, metadata.is_dir()).await {
                 return ApiResponse::error("directory not found")
@@ -150,38 +153,20 @@ mod get {
                 .ok();
         }
 
-        let (writer, reader) = tokio::io::duplex(crate::BUFFER_SIZE);
+        let sources = server.filesystem.async_read_dir_all(&path).await?;
+        let (reader, writer) = tokio::io::duplex(crate::BUFFER_SIZE);
 
         tokio::spawn({
             let path = path.clone();
             let server = server.clone();
 
             async move {
-                let mut read_dir = match server.filesystem.read_dir(&path).await {
-                    Ok(dir) => dir,
-                    Err(err) => {
-                        tracing::error!(
-                            server = %server.uuid,
-                            path = %path.display(),
-                            error = %err,
-                            "failed to read directory"
-                        );
-
-                        return;
-                    }
-                };
-                let mut names = Vec::new();
-
-                while let Some(Ok((_, name))) = read_dir.next_entry().await {
-                    names.push(PathBuf::from(name));
-                }
-
                 let ignored = server.filesystem.get_ignored().await;
                 crate::server::filesystem::archive::Archive::create_tar(
-                    server,
+                    server.filesystem.clone(),
                     writer,
                     &path,
-                    names,
+                    sources.into_iter().map(PathBuf::from).collect(),
                     crate::server::filesystem::archive::CompressionType::Gz,
                     state.config.system.backups.compression_level,
                     None,

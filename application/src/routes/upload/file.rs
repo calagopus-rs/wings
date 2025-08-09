@@ -124,7 +124,7 @@ mod post {
 
         let directory = PathBuf::from(data.directory);
 
-        let metadata = server.filesystem.metadata(&directory).await;
+        let metadata = server.filesystem.async_metadata(&directory).await;
         if !metadata.map(|m| m.is_dir()).unwrap_or(true) {
             return ApiResponse::error("directory is not a directory")
                 .with_status(StatusCode::EXPECTATION_FAILED)
@@ -156,7 +156,7 @@ mod post {
             }
 
             if let Some(parent) = file_path.parent() {
-                server.filesystem.create_dir_all(parent).await?;
+                server.filesystem.async_create_dir_all(parent).await?;
             }
 
             let mut written_size = 0;

@@ -601,8 +601,8 @@ pub async fn attach_install_container(
             .read()
             .await
             .environment(&server.config);
-        if let Some(container_id) = container_id.lock().await.take() {
-            if let Err(err) = cleanup_container(
+        if let Some(container_id) = container_id.lock().await.take()
+            && let Err(err) = cleanup_container(
                 server,
                 client,
                 &container_id,
@@ -610,14 +610,13 @@ pub async fn attach_install_container(
                 environment,
             )
             .await
-            {
-                tracing::error!(
-                    server = %server.uuid,
-                    container = %container_id,
-                    "failed to clean up container: {}",
-                    err
-                );
-            }
+        {
+            tracing::error!(
+                server = %server.uuid,
+                container = %container_id,
+                "failed to clean up container: {}",
+                err
+            );
         }
 
         tokio::fs::remove_dir_all(

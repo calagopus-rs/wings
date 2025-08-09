@@ -46,7 +46,7 @@ mod post {
         server: GetServer,
         axum::Json(data): axum::Json<Payload>,
     ) -> ApiResponseResult {
-        let root = match server.filesystem.canonicalize(data.root).await {
+        let root = match server.filesystem.async_canonicalize(data.root).await {
             Ok(path) => path,
             Err(_) => {
                 return ApiResponse::error("root not found")
@@ -55,7 +55,7 @@ mod post {
             }
         };
 
-        let metadata = server.filesystem.symlink_metadata(&root).await;
+        let metadata = server.filesystem.async_symlink_metadata(&root).await;
         if !metadata.map(|m| m.is_dir()).unwrap_or(true) {
             return ApiResponse::error("root is not a directory")
                 .with_status(StatusCode::EXPECTATION_FAILED)
@@ -69,7 +69,7 @@ mod post {
                 continue;
             }
 
-            let metadata = match server.filesystem.symlink_metadata(&source).await {
+            let metadata = match server.filesystem.async_symlink_metadata(&source).await {
                 Ok(metadata) => metadata,
                 Err(_) => continue,
             };
@@ -89,7 +89,7 @@ mod post {
 
             if server
                 .filesystem
-                .set_permissions(&source, Permissions::from_mode(mode))
+                .async_set_permissions(&source, Permissions::from_mode(mode))
                 .await
                 .is_ok()
             {

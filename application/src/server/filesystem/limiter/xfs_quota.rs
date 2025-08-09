@@ -69,17 +69,14 @@ static DISK_USAGE: LazyLock<Arc<RwLock<DiskUsageMap>>> = LazyLock::new(|| {
                         }
 
                         let parts: Vec<&str> = line.split_whitespace().collect();
-                        if parts.len() >= 2 {
-                            if let Some(project_id_str) = parts[0].strip_prefix('#') {
-                                if let Ok(pid) = project_id_str.parse::<u32>() {
-                                    if pid == *project_id {
-                                        if let Ok(used_bytes) = parts[1].parse::<i64>() {
-                                            *server_usage = used_bytes * 1024;
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
+                        if parts.len() >= 2
+                            && let Some(project_id_str) = parts[0].strip_prefix('#')
+                            && let Ok(pid) = project_id_str.parse::<u32>()
+                            && pid == *project_id
+                            && let Ok(used_bytes) = parts[1].parse::<i64>()
+                        {
+                            *server_usage = used_bytes * 1024;
+                            break;
                         }
                     }
                 }
@@ -219,10 +216,10 @@ pub async fn attach(
 pub async fn disk_usage(
     filesystem: &crate::server::filesystem::Filesystem,
 ) -> Result<u64, std::io::Error> {
-    if let Some(usage) = DISK_USAGE.read().await.get(&filesystem.uuid.to_string()) {
-        if usage.2 >= 0 {
-            return Ok(usage.2 as u64);
-        }
+    if let Some(usage) = DISK_USAGE.read().await.get(&filesystem.uuid.to_string())
+        && usage.2 >= 0
+    {
+        return Ok(usage.2 as u64);
     }
 
     Err(std::io::Error::other(format!(

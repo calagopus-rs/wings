@@ -5,6 +5,7 @@ mod post {
     use crate::{
         response::{ApiResponse, ApiResponseResult},
         routes::{ApiError, GetState, api::servers::_server_::GetServer},
+        server::backup::adapters::BackupAdapter,
     };
     use axum::{extract::Path, http::StatusCode};
     use serde::{Deserialize, Serialize};
@@ -12,7 +13,7 @@ mod post {
 
     #[derive(ToSchema, Deserialize)]
     pub struct Payload {
-        adapter: crate::server::backup::BackupAdapter,
+        adapter: BackupAdapter,
         truncate_directory: bool,
         download_url: Option<String>,
     }
@@ -41,31 +42,26 @@ mod post {
         Path((_server, backup_id)): Path<(uuid::Uuid, uuid::Uuid)>,
         axum::Json(data): axum::Json<Payload>,
     ) -> ApiResponseResult {
-        if data.adapter == crate::server::backup::BackupAdapter::S3 && data.download_url.is_none() {
+        if data.adapter == BackupAdapter::S3 && data.download_url.is_none() {
             return ApiResponse::error("unable to restore s3 backup without download_url")
                 .with_status(StatusCode::BAD_REQUEST)
                 .ok();
         }
 
-        let backup = if data.adapter != crate::server::backup::BackupAdapter::S3 {
-            match crate::server::backup::InternalBackup::find(&state.config, backup_id).await {
-                Some(backup) => backup,
-                None => {
-                    return ApiResponse::error("backup not found")
-                        .with_status(StatusCode::NOT_FOUND)
-                        .ok();
-                }
-            }
-        } else {
-            crate::server::backup::InternalBackup {
-                adapter: data.adapter,
-                uuid: backup_id,
+        let backup = match state.backup_manager.find(backup_id).await? {
+            Some(backup) => backup,
+            None => {
+                return ApiResponse::error("backup not found")
+                    .with_status(StatusCode::NOT_FOUND)
+                    .ok();
             }
         };
 
         tokio::spawn(async move {
-            if let Err(err) = backup
+            if let Err(err) = state
+                .backup_manager
                 .restore(
+                    &backup,
                     &state.docker,
                     &server,
                     data.truncate_directory,
@@ -75,8 +71,8 @@ mod post {
             {
                 tracing::error!(
                     server = %server.uuid,
-                    backup = %backup.uuid,
-                    adapter = ?backup.adapter,
+                    backup = %backup.uuid(),
+                    adapter = ?backup.adapter(),
                     "failed to restore backup: {:#?}",
                     err
                 );

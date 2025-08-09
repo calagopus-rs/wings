@@ -197,75 +197,75 @@ impl ProcessConfiguration {
                 .strip_prefix("/")
                 .unwrap_or(Path::new(&file_path));
 
-            if let Some(parent) = full_path.parent() {
-                if !parent.as_os_str().is_empty() {
-                    tracing::debug!(
+            if let Some(parent) = full_path.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                tracing::debug!(
+                    server = %server.uuid,
+                    "checking if parent directory exists: {}",
+                    parent.display()
+                );
+
+                if server.filesystem.async_metadata(&parent).await.is_err() {
+                    tracing::info!(
                         server = %server.uuid,
-                        "checking if parent directory exists: {}",
+                        "creating parent directory: {}",
                         parent.display()
                     );
 
-                    if server.filesystem.metadata(&parent).await.is_err() {
-                        tracing::info!(
-                            server = %server.uuid,
-                            "creating parent directory: {}",
-                            parent.display()
-                        );
-
-                        match server.filesystem.create_dir_all(&parent).await {
-                            Ok(_) => {
-                                tracing::debug!(
-                                    server = %server.uuid,
-                                    "successfully created parent directory: {}",
-                                    parent.display()
-                                );
-                            }
-                            Err(e) => {
-                                tracing::error!(
-                                    server = %server.uuid,
-                                    "failed to create parent directory {}: {}",
-                                    parent.display(),
-                                    e
-                                );
-                                continue;
-                            }
+                    match server.filesystem.async_create_dir_all(&parent).await {
+                        Ok(_) => {
+                            tracing::debug!(
+                                server = %server.uuid,
+                                "successfully created parent directory: {}",
+                                parent.display()
+                            );
                         }
-
-                        tracing::debug!(
-                            server = %server.uuid,
-                            "setting ownership for directory: {}",
-                            parent.display()
-                        );
-                        match server.filesystem.chown_path(&parent).await {
-                            Ok(_) => {
-                                tracing::debug!(
-                                    server = %server.uuid,
-                                    "successfully set ownership for directory: {}",
-                                    parent.display()
-                                );
-                            }
-                            Err(e) => {
-                                tracing::error!(
-                                    server = %server.uuid,
-                                    "failed to set ownership for directory {}: {}",
-                                    parent.display(),
-                                    e
-                                );
-                            }
+                        Err(e) => {
+                            tracing::error!(
+                                server = %server.uuid,
+                                "failed to create parent directory {}: {}",
+                                parent.display(),
+                                e
+                            );
+                            continue;
                         }
-                    } else {
-                        tracing::debug!(
-                            server = %server.uuid,
-                            "parent directory already exists: {}",
-                            parent.display()
-                        );
                     }
+
+                    tracing::debug!(
+                        server = %server.uuid,
+                        "setting ownership for directory: {}",
+                        parent.display()
+                    );
+                    match server.filesystem.chown_path(&parent).await {
+                        Ok(_) => {
+                            tracing::debug!(
+                                server = %server.uuid,
+                                "successfully set ownership for directory: {}",
+                                parent.display()
+                            );
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                server = %server.uuid,
+                                "failed to set ownership for directory {}: {}",
+                                parent.display(),
+                                e
+                            );
+                        }
+                    }
+                } else {
+                    tracing::debug!(
+                        server = %server.uuid,
+                        "parent directory already exists: {}",
+                        parent.display()
+                    );
                 }
             }
 
             let mut file_content = String::new();
 
-            if let Ok(metadata) = server.filesystem.symlink_metadata(&file_path).await {
+            if let Ok(metadata) = server.filesystem.async_symlink_metadata(&file_path).await {
                 if !metadata.is_dir() {
                     tracing::debug!(
                         server = %server.uuid,
@@ -273,7 +273,7 @@ impl ProcessConfiguration {
                         file_path
                     );
 
-                    match server.filesystem.read_to_string(&file_path).await {
+                    match server.filesystem.async_read_to_string(&file_path).await {
                         Ok(content) => {
                             file_content = content;
                             tracing::debug!(
@@ -358,7 +358,7 @@ impl ProcessConfiguration {
 
             match server
                 .filesystem
-                .write(&full_path, updated_content.as_bytes().to_vec())
+                .async_write(&full_path, updated_content.as_bytes().to_vec())
                 .await
             {
                 Ok(_) => {
@@ -469,15 +469,15 @@ async fn process_properties_file(
                     key
                 );
 
-                if let Some(if_value) = &replacement.if_value {
-                    if original_value != if_value {
-                        tracing::debug!(
-                            server = %server.uuid,
-                            "value '{}' does not match required if_value '{}', skipping",
-                            original_value, if_value
-                        );
-                        continue;
-                    }
+                if let Some(if_value) = &replacement.if_value
+                    && original_value != if_value
+                {
+                    tracing::debug!(
+                        server = %server.uuid,
+                        "value '{}' does not match required if_value '{}', skipping",
+                        original_value, if_value
+                    );
+                    continue;
                 }
 
                 if let Some(value) =
@@ -979,13 +979,13 @@ async fn process_xml_file(
                         );
                     }
                 }
-            } else if parts.len() == 1 {
-                if let Some(root_end_idx) = xml_content.rfind("</root>") {
-                    xml_content.insert_str(
-                        root_end_idx,
-                        &format!("\n  <{tag_name}>{value}</{tag_name}>\n"),
-                    );
-                }
+            } else if parts.len() == 1
+                && let Some(root_end_idx) = xml_content.rfind("</root>")
+            {
+                xml_content.insert_str(
+                    root_end_idx,
+                    &format!("\n  <{tag_name}>{value}</{tag_name}>\n"),
+                );
             }
         }
     }
@@ -1008,10 +1008,10 @@ async fn process_plain_file(
             if line.trim().starts_with(&replacement.r#match) {
                 processed_matches.insert(replacement.r#match.clone(), true);
 
-                if let Some(if_value) = &replacement.if_value {
-                    if !line.contains(if_value) {
-                        continue;
-                    }
+                if let Some(if_value) = &replacement.if_value
+                    && !line.contains(if_value)
+                {
+                    continue;
                 }
 
                 if let Some(value) =
@@ -1027,12 +1027,11 @@ async fn process_plain_file(
     }
 
     for replacement in &config.replace {
-        if !processed_matches.contains_key(&replacement.r#match) {
-            if let Some(value) =
+        if !processed_matches.contains_key(&replacement.r#match)
+            && let Some(value) =
                 ServerConfigurationFile::lookup_value(server, &replacement.replace_with).await
-            {
-                result.push(value);
-            }
+        {
+            result.push(value);
         }
     }
 

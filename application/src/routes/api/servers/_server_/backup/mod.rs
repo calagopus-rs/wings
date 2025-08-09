@@ -7,6 +7,7 @@ mod post {
     use crate::{
         response::{ApiResponse, ApiResponseResult},
         routes::{ApiError, GetState, api::servers::_server_::GetServer},
+        server::backup::adapters::BackupAdapter,
     };
     use axum::http::StatusCode;
     use serde::{Deserialize, Serialize};
@@ -14,7 +15,7 @@ mod post {
 
     #[derive(ToSchema, Deserialize)]
     pub struct Payload {
-        adapter: crate::server::backup::BackupAdapter,
+        adapter: BackupAdapter,
         uuid: uuid::Uuid,
         ignore: String,
     }
@@ -37,23 +38,17 @@ mod post {
         server: GetServer,
         axum::Json(data): axum::Json<Payload>,
     ) -> ApiResponseResult {
-        if crate::server::backup::InternalBackup::list_for_adapter(&state.config, data.adapter)
-            .await
-            .is_ok_and(|backups| backups.contains(&data.uuid))
-        {
+        if state.backup_manager.fast_contains(&server, data.uuid).await {
             return ApiResponse::error("backup already exists")
                 .with_status(StatusCode::CONFLICT)
                 .ok();
         }
 
         tokio::spawn(async move {
-            if let Err(err) = crate::server::backup::InternalBackup::create(
-                data.adapter,
-                &server,
-                data.uuid,
-                data.ignore,
-            )
-            .await
+            if let Err(err) = state
+                .backup_manager
+                .create(data.adapter, &server, data.uuid, data.ignore)
+                .await
             {
                 tracing::error!(
                     "failed to create backup {} (adapter = {:?}) for {}: {}",

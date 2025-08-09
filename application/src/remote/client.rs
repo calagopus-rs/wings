@@ -163,10 +163,11 @@ impl Client {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn backup_configurations(
+    pub async fn backup_restic_configuration(
         &self,
-    ) -> Result<super::backups::BackupConfigurations, anyhow::Error> {
-        tracing::info!("fetching backup configurations");
-        super::backups::backup_configurations(self).await
+        uuid: uuid::Uuid,
+    ) -> Result<super::backups::ResticBackupConfiguration, anyhow::Error> {
+        tracing::info!("getting restic backup configuration");
+        super::backups::backup_restic_configuration(self, uuid).await
     }
 }

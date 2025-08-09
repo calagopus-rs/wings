@@ -18,9 +18,10 @@ mod post {
         extract::Multipart,
         http::{HeaderMap, StatusCode},
     };
+    use cap_std::fs::{Permissions, PermissionsExt};
     use futures::{StreamExt, TryStreamExt};
     use serde::Serialize;
-    use std::{fs::Permissions, os::unix::fs::PermissionsExt, path::Path, str::FromStr};
+    use std::{path::Path, str::FromStr};
     use tokio::io::AsyncWriteExt;
     use utoipa::ToSchema;
 
@@ -165,38 +166,40 @@ mod post {
 
                             match header.entry_type() {
                                 tokio_tar::EntryType::Directory => {
-                                    server.filesystem.create_dir_all(&destination_path).await?;
+                                    server
+                                        .filesystem
+                                        .async_create_dir_all(&destination_path)
+                                        .await?;
                                     if let Ok(permissions) =
                                         header.mode().map(Permissions::from_mode)
                                     {
                                         server
                                             .filesystem
-                                            .set_permissions(
-                                                &destination_path,
-                                                cap_std::fs::Permissions::from_std(permissions),
-                                            )
+                                            .async_set_permissions(&destination_path, permissions)
                                             .await?;
                                     }
                                 }
                                 tokio_tar::EntryType::Regular => {
                                     if let Some(parent) = destination_path.parent() {
-                                        server.filesystem.create_dir_all(parent).await?;
+                                        server.filesystem.async_create_dir_all(parent).await?;
                                     }
 
                                     let mut writer =
-                                    crate::server::filesystem::writer::AsyncFileSystemWriter::new(
-                                        server.clone(),
-                                        destination_path.to_path_buf(),
-                                        header.mode().map(Permissions::from_mode).ok(),
-                                        header
-                                            .mtime()
-                                            .map(|t| {
-                                                std::time::UNIX_EPOCH
-                                                    + std::time::Duration::from_secs(t)
-                                            })
-                                            .ok(),
-                                    )
-                                    .await?;
+                                        crate::server::filesystem::writer::AsyncFileSystemWriter::new(
+                                            server.clone(),
+                                            destination_path.to_path_buf(),
+                                            header.mode().map(Permissions::from_mode).ok(),
+                                            header
+                                                .mtime()
+                                                .map(|t| {
+                                                    cap_std::time::SystemTime::from_std(
+                                                        std::time::UNIX_EPOCH
+                                                            + std::time::Duration::from_secs(t)
+                                                    )
+                                                })
+                                                .ok(),
+                                        )
+                                        .await?;
 
                                     tokio::io::copy(&mut entry, &mut writer).await?;
                                     writer.flush().await?;
@@ -207,7 +210,7 @@ mod post {
 
                                     server
                                         .filesystem
-                                        .symlink(link.as_ref(), destination_path)
+                                        .async_symlink(link.as_ref(), destination_path)
                                         .await
                                         .unwrap_or_else(|err| {
                                             tracing::debug!(

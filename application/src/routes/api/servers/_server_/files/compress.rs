@@ -5,27 +5,12 @@ mod post {
     use crate::{
         response::{ApiResponse, ApiResponseResult},
         routes::{ApiError, GetState, api::servers::_server_::GetServer},
-        server::filesystem::archive::CompressionType,
+        server::filesystem::archive::{ArchiveFormat, CompressionType},
     };
     use axum::http::StatusCode;
     use serde::Deserialize;
     use std::path::PathBuf;
     use utoipa::ToSchema;
-
-    #[derive(ToSchema, Deserialize, Default, Clone, Copy)]
-    #[serde(rename_all = "snake_case")]
-    #[schema(rename_all = "snake_case")]
-    pub enum ArchiveFormat {
-        Tar,
-        #[default]
-        TarGz,
-        TarXz,
-        TarBz2,
-        TarLz4,
-        TarZstd,
-        Zip,
-        SevenZip,
-    }
 
     #[derive(ToSchema, Deserialize)]
     pub struct Payload {
@@ -54,7 +39,7 @@ mod post {
         server: GetServer,
         axum::Json(data): axum::Json<Payload>,
     ) -> ApiResponseResult {
-        let root = match server.filesystem.canonicalize(data.root).await {
+        let root = match server.filesystem.async_canonicalize(data.root).await {
             Ok(path) => path,
             Err(_) => {
                 return ApiResponse::error("root not found")
@@ -63,7 +48,7 @@ mod post {
             }
         };
 
-        let metadata = server.filesystem.symlink_metadata(&root).await;
+        let metadata = server.filesystem.async_symlink_metadata(&root).await;
         if !metadata.map(|m| m.is_dir()).unwrap_or(true) {
             return ApiResponse::error("root is not a directory")
                 .with_status(StatusCode::EXPECTATION_FAILED)
@@ -118,7 +103,7 @@ mod post {
                         .await?;
 
                         crate::server::filesystem::archive::Archive::create_tar(
-                            server,
+                            server.filesystem.clone(),
                             writer,
                             &root,
                             data.files.into_iter().map(PathBuf::from).collect(),
@@ -150,10 +135,11 @@ mod post {
                         .await??;
 
                         crate::server::filesystem::archive::Archive::create_zip(
-                            server,
+                            server.filesystem.clone(),
                             writer,
                             root,
                             data.files.into_iter().map(PathBuf::from).collect(),
+                            state.config.system.backups.compression_level,
                             None,
                             vec![ignored],
                         )
@@ -172,7 +158,7 @@ mod post {
                         .await??;
 
                         crate::server::filesystem::archive::Archive::create_7z(
-                            server,
+                            server.filesystem.clone(),
                             writer,
                             root,
                             data.files.into_iter().map(PathBuf::from).collect(),
@@ -213,7 +199,7 @@ mod post {
             }
         }
 
-        let metadata = server.filesystem.symlink_metadata(&file_name).await?;
+        let metadata = server.filesystem.async_symlink_metadata(&file_name).await?;
 
         ApiResponse::json(server.filesystem.to_api_entry(file_name, metadata).await).ok()
     }

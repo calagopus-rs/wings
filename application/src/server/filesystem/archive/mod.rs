@@ -1,12 +1,10 @@
 use crate::io::counting_reader::{AsyncCountingReader, CountingReader};
-use cap_std::fs::PermissionsExt as _;
+use cap_std::fs::{Permissions, PermissionsExt as _};
 use chrono::{Datelike, Timelike};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::{
-    fs::Permissions,
     io::{Read, Seek, SeekFrom, Write},
-    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     sync::{
         Arc, RwLock,
@@ -83,15 +81,32 @@ pub enum ArchiveType {
     Ddup,
 }
 
+#[derive(ToSchema, Deserialize, Default, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+#[schema(rename_all = "snake_case")]
+pub enum ArchiveFormat {
+    Tar,
+    #[default]
+    TarGz,
+    TarXz,
+    TarBz2,
+    TarLz4,
+    TarZstd,
+    Zip,
+    SevenZip,
+}
+
 #[inline]
 pub fn zip_entry_get_modified_time(
     entry: &zip::read::ZipFile<impl std::io::Read>,
-) -> Option<std::time::SystemTime> {
+) -> Option<cap_std::time::SystemTime> {
     for field in entry.extra_data_fields() {
         if let zip::extra_fields::ExtraField::ExtendedTimestamp(ext) = field
             && let Some(mod_time) = ext.mod_time()
         {
-            return Some(std::time::UNIX_EPOCH + std::time::Duration::from_secs(mod_time as u64));
+            return Some(cap_std::time::SystemTime::from_std(
+                std::time::UNIX_EPOCH + std::time::Duration::from_secs(mod_time as u64),
+            ));
         }
     }
 
@@ -109,12 +124,12 @@ pub fn zip_entry_get_modified_time(
             time.second() as u32,
         )?;
 
-        return Some(
+        return Some(cap_std::time::SystemTime::from_std(
             std::time::UNIX_EPOCH
                 + std::time::Duration::from_secs(
                     chrono_date.and_time(chrono_time).and_utc().timestamp() as u64,
                 ),
-        );
+        ));
     }
 
     None
@@ -133,7 +148,7 @@ pub struct Archive {
 
 impl Archive {
     pub async fn open(server: crate::server::Server, path: PathBuf) -> Option<Self> {
-        let mut file = server.filesystem.open(&path).await.ok()?;
+        let mut file = server.filesystem.async_open(&path).await.ok()?;
 
         let mut header = [0; 16];
         #[allow(clippy::unused_io_amount)]
@@ -289,7 +304,8 @@ impl Archive {
                     None => return Err(anyhow::anyhow!("Invalid file name")),
                 };
 
-                let metadata = self.file.metadata().await?;
+                let metadata =
+                    cap_std::fs::Metadata::from_just_metadata(self.file.metadata().await?);
 
                 let mut writer = super::writer::AsyncFileSystemWriter::new(
                     self.server.clone(),
@@ -328,20 +344,20 @@ impl Archive {
 
                     match header.entry_type() {
                         tokio_tar::EntryType::Directory => {
-                            server.filesystem.create_dir_all(&destination_path).await?;
+                            server
+                                .filesystem
+                                .async_create_dir_all(&destination_path)
+                                .await?;
                             if let Ok(permissions) = header.mode().map(Permissions::from_mode) {
                                 server
                                     .filesystem
-                                    .set_permissions(
-                                        &destination_path,
-                                        cap_std::fs::Permissions::from_std(permissions),
-                                    )
+                                    .async_set_permissions(&destination_path, permissions)
                                     .await?;
                             }
                         }
                         tokio_tar::EntryType::Regular => {
                             if let Some(parent) = destination_path.parent() {
-                                server.filesystem.create_dir_all(parent).await?;
+                                server.filesystem.async_create_dir_all(parent).await?;
                             }
 
                             let mut writer = super::writer::AsyncFileSystemWriter::new(
@@ -351,7 +367,10 @@ impl Archive {
                                 header
                                     .mtime()
                                     .map(|t| {
-                                        std::time::UNIX_EPOCH + std::time::Duration::from_secs(t)
+                                        cap_std::time::SystemTime::from_std({
+                                            std::time::UNIX_EPOCH
+                                                + std::time::Duration::from_secs(t)
+                                        })
                                     })
                                     .ok(),
                             )
@@ -363,16 +382,16 @@ impl Archive {
                         tokio_tar::EntryType::Symlink => {
                             let link = entry.link_name().unwrap_or_default().unwrap_or_default();
 
-                            server
+                            if let Err(err) = server
                                 .filesystem
-                                .symlink(link.as_ref(), destination_path)
+                                .async_symlink(link, &destination_path)
                                 .await
-                                .unwrap_or_else(|err| {
-                                    tracing::debug!(
-                                        "failed to create symlink from archive: {:#?}",
-                                        err
-                                    );
-                                });
+                            {
+                                tracing::debug!(
+                                    "failed to create symlink from archive: {:#?}",
+                                    err
+                                );
+                            }
                         }
                         _ => {}
                     }
@@ -380,9 +399,7 @@ impl Archive {
             }
             ArchiveType::Zip => {
                 let abort = Arc::new(AtomicBool::new(false));
-
                 let guard = AbortGuard(Arc::clone(&abort));
-                let filesystem = self.server.filesystem.base_dir().await?;
 
                 let file = Arc::new(self.file.into_std().await);
                 tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
@@ -404,7 +421,6 @@ impl Archive {
                         scope.spawn_broadcast(move |_, _| {
                             let mut archive = archive.clone();
                             let entry_index = Arc::clone(&entry_index);
-                            let filesystem = Arc::clone(&filesystem);
                             let error_clone2 = Arc::clone(&error_clone);
                             let destination = destination.clone();
                             let server = self.server.clone();
@@ -445,18 +461,16 @@ impl Archive {
                                     }
 
                                     if entry.is_dir() {
-                                        filesystem.create_dir_all(&destination_path)?;
-                                        filesystem.set_permissions(
+                                        server.filesystem.create_dir_all(&destination_path)?;
+                                        server.filesystem.set_permissions(
                                             &destination_path,
-                                            cap_std::fs::Permissions::from_std(
-                                                Permissions::from_mode(
-                                                    entry.unix_mode().unwrap_or(0o755),
-                                                ),
+                                            cap_std::fs::Permissions::from_mode(
+                                                entry.unix_mode().unwrap_or(0o755),
                                             ),
                                         )?;
                                     } else if entry.is_file() {
                                         if let Some(parent) = destination_path.parent() {
-                                            filesystem.create_dir_all(parent)?;
+                                            server.filesystem.create_dir_all(parent)?;
                                         }
 
                                         let mut writer = super::writer::FileSystemWriter::new(
@@ -473,14 +487,15 @@ impl Archive {
                                     {
                                         let link =
                                             std::io::read_to_string(entry).unwrap_or_default();
-                                        filesystem.symlink(link, destination_path).unwrap_or_else(
-                                            |err| {
-                                                tracing::debug!(
-                                                    "failed to create symlink from archive: {:#?}",
-                                                    err
-                                                );
-                                            },
-                                        );
+
+                                        if let Err(err) =
+                                            server.filesystem.symlink(link, &destination_path)
+                                        {
+                                            tracing::debug!(
+                                                "failed to create symlink from archive: {:#?}",
+                                                err
+                                            );
+                                        }
                                     }
                                 }
                             };
@@ -503,9 +518,7 @@ impl Archive {
             }
             ArchiveType::Rar => {
                 let abort = Arc::new(AtomicBool::new(false));
-
                 let guard = AbortGuard(Arc::clone(&abort));
-                let filesystem = self.server.filesystem.base_dir().await?;
 
                 tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
                     let is_aborted = || abort.load(Ordering::Relaxed);
@@ -543,13 +556,13 @@ impl Archive {
                         let destination_path = destination.join(path);
 
                         if entry.entry().is_directory() {
-                            filesystem.create_dir_all(&destination_path)?;
+                            self.server.filesystem.create_dir_all(&destination_path)?;
 
                             archive = entry.skip()?;
                             continue;
                         } else {
                             if let Some(parent) = destination_path.parent() {
-                                filesystem.create_dir_all(parent)?;
+                                self.server.filesystem.create_dir_all(parent)?;
                             }
 
                             let writer = super::writer::FileSystemWriter::new(
@@ -581,9 +594,7 @@ impl Archive {
             }
             ArchiveType::SevenZip => {
                 let abort = Arc::new(AtomicBool::new(false));
-
                 let guard = AbortGuard(Arc::clone(&abort));
-                let filesystem = self.server.filesystem.base_dir().await?;
 
                 let file = Arc::new(self.file.into_std().await);
                 tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
@@ -604,7 +615,6 @@ impl Archive {
                         for block_index in 0..archive.blocks.len() {
                             let archive = archive.clone();
                             let mut file = file.clone();
-                            let filesystem = Arc::clone(&filesystem);
                             let destination = destination.clone();
                             let server = self.server.clone();
                             let error_clone = Arc::clone(&error);
@@ -645,10 +655,21 @@ impl Archive {
                                     }
 
                                     if entry.is_directory() {
-                                        filesystem.create_dir_all(&destination_path)?;
+                                        if let Err(err) =
+                                            server.filesystem.create_dir_all(&destination_path)
+                                        {
+                                            return Err(sevenz_rust2::Error::Other(
+                                                err.to_string().into(),
+                                            ));
+                                        }
                                     } else {
-                                        if let Some(parent) = destination_path.parent() {
-                                            filesystem.create_dir_all(parent)?;
+                                        if let Some(parent) = destination_path.parent()
+                                            && let Err(err) =
+                                                server.filesystem.create_dir_all(parent)
+                                        {
+                                            return Err(sevenz_rust2::Error::Other(
+                                                err.to_string().into(),
+                                            ));
                                         }
 
                                         let mut writer = super::writer::FileSystemWriter::new(
@@ -656,7 +677,9 @@ impl Archive {
                                             destination_path,
                                             None,
                                             if entry.has_last_modified_date {
-                                                Some(entry.last_modified_date.into())
+                                                Some(cap_std::time::SystemTime::from_std(
+                                                    entry.last_modified_date.into(),
+                                                ))
                                             } else {
                                                 None
                                             },
@@ -687,9 +710,7 @@ impl Archive {
             }
             ArchiveType::Ddup => {
                 let abort = Arc::new(AtomicBool::new(false));
-
                 let guard = AbortGuard(Arc::clone(&abort));
-                let filesystem = self.server.filesystem.base_dir().await?;
 
                 let mut file = self.file.into_std().await;
                 tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
@@ -703,7 +724,6 @@ impl Archive {
 
                     fn recursive_traverse(
                         scope: &rayon::Scope,
-                        filesystem: &std::sync::Arc<cap_std::fs::Dir>,
                         abort: &Arc<AtomicBool>,
                         server: &crate::server::Server,
                         destination: &Path,
@@ -723,8 +743,8 @@ impl Archive {
 
                         match entry {
                             ddup_bak::archive::entries::Entry::Directory(dir) => {
-                                filesystem.create_dir_all(&destination_path)?;
-                                filesystem.set_permissions(
+                                server.filesystem.create_dir_all(&destination_path)?;
+                                server.filesystem.set_permissions(
                                     &destination_path,
                                     cap_std::fs::Permissions::from_std(dir.mode.into()),
                                 )?;
@@ -732,7 +752,6 @@ impl Archive {
                                 for entry in dir.entries {
                                     recursive_traverse(
                                         scope,
-                                        filesystem,
                                         abort,
                                         server,
                                         &destination_path,
@@ -748,8 +767,10 @@ impl Archive {
                                         let mut writer = super::writer::FileSystemWriter::new(
                                             server,
                                             destination_path,
-                                            Some(file.mode.into()),
-                                            Some(file.mtime),
+                                            Some(cap_std::fs::Permissions::from_std(
+                                                file.mode.into(),
+                                            )),
+                                            Some(cap_std::time::SystemTime::from_std(file.mtime)),
                                         )
                                         .unwrap();
 
@@ -759,14 +780,14 @@ impl Archive {
                                 });
                             }
                             ddup_bak::archive::entries::Entry::Symlink(link) => {
-                                filesystem
-                                    .symlink(link.target, destination_path)
-                                    .unwrap_or_else(|err| {
-                                        tracing::debug!(
-                                            "failed to create symlink from archive: {:#?}",
-                                            err
-                                        );
-                                    });
+                                if let Err(err) =
+                                    server.filesystem.symlink(link.target, &destination_path)
+                                {
+                                    tracing::debug!(
+                                        "failed to create symlink from archive: {:#?}",
+                                        err
+                                    );
+                                }
                             }
                         }
 
@@ -775,14 +796,7 @@ impl Archive {
 
                     pool.in_place_scope(|scope| {
                         for entry in archive.into_entries() {
-                            recursive_traverse(
-                                scope,
-                                &filesystem,
-                                &abort,
-                                &self.server,
-                                &destination,
-                                entry,
-                            )?;
+                            recursive_traverse(scope, &abort, &self.server, &destination, entry)?;
                         }
 
                         Ok(())
@@ -799,7 +813,7 @@ impl Archive {
 
     #[allow(clippy::too_many_arguments)]
     pub async fn create_tar(
-        server: crate::server::Server,
+        filesystem: super::cap::CapFilesystem,
         destination: impl AsyncWrite + Unpin + Send + 'static,
         base: &Path,
         sources: Vec<PathBuf>,
@@ -844,7 +858,7 @@ impl Archive {
                 Err(_) => continue,
             };
 
-            let source_metadata = match server.filesystem.symlink_metadata(&source).await {
+            let source_metadata = match filesystem.async_symlink_metadata(&source).await {
                 Ok(metadata) => metadata,
                 Err(_) => continue,
             };
@@ -883,17 +897,17 @@ impl Archive {
                     bytes_archived.fetch_add(source_metadata.len(), Ordering::SeqCst);
                 }
 
-                let mut walker =
-                    crate::server::filesystem::walker::AsyncWalkDir::new(server.clone(), source)
-                        .await?
-                        .with_ignored(ignored);
+                let mut walker = filesystem
+                    .async_walk_dir(source)
+                    .await?
+                    .with_ignored(ignored);
                 while let Some(Ok((_, path))) = walker.next_entry().await {
                     let relative = match path.strip_prefix(base) {
                         Ok(path) => path,
                         Err(_) => continue,
                     };
 
-                    let metadata = match server.filesystem.symlink_metadata(&path).await {
+                    let metadata = match filesystem.async_symlink_metadata(&path).await {
                         Ok(metadata) => metadata,
                         Err(_) => continue,
                     };
@@ -923,7 +937,7 @@ impl Archive {
                             bytes_archived.fetch_add(metadata.len(), Ordering::SeqCst);
                         }
                     } else if metadata.is_file() {
-                        let file = server.filesystem.open(&path).await?;
+                        let file = filesystem.async_open(&path).await?;
                         let reader: Box<dyn AsyncRead + Send + Unpin> = match &bytes_archived {
                             Some(bytes_archived) => {
                                 Box::new(AsyncCountingReader::new_with_bytes_read(
@@ -938,8 +952,7 @@ impl Archive {
                         header.set_entry_type(tokio_tar::EntryType::Regular);
 
                         archive.append_data(&mut header, relative, reader).await?;
-                    } else if let Ok(link_target) =
-                        server.filesystem.read_link_contents(&path).await
+                    } else if let Ok(link_target) = filesystem.async_read_link_contents(&path).await
                     {
                         header.set_entry_type(tokio_tar::EntryType::Symlink);
 
@@ -954,7 +967,7 @@ impl Archive {
                     }
                 }
             } else if source_metadata.is_file() {
-                let file = server.filesystem.open(&source).await?;
+                let file = filesystem.async_open(&source).await?;
                 let reader: Box<dyn AsyncRead + Send + Unpin> = match &bytes_archived {
                     Some(bytes_archived) => Box::new(AsyncCountingReader::new_with_bytes_read(
                         file,
@@ -967,7 +980,7 @@ impl Archive {
                 header.set_entry_type(tokio_tar::EntryType::Regular);
 
                 archive.append_data(&mut header, relative, reader).await?;
-            } else if let Ok(link_target) = server.filesystem.read_link_contents(&source).await {
+            } else if let Ok(link_target) = filesystem.async_read_link_contents(&source).await {
                 header.set_entry_type(tokio_tar::EntryType::Symlink);
 
                 if header.set_link_name(link_target).is_ok() {
@@ -988,17 +1001,16 @@ impl Archive {
     }
 
     pub async fn create_zip(
-        server: crate::server::Server,
+        filesystem: super::cap::CapFilesystem,
         destination: impl Write + Seek + Send + 'static,
         base: PathBuf,
         sources: Vec<PathBuf>,
+        compression_level: CompressionLevel,
         bytes_archived: Option<Arc<AtomicU64>>,
         ignored: Vec<ignore::gitignore::Gitignore>,
     ) -> Result<(), anyhow::Error> {
         let abort = Arc::new(AtomicBool::new(false));
-
         let guard = AbortGuard(Arc::clone(&abort));
-        let filesystem = server.filesystem.base_dir().await?;
 
         tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
             let is_aborted = || abort.load(Ordering::Relaxed);
@@ -1006,7 +1018,7 @@ impl Archive {
 
             'sources: for source in sources {
                 let source = base.join(&source);
-                let source = server.filesystem.relative_path(&source);
+                let source = filesystem.relative_path(&source);
 
                 let relative = match source.strip_prefix(&base) {
                     Ok(path) => path,
@@ -1034,13 +1046,7 @@ impl Archive {
                 let mut options: zip::write::FileOptions<'_, ()> =
                     zip::write::FileOptions::default()
                         .compression_level(Some(
-                            server
-                                .config
-                                .system
-                                .backups
-                                .compression_level
-                                .flate2_compression_level()
-                                .level() as i64,
+                            compression_level.flate2_compression_level().level() as i64,
                         ))
                         .unix_permissions(source_metadata.permissions().mode())
                         .large_file(source_metadata.len() >= u32::MAX as u64);
@@ -1065,9 +1071,7 @@ impl Archive {
                         bytes_archived.fetch_add(source_metadata.len(), Ordering::SeqCst);
                     }
 
-                    let mut walker =
-                        crate::server::filesystem::walker::WalkDir::new(server.clone(), source)?
-                            .with_ignored(&ignored);
+                    let mut walker = filesystem.walk_dir(source)?.with_ignored(&ignored);
                     while let Some(Ok((_, path))) = walker.next_entry() {
                         let relative = match path.strip_prefix(&base) {
                             Ok(path) => path,
@@ -1086,13 +1090,7 @@ impl Archive {
                         let mut options: zip::write::FileOptions<'_, ()> =
                             zip::write::FileOptions::default()
                                 .compression_level(Some(
-                                    server
-                                        .config
-                                        .system
-                                        .backups
-                                        .compression_level
-                                        .flate2_compression_level()
-                                        .level() as i64,
+                                    compression_level.flate2_compression_level().level() as i64,
                                 ))
                                 .unix_permissions(metadata.permissions().mode())
                                 .large_file(metadata.len() >= u32::MAX as u64);
@@ -1179,7 +1177,7 @@ impl Archive {
     }
 
     pub async fn create_7z(
-        server: crate::server::Server,
+        filesystem: super::cap::CapFilesystem,
         destination: impl Write + Seek + Send + 'static,
         base: PathBuf,
         sources: Vec<PathBuf>,
@@ -1187,9 +1185,7 @@ impl Archive {
         ignored: Vec<ignore::gitignore::Gitignore>,
     ) -> Result<(), anyhow::Error> {
         let abort = Arc::new(AtomicBool::new(false));
-
         let guard = AbortGuard(Arc::clone(&abort));
-        let filesystem = server.filesystem.base_dir().await?;
 
         tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
             let is_aborted = || abort.load(Ordering::Relaxed);
@@ -1197,7 +1193,7 @@ impl Archive {
 
             for source in sources {
                 let source = base.join(&source);
-                let source = server.filesystem.relative_path(&source);
+                let source = filesystem.relative_path(&source);
 
                 let relative = match source.strip_prefix(&base) {
                     Ok(path) => path,
@@ -1228,9 +1224,7 @@ impl Archive {
                         bytes_archived.fetch_add(source_metadata.len(), Ordering::SeqCst);
                     }
 
-                    let mut walker =
-                        crate::server::filesystem::walker::WalkDir::new(server.clone(), source)?
-                            .with_ignored(&ignored);
+                    let mut walker = filesystem.walk_dir(source)?.with_ignored(&ignored);
                     while let Some(Ok((_, path))) = walker.next_entry() {
                         let relative = match path.strip_prefix(&base) {
                             Ok(path) => path,

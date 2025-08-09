@@ -24,21 +24,20 @@ mod delete {
         ),
     ))]
     pub async fn route(state: GetState, Path(backup_id): Path<uuid::Uuid>) -> ApiResponseResult {
-        let backup =
-            match crate::server::backup::InternalBackup::find(&state.config, backup_id).await {
-                Some(backup) => backup,
-                None => {
-                    return ApiResponse::error("backup not found")
-                        .with_status(StatusCode::NOT_FOUND)
-                        .ok();
-                }
-            };
+        let backup = match state.backup_manager.find(backup_id).await? {
+            Some(backup) => backup,
+            None => {
+                return ApiResponse::error("backup not found")
+                    .with_status(StatusCode::NOT_FOUND)
+                    .ok();
+            }
+        };
 
         tokio::spawn(async move {
             if let Err(err) = backup.delete(&state.config).await {
                 tracing::error!(
-                    backup = %backup.uuid,
-                    adapter = ?backup.adapter,
+                    backup = %backup.uuid(),
+                    adapter = ?backup.adapter(),
                     "failed to delete backup: {:#?}",
                     err
                 );

@@ -1,11 +1,11 @@
+use cap_std::fs::Permissions;
+use cap_std::time::SystemTime;
 use std::future::Future;
 use std::{
-    fs::Permissions,
     io::{BufWriter, Seek, SeekFrom, Write},
     path::PathBuf,
     pin::Pin,
     task::{Context, Poll},
-    time::SystemTime,
 };
 use tokio::io::{AsyncSeek, AsyncWrite};
 
@@ -14,7 +14,7 @@ const ALLOCATION_THRESHOLD: i64 = 1024 * 1024;
 pub struct FileSystemWriter {
     server: crate::server::Server,
     parent: Vec<String>,
-    writer: Option<BufWriter<cap_std::fs::File>>,
+    writer: Option<BufWriter<std::fs::File>>,
     ignorant: bool,
     accumulated_bytes: i64,
     modified: Option<SystemTime>,
@@ -29,8 +29,6 @@ impl FileSystemWriter {
         permissions: Option<Permissions>,
         modified: Option<SystemTime>,
     ) -> Result<Self, anyhow::Error> {
-        let filesystem = server.filesystem.sync_base_dir()?;
-
         let parent_path = destination.parent().ok_or_else(|| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -41,13 +39,12 @@ impl FileSystemWriter {
         let parent = server
             .filesystem
             .path_to_components(&server.filesystem.relative_path(parent_path));
-        let file = filesystem.create(&destination)?;
+        let file = server.filesystem.create(&destination)?;
 
         if let Some(permissions) = permissions {
-            filesystem.set_permissions(
-                &destination,
-                cap_std::fs::Permissions::from_std(permissions),
-            )?;
+            server
+                .filesystem
+                .set_permissions(&destination, permissions)?;
         }
 
         Ok(Self {
@@ -146,7 +143,7 @@ impl Drop for FileSystemWriter {
             && let Some(writer) = self.writer.take()
             && let Ok(file) = writer.into_inner()
         {
-            file.into_std().set_modified(modified).ok();
+            file.set_modified(modified.into_std()).ok();
         }
     }
 }
@@ -180,15 +177,12 @@ impl AsyncFileSystemWriter {
         let parent = server
             .filesystem
             .path_to_components(&server.filesystem.relative_path(parent_path));
-        let file = server.filesystem.create(&destination).await?;
+        let file = server.filesystem.async_create(&destination).await?;
 
         if let Some(permissions) = permissions {
             server
                 .filesystem
-                .set_permissions(
-                    &destination,
-                    cap_std::fs::Permissions::from_std(permissions),
-                )
+                .async_set_permissions(&destination, permissions)
                 .await?;
         }
 
@@ -385,7 +379,7 @@ impl Drop for AsyncFileSystemWriter {
             tokio::spawn(async move {
                 let file = writer.into_inner().into_std().await;
 
-                tokio::task::spawn_blocking(move || file.set_modified(modified));
+                tokio::task::spawn_blocking(move || file.set_modified(modified.into_std()));
             });
         }
     }

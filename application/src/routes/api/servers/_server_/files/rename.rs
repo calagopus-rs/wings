@@ -47,7 +47,7 @@ mod put {
     ) -> ApiResponseResult {
         let root = Path::new(&data.root);
 
-        let metadata = server.filesystem.metadata(&root).await;
+        let metadata = server.filesystem.async_metadata(&root).await;
         if !metadata.map(|m| m.is_dir()).unwrap_or(true) {
             return ApiResponse::error("root is not a directory")
                 .with_status(StatusCode::EXPECTATION_FAILED)
@@ -70,12 +70,12 @@ mod put {
                 continue;
             }
 
-            let from_metadata = match server.filesystem.metadata(&from).await {
+            let from_metadata = match server.filesystem.async_metadata(&from).await {
                 Ok(metadata) => metadata,
                 Err(_) => continue,
             };
 
-            if server.filesystem.metadata(&to).await.is_ok()
+            if server.filesystem.async_metadata(&to).await.is_ok()
                 || server
                     .filesystem
                     .is_ignored(&from, from_metadata.is_dir())

@@ -118,14 +118,17 @@ mod get {
         );
         headers.insert("Content-Type", "application/gzip".parse().unwrap());
 
-        if let Some((backup, path)) = server.filesystem.backup_fs(&server, &path).await {
-            match crate::server::filesystem::backup::files_reader(
-                backup,
-                &server,
-                &path,
-                payload.file_paths.into_iter().map(PathBuf::from).collect(),
-            )
+        if let Some((backup, path)) = server
+            .filesystem
+            .backup_fs(&server, &state.backup_manager, &path)
             .await
+        {
+            match backup
+                .read_files_archive(
+                    path.clone(),
+                    payload.file_paths.into_iter().map(PathBuf::from).collect(),
+                )
+                .await
             {
                 Ok(reader) => {
                     return ApiResponse::new(Body::from_stream(
@@ -149,7 +152,7 @@ mod get {
             }
         }
 
-        let metadata = server.filesystem.symlink_metadata(&path).await;
+        let metadata = server.filesystem.async_symlink_metadata(&path).await;
         if let Ok(metadata) = metadata {
             if !metadata.is_dir() || server.filesystem.is_ignored(&path, metadata.is_dir()).await {
                 return ApiResponse::error("directory not found")
@@ -162,7 +165,7 @@ mod get {
                 .ok();
         }
 
-        let (writer, reader) = tokio::io::duplex(crate::BUFFER_SIZE);
+        let (reader, writer) = tokio::io::duplex(crate::BUFFER_SIZE);
 
         tokio::spawn({
             let path = path.clone();
@@ -171,7 +174,7 @@ mod get {
             async move {
                 let ignored = server.filesystem.get_ignored().await;
                 crate::server::filesystem::archive::Archive::create_tar(
-                    server,
+                    server.filesystem.clone(),
                     writer,
                     &path,
                     payload.file_paths.into_iter().map(PathBuf::from).collect(),

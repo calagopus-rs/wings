@@ -338,8 +338,7 @@ impl ServerConfiguration {
                 .inspect_network::<String>(&network_name, None)
                 .await
                 .is_err()
-            {
-                if let Err(err) = client
+                && let Err(err) = client
                     .create_network(bollard::network::CreateNetworkOptions {
                         name: network_name.as_str(),
                         driver: "bridge",
@@ -355,14 +354,13 @@ impl ServerConfiguration {
                         ..Default::default()
                     })
                     .await
-                {
-                    tracing::error!(
-                        server = %self.uuid,
-                        "failed to create container network {}: {}",
-                        network_name,
-                        err
-                    );
-                }
+            {
+                tracing::error!(
+                    server = %self.uuid,
+                    "failed to create container network {}: {}",
+                    network_name,
+                    err
+                );
             }
 
             network_name

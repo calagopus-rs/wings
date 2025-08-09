@@ -4,7 +4,7 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 mod get {
     use crate::{
         response::{ApiResponse, ApiResponseResult},
-        routes::{ApiError, api::servers::_server_::GetServer},
+        routes::{ApiError, GetState, api::servers::_server_::GetServer},
     };
     use axum::{
         body::Body,
@@ -49,8 +49,12 @@ mod get {
             description = "The maximum size of the file to return. If the file is larger than this, an error will be returned.",
         ),
     ))]
-    pub async fn route(server: GetServer, Query(data): Query<Params>) -> ApiResponseResult {
-        let path = match server.filesystem.canonicalize(&data.file).await {
+    pub async fn route(
+        state: GetState,
+        server: GetServer,
+        Query(data): Query<Params>,
+    ) -> ApiResponseResult {
+        let path = match server.filesystem.async_canonicalize(&data.file).await {
             Ok(path) => path,
             Err(_) => PathBuf::from(data.file),
         };
@@ -64,9 +68,13 @@ mod get {
             }
         };
 
-        if let Some((backup, path)) = server.filesystem.backup_fs(&server, &path).await {
-            match crate::server::filesystem::backup::reader(backup, &server, &path).await {
-                Ok((reader, size)) => {
+        if let Some((backup, path)) = server
+            .filesystem
+            .backup_fs(&server, &state.backup_manager, &path)
+            .await
+        {
+            match backup.read_file(path.clone()).await {
+                Ok((size, reader)) => {
                     let mut headers = HeaderMap::new();
 
                     if let Some(max_size) = data.max_size
@@ -111,7 +119,7 @@ mod get {
             }
         }
 
-        let metadata = match server.filesystem.metadata(&path).await {
+        let metadata = match server.filesystem.async_metadata(&path).await {
             Ok(metadata) => {
                 if !metadata.is_file()
                     || server.filesystem.is_ignored(&path, metadata.is_dir()).await
