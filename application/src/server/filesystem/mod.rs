@@ -102,10 +102,11 @@ impl Filesystem {
                                                         &mut *disk_usage.lock().await
                                                 {
                                                     disk_usage.update_size(&path, size as i64);
-                                                } else if let Some(disk_usage) =
-                                                    &mut *disk_usage.lock().await
+                                                } else if let Some(parent) = path.parent()
+                                                    && let Some(disk_usage) =
+                                                        &mut *disk_usage.lock().await
                                                 {
-                                                    disk_usage.update_size(&path, size as i64);
+                                                    disk_usage.update_size(parent, size as i64);
                                                 }
 
                                                 total_size.fetch_add(size, Ordering::Relaxed);
