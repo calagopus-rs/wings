@@ -579,16 +579,12 @@ impl Filesystem {
         self.disk_usage.write().await.clear();
         self.disk_usage_cached.store(0, Ordering::Relaxed);
 
-        let mut directory = tokio::fs::read_dir(&self.base_path).await?;
-        while let Ok(Some(entry)) = directory.next_entry().await {
-            let path = entry.path();
-
-            if let Ok(metadata) = tokio::fs::symlink_metadata(&path).await {
-                if metadata.is_dir() {
-                    tokio::fs::remove_dir_all(&path).await?;
-                } else {
-                    tokio::fs::remove_file(&path).await?;
-                }
+        let mut directory = self.async_walk_dir(Path::new("")).await?;
+        while let Some(Ok((is_dir, path))) = directory.next_entry().await {
+            if is_dir {
+                self.async_remove_dir_all(&path).await?;
+            } else {
+                self.async_remove_file(&path).await?;
             }
         }
 

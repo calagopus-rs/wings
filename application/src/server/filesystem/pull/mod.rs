@@ -27,7 +27,7 @@ async fn get_download_client(
 
     let new_client = reqwest::Client::builder()
         .user_agent("Pterodactyl Panel (https://pterodactyl.io)")
-        .timeout(std::time::Duration::from_secs(30))
+        .connect_timeout(std::time::Duration::from_secs(30))
         .dns_resolver(Arc::new(resolver::DnsResolver::new(config)))
         .build()
         .context("failed to build download client")?;
@@ -59,7 +59,9 @@ impl Download {
     ) -> Result<Self, anyhow::Error> {
         let url = reqwest::Url::parse(&url).context("failed to parse download URL")?;
 
-        if let Ok(ip) = std::net::IpAddr::from_str(url.host_str().unwrap_or("")) {
+        if let Some(host) = url.host_str()
+            && let Ok(ip) = std::net::IpAddr::from_str(host)
+        {
             for cidr in server.config.api.remote_download_blocked_cidrs.iter() {
                 if cidr.contains(&ip) {
                     tracing::warn!("blocking internal IP address in pull: {}", ip);

@@ -743,7 +743,6 @@ impl Server {
                     registry_auth = Some(bollard::auth::DockerCredentials {
                         username: Some(config.username.clone()),
                         password: Some(config.password.clone()),
-                        serveraddress: Some(registry.clone()),
                         ..Default::default()
                     });
                     break;
