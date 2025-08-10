@@ -1096,7 +1096,7 @@ impl Archive {
                         .large_file(source_metadata.len() >= u32::MAX as u64);
 
                 if let Ok(mtime) = source_metadata.modified() {
-                    let mtime: chrono::DateTime<chrono::Local> =
+                    let mtime: chrono::DateTime<chrono::Utc> =
                         chrono::DateTime::from(mtime.into_std());
 
                     options = options.last_modified_time(zip::DateTime::from_date_and_time(
@@ -1140,7 +1140,7 @@ impl Archive {
                                 .large_file(metadata.len() >= u32::MAX as u64);
 
                         if let Ok(mtime) = metadata.modified() {
-                            let mtime: chrono::DateTime<chrono::Local> =
+                            let mtime: chrono::DateTime<chrono::Utc> =
                                 chrono::DateTime::from(mtime.into_std());
 
                             options =

@@ -165,13 +165,34 @@ impl BrowseBackup {
         &self,
         path: PathBuf,
         file_paths: Vec<PathBuf>,
+        archive_format: StreamableArchiveFormat,
     ) -> Result<tokio::io::DuplexStream, anyhow::Error> {
         match self {
-            BrowseBackup::Wings(backup) => backup.read_files_archive(path, file_paths).await,
-            BrowseBackup::DdupBak(backup) => backup.read_files_archive(path, file_paths).await,
-            BrowseBackup::Btrfs(backup) => backup.read_files_archive(path, file_paths).await,
-            BrowseBackup::Zfs(backup) => backup.read_files_archive(path, file_paths).await,
-            BrowseBackup::Restic(backup) => backup.read_files_archive(path, file_paths).await,
+            BrowseBackup::Wings(backup) => {
+                backup
+                    .read_files_archive(path, file_paths, archive_format)
+                    .await
+            }
+            BrowseBackup::DdupBak(backup) => {
+                backup
+                    .read_files_archive(path, file_paths, archive_format)
+                    .await
+            }
+            BrowseBackup::Btrfs(backup) => {
+                backup
+                    .read_files_archive(path, file_paths, archive_format)
+                    .await
+            }
+            BrowseBackup::Zfs(backup) => {
+                backup
+                    .read_files_archive(path, file_paths, archive_format)
+                    .await
+            }
+            BrowseBackup::Restic(backup) => {
+                backup
+                    .read_files_archive(path, file_paths, archive_format)
+                    .await
+            }
         }
     }
 }
@@ -250,5 +271,6 @@ pub trait BackupBrowseExt {
         &self,
         path: PathBuf,
         file_paths: Vec<PathBuf>,
+        archive_format: StreamableArchiveFormat,
     ) -> Result<tokio::io::DuplexStream, anyhow::Error>;
 }

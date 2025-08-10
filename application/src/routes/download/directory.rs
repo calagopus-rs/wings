@@ -166,52 +166,47 @@ mod get {
         let sources = server.filesystem.async_read_dir_all(&path).await?;
         let (reader, writer) = tokio::io::duplex(crate::BUFFER_SIZE);
 
-        tokio::spawn({
-            let path = path.clone();
-            let server = server.clone();
+        tokio::spawn(async move {
+            let ignored = server.filesystem.get_ignored().await;
 
-            async move {
-                let ignored = server.filesystem.get_ignored().await;
-
-                match data.archive_format {
-                    StreamableArchiveFormat::Zip => {
-                        if let Err(err) = crate::server::filesystem::archive::Archive::create_zip(
-                            server.filesystem.clone(),
-                            tokio_util::io::SyncIoBridge::new(writer),
-                            &path,
-                            sources.into_iter().map(PathBuf::from).collect(),
-                            state.config.system.backups.compression_level,
-                            None,
-                            vec![ignored],
-                        )
-                        .await
-                        {
-                            tracing::error!(
-                                server = %server.uuid,
-                                "failed to create zip archive: {:#?}",
-                                err
-                            );
-                        }
+            match data.archive_format {
+                StreamableArchiveFormat::Zip => {
+                    if let Err(err) = crate::server::filesystem::archive::Archive::create_zip(
+                        server.filesystem.clone(),
+                        tokio_util::io::SyncIoBridge::new(writer),
+                        &path,
+                        sources.into_iter().map(PathBuf::from).collect(),
+                        state.config.system.backups.compression_level,
+                        None,
+                        vec![ignored],
+                    )
+                    .await
+                    {
+                        tracing::error!(
+                            server = %server.uuid,
+                            "failed to create zip archive: {:#?}",
+                            err
+                        );
                     }
-                    _ => {
-                        if let Err(err) = crate::server::filesystem::archive::Archive::create_tar(
-                            server.filesystem.clone(),
-                            writer,
-                            &path,
-                            sources.into_iter().map(PathBuf::from).collect(),
-                            data.archive_format.compression_format(),
-                            state.config.system.backups.compression_level,
-                            None,
-                            &[ignored],
-                        )
-                        .await
-                        {
-                            tracing::error!(
-                                server = %server.uuid,
-                                "failed to create tar archive: {:#?}",
-                                err
-                            );
-                        }
+                }
+                _ => {
+                    if let Err(err) = crate::server::filesystem::archive::Archive::create_tar(
+                        server.filesystem.clone(),
+                        writer,
+                        &path,
+                        sources.into_iter().map(PathBuf::from).collect(),
+                        data.archive_format.compression_format(),
+                        state.config.system.backups.compression_level,
+                        None,
+                        &[ignored],
+                    )
+                    .await
+                    {
+                        tracing::error!(
+                            server = %server.uuid,
+                            "failed to create tar archive: {:#?}",
+                            err
+                        );
                     }
                 }
             }

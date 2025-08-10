@@ -5,6 +5,7 @@ mod get {
     use crate::{
         response::{ApiResponse, ApiResponseResult},
         routes::GetState,
+        server::filesystem::archive::StreamableArchiveFormat,
     };
     use axum::{
         body::Body,
@@ -18,6 +19,9 @@ mod get {
     #[derive(ToSchema, Deserialize)]
     pub struct Params {
         token: String,
+
+        #[serde(default)]
+        archive_format: StreamableArchiveFormat,
     }
 
     #[derive(Deserialize)]
@@ -104,7 +108,8 @@ mod get {
             }
         }
 
-        folder_ascii.push_str(".tar.gz");
+        folder_ascii.push('.');
+        folder_ascii.push_str(data.archive_format.extension());
 
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -116,7 +121,10 @@ mod get {
             .parse()
             .unwrap(),
         );
-        headers.insert("Content-Type", "application/gzip".parse().unwrap());
+        headers.insert(
+            "Content-Type",
+            data.archive_format.mime_type().parse().unwrap(),
+        );
 
         if let Some((backup, path)) = server
             .filesystem
@@ -127,6 +135,7 @@ mod get {
                 .read_files_archive(
                     path.clone(),
                     payload.file_paths.into_iter().map(PathBuf::from).collect(),
+                    data.archive_format,
                 )
                 .await
             {
@@ -167,24 +176,49 @@ mod get {
 
         let (reader, writer) = tokio::io::duplex(crate::BUFFER_SIZE);
 
-        tokio::spawn({
-            let path = path.clone();
-            let server = server.clone();
+        tokio::spawn(async move {
+            let ignored = server.filesystem.get_ignored().await;
 
-            async move {
-                let ignored = server.filesystem.get_ignored().await;
-                crate::server::filesystem::archive::Archive::create_tar(
-                    server.filesystem.clone(),
-                    writer,
-                    &path,
-                    payload.file_paths.into_iter().map(PathBuf::from).collect(),
-                    crate::server::filesystem::archive::CompressionType::Gz,
-                    state.config.system.backups.compression_level,
-                    None,
-                    &[ignored],
-                )
-                .await
-                .ok();
+            match data.archive_format {
+                StreamableArchiveFormat::Zip => {
+                    if let Err(err) = crate::server::filesystem::archive::Archive::create_zip(
+                        server.filesystem.clone(),
+                        tokio_util::io::SyncIoBridge::new(writer),
+                        &path,
+                        payload.file_paths.into_iter().map(PathBuf::from).collect(),
+                        state.config.system.backups.compression_level,
+                        None,
+                        vec![ignored],
+                    )
+                    .await
+                    {
+                        tracing::error!(
+                            server = %server.uuid,
+                            "failed to create zip archive: {:#?}",
+                            err
+                        );
+                    }
+                }
+                _ => {
+                    if let Err(err) = crate::server::filesystem::archive::Archive::create_tar(
+                        server.filesystem.clone(),
+                        writer,
+                        &path,
+                        payload.file_paths.into_iter().map(PathBuf::from).collect(),
+                        data.archive_format.compression_format(),
+                        state.config.system.backups.compression_level,
+                        None,
+                        &[ignored],
+                    )
+                    .await
+                    {
+                        tracing::error!(
+                            server = %server.uuid,
+                            "failed to create tar archive: {:#?}",
+                            err
+                        );
+                    }
+                }
             }
         });
 

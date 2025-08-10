@@ -11,6 +11,7 @@ use crate::{
     },
 };
 use axum::{body::Body, http::HeaderMap};
+use chrono::{Datelike, Timelike};
 use futures::StreamExt;
 use human_bytes::human_bytes;
 use serde::Deserialize;
@@ -951,6 +952,7 @@ impl BackupBrowseExt for BrowseResticBackup {
         &self,
         path: PathBuf,
         file_paths: Vec<PathBuf>,
+        archive_format: StreamableArchiveFormat,
     ) -> Result<tokio::io::DuplexStream, anyhow::Error> {
         let path = if path.components().count() > 0 {
             let entry = self
@@ -970,125 +972,278 @@ impl BackupBrowseExt for BrowseResticBackup {
         };
 
         let full_path = PathBuf::from(&self.server_path).join(path);
+        let compression_level = self.server.config.system.backups.compression_level;
         let (reader, writer) = tokio::io::duplex(crate::BUFFER_SIZE);
 
-        let compression_level = self.server.config.system.backups.compression_level;
-        tokio::spawn({
-            let short_id = self.short_id.clone();
-            let configuration = Arc::clone(&self.configuration);
-            let entries = Arc::clone(&self.entries);
+        match archive_format {
+            StreamableArchiveFormat::Zip => {
+                tokio::task::spawn_blocking({
+                    let short_id = self.short_id.clone();
+                    let configuration = Arc::clone(&self.configuration);
+                    let entries = Arc::clone(&self.entries);
 
-            async move {
-                let writer = async_compression::tokio::write::GzipEncoder::with_quality(
-                    writer,
-                    async_compression::Level::Precise(
-                        compression_level.flate2_compression_level().level() as i32,
-                    ),
-                );
-                let mut archive = tokio_tar::Builder::new(writer);
+                    move || -> Result<(), anyhow::Error> {
+                        let writer = tokio_util::io::SyncIoBridge::new(writer);
+                        let mut archive = zip::ZipWriter::new_stream(writer);
 
-                for file_path in file_paths {
-                    let path = full_path.join(&file_path);
-                    let entry = match entries.iter().find(|e| e.path == file_path) {
-                        Some(entry) => entry,
-                        None => continue,
-                    };
+                        for file_path in file_paths {
+                            let path = full_path.join(&file_path);
+                            let entry = match entries.iter().find(|e| e.path == file_path) {
+                                Some(entry) => entry,
+                                None => continue,
+                            };
 
-                    let relative = match path.strip_prefix(&full_path) {
-                        Ok(path) => path,
-                        Err(_) => continue,
-                    };
-
-                    let mut header = tokio_tar::Header::new_gnu();
-                    header.set_size(0);
-                    header.set_mode(entry.mode);
-                    header.set_mtime(entry.mtime.timestamp() as u64);
-
-                    match entry.r#type {
-                        ResticEntryType::Dir => {
-                            header.set_entry_type(tokio_tar::EntryType::Directory);
-
-                            if archive
-                                .append_data(&mut header, relative, tokio::io::empty())
-                                .await
-                                .is_ok()
-                            {
-                                let child = match Command::new("restic")
-                                    .envs(&configuration.environment)
-                                    .arg("--json")
-                                    .arg("--no-lock")
-                                    .arg("--repo")
-                                    .arg(&configuration.repository)
-                                    .args(configuration.password())
-                                    .arg("dump")
-                                    .arg(format!("{}:{}", short_id, path.display()))
-                                    .arg("/")
-                                    .stdout(std::process::Stdio::piped())
-                                    .spawn()
-                                {
-                                    Ok(child) => child,
-                                    Err(_) => continue,
-                                };
-
-                                let mut subtar = tokio_tar::Archive::new(child.stdout.unwrap());
-                                let mut entries = match subtar.entries() {
-                                    Ok(entries) => entries,
-                                    Err(_) => continue,
-                                };
-
-                                while let Some(Ok(entry)) = entries.next().await {
-                                    let mut header = entry.header().clone();
-
-                                    match archive
-                                        .append_data(
-                                            &mut header,
-                                            relative.join(entry.path().unwrap()),
-                                            entry,
-                                        )
-                                        .await
-                                    {
-                                        Ok(_) => {}
-                                        Err(_) => break,
-                                    }
-                                }
-                            }
-                        }
-                        ResticEntryType::File => {
-                            let child = match Command::new("restic")
-                                .envs(&configuration.environment)
-                                .arg("--json")
-                                .arg("--no-lock")
-                                .arg("--repo")
-                                .arg(&configuration.repository)
-                                .args(configuration.password())
-                                .arg("dump")
-                                .arg(&short_id)
-                                .arg(&path)
-                                .stdout(std::process::Stdio::piped())
-                                .stderr(std::process::Stdio::null())
-                                .spawn()
-                            {
-                                Ok(child) => child,
+                            let relative = match path.strip_prefix(&full_path) {
+                                Ok(path) => path,
                                 Err(_) => continue,
                             };
 
-                            header.set_size(entry.size.unwrap_or(0));
-                            header.set_entry_type(tokio_tar::EntryType::Regular);
+                            let options: zip::write::FileOptions<'_, ()> =
+                                zip::write::FileOptions::default()
+                                    .compression_level(Some(
+                                        compression_level.flate2_compression_level().level() as i64,
+                                    ))
+                                    .unix_permissions(entry.mode)
+                                    .large_file(
+                                        entry.size.is_some_and(|size| size >= u32::MAX as u64),
+                                    )
+                                    .last_modified_time(zip::DateTime::from_date_and_time(
+                                        entry.mtime.year() as u16,
+                                        entry.mtime.month() as u8,
+                                        entry.mtime.day() as u8,
+                                        entry.mtime.hour() as u8,
+                                        entry.mtime.minute() as u8,
+                                        entry.mtime.second() as u8,
+                                    )?);
 
-                            archive
-                                .append_data(&mut header, relative, child.stdout.unwrap())
-                                .await
-                                .ok();
+                            match entry.r#type {
+                                ResticEntryType::Dir => {
+                                    archive.add_directory(relative.to_string_lossy(), options)?;
+
+                                    let child = match std::process::Command::new("restic")
+                                        .envs(&configuration.environment)
+                                        .arg("--json")
+                                        .arg("--no-lock")
+                                        .arg("--repo")
+                                        .arg(&configuration.repository)
+                                        .args(configuration.password())
+                                        .arg("dump")
+                                        .arg(format!("{}:{}", short_id, path.display()))
+                                        .arg("/")
+                                        .stdout(std::process::Stdio::piped())
+                                        .stderr(std::process::Stdio::null())
+                                        .spawn()
+                                    {
+                                        Ok(child) => child,
+                                        Err(_) => continue,
+                                    };
+
+                                    let mut subtar = tar::Archive::new(child.stdout.unwrap());
+                                    let mut entries = match subtar.entries() {
+                                        Ok(entries) => entries,
+                                        Err(_) => continue,
+                                    };
+
+                                    while let Some(Ok(mut entry)) = entries.next() {
+                                        let header = entry.header().clone();
+                                        let relative = relative.join(entry.path()?);
+
+                                        let mut options: zip::write::FileOptions<'_, ()> =
+                                            zip::write::FileOptions::default()
+                                                .compression_level(Some(
+                                                    compression_level
+                                                        .flate2_compression_level()
+                                                        .level()
+                                                        as i64,
+                                                ))
+                                                .unix_permissions(header.mode()?)
+                                                .large_file(header.size()? >= u32::MAX as u64);
+                                        if let Ok(mtime) = header.mtime()
+                                            && let Some(mtime) =
+                                                chrono::DateTime::from_timestamp(mtime as i64, 0)
+                                        {
+                                            options = options.last_modified_time(
+                                                zip::DateTime::from_date_and_time(
+                                                    mtime.year() as u16,
+                                                    mtime.month() as u8,
+                                                    mtime.day() as u8,
+                                                    mtime.hour() as u8,
+                                                    mtime.minute() as u8,
+                                                    mtime.second() as u8,
+                                                )?,
+                                            );
+                                        }
+
+                                        match header.entry_type() {
+                                            tar::EntryType::Directory => {
+                                                archive.add_directory(
+                                                    relative.to_string_lossy(),
+                                                    options,
+                                                )?;
+                                            }
+                                            tar::EntryType::Regular => {
+                                                archive.start_file(
+                                                    relative.to_string_lossy(),
+                                                    options,
+                                                )?;
+                                                std::io::copy(&mut entry, &mut archive)?;
+                                            }
+                                            _ => continue,
+                                        }
+                                    }
+                                }
+                                ResticEntryType::File => {
+                                    let child = match std::process::Command::new("restic")
+                                        .envs(&configuration.environment)
+                                        .arg("--json")
+                                        .arg("--no-lock")
+                                        .arg("--repo")
+                                        .arg(&configuration.repository)
+                                        .args(configuration.password())
+                                        .arg("dump")
+                                        .arg(&short_id)
+                                        .arg(&path)
+                                        .stdout(std::process::Stdio::piped())
+                                        .stderr(std::process::Stdio::null())
+                                        .spawn()
+                                    {
+                                        Ok(child) => child,
+                                        Err(_) => continue,
+                                    };
+
+                                    let mut reader = child.stdout.unwrap();
+
+                                    archive.start_file(relative.to_string_lossy(), options)?;
+                                    std::io::copy(&mut reader, &mut archive)?;
+                                }
+                                _ => continue,
+                            }
                         }
-                        _ => continue,
-                    }
-                }
 
-                if let Ok(mut inner) = archive.into_inner().await {
-                    inner.shutdown().await.ok();
-                }
+                        archive.finish()?;
+
+                        Ok(())
+                    }
+                });
             }
-        });
+            _ => {
+                tokio::spawn({
+                    let short_id = self.short_id.clone();
+                    let configuration = Arc::clone(&self.configuration);
+                    let entries = Arc::clone(&self.entries);
+
+                    async move {
+                        let writer = archive_format
+                            .compression_format()
+                            .writer(writer, compression_level);
+                        let mut archive = tokio_tar::Builder::new(writer);
+
+                        for file_path in file_paths {
+                            let path = full_path.join(&file_path);
+                            let entry = match entries.iter().find(|e| e.path == file_path) {
+                                Some(entry) => entry,
+                                None => continue,
+                            };
+
+                            let relative = match path.strip_prefix(&full_path) {
+                                Ok(path) => path,
+                                Err(_) => continue,
+                            };
+
+                            let mut header = tokio_tar::Header::new_gnu();
+                            header.set_size(0);
+                            header.set_mode(entry.mode);
+                            header.set_mtime(entry.mtime.timestamp() as u64);
+
+                            match entry.r#type {
+                                ResticEntryType::Dir => {
+                                    header.set_entry_type(tokio_tar::EntryType::Directory);
+
+                                    if archive
+                                        .append_data(&mut header, relative, tokio::io::empty())
+                                        .await
+                                        .is_ok()
+                                    {
+                                        let child = match Command::new("restic")
+                                            .envs(&configuration.environment)
+                                            .arg("--json")
+                                            .arg("--no-lock")
+                                            .arg("--repo")
+                                            .arg(&configuration.repository)
+                                            .args(configuration.password())
+                                            .arg("dump")
+                                            .arg(format!("{}:{}", short_id, path.display()))
+                                            .arg("/")
+                                            .stdout(std::process::Stdio::piped())
+                                            .stderr(std::process::Stdio::null())
+                                            .spawn()
+                                        {
+                                            Ok(child) => child,
+                                            Err(_) => continue,
+                                        };
+
+                                        let mut subtar =
+                                            tokio_tar::Archive::new(child.stdout.unwrap());
+                                        let mut entries = match subtar.entries() {
+                                            Ok(entries) => entries,
+                                            Err(_) => continue,
+                                        };
+
+                                        while let Some(Ok(entry)) = entries.next().await {
+                                            let mut header = entry.header().clone();
+
+                                            match archive
+                                                .append_data(
+                                                    &mut header,
+                                                    relative.join(entry.path().unwrap()),
+                                                    entry,
+                                                )
+                                                .await
+                                            {
+                                                Ok(_) => {}
+                                                Err(_) => break,
+                                            }
+                                        }
+                                    }
+                                }
+                                ResticEntryType::File => {
+                                    let child = match Command::new("restic")
+                                        .envs(&configuration.environment)
+                                        .arg("--json")
+                                        .arg("--no-lock")
+                                        .arg("--repo")
+                                        .arg(&configuration.repository)
+                                        .args(configuration.password())
+                                        .arg("dump")
+                                        .arg(&short_id)
+                                        .arg(&path)
+                                        .stdout(std::process::Stdio::piped())
+                                        .stderr(std::process::Stdio::null())
+                                        .spawn()
+                                    {
+                                        Ok(child) => child,
+                                        Err(_) => continue,
+                                    };
+
+                                    header.set_size(entry.size.unwrap_or(0));
+                                    header.set_entry_type(tokio_tar::EntryType::Regular);
+
+                                    archive
+                                        .append_data(&mut header, relative, child.stdout.unwrap())
+                                        .await
+                                        .ok();
+                                }
+                                _ => continue,
+                            }
+                        }
+
+                        if let Ok(mut inner) = archive.into_inner().await {
+                            inner.shutdown().await.ok();
+                        }
+                    }
+                });
+            }
+        }
 
         Ok(reader)
     }

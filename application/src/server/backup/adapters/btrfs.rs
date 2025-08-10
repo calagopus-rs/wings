@@ -693,6 +693,7 @@ impl BackupBrowseExt for BrowseBtrfsBackup {
         &self,
         path: PathBuf,
         file_paths: Vec<PathBuf>,
+        archive_format: StreamableArchiveFormat,
     ) -> Result<tokio::io::DuplexStream, anyhow::Error> {
         if self.ignore.matched(&path, true).is_ignore() {
             return Err(anyhow::anyhow!(std::io::Error::from(
@@ -708,19 +709,44 @@ impl BackupBrowseExt for BrowseBtrfsBackup {
             let ignore = self.ignore.clone();
 
             async move {
-                if let Err(err) = crate::server::filesystem::archive::Archive::create_tar(
-                    filesystem,
-                    writer,
-                    &path,
-                    file_paths,
-                    crate::server::filesystem::archive::CompressionType::Gz,
-                    config.system.backups.compression_level,
-                    None,
-                    &[ignore],
-                )
-                .await
-                {
-                    tracing::error!("failed to create tar archive for btrfs backup: {}", err);
+                match archive_format {
+                    StreamableArchiveFormat::Zip => {
+                        if let Err(err) = crate::server::filesystem::archive::Archive::create_zip(
+                            filesystem,
+                            tokio_util::io::SyncIoBridge::new(writer),
+                            &path,
+                            file_paths,
+                            config.system.backups.compression_level,
+                            None,
+                            vec![ignore],
+                        )
+                        .await
+                        {
+                            tracing::error!(
+                                "failed to create zip archive for btrfs backup: {}",
+                                err
+                            );
+                        }
+                    }
+                    _ => {
+                        if let Err(err) = crate::server::filesystem::archive::Archive::create_tar(
+                            filesystem,
+                            writer,
+                            &path,
+                            file_paths,
+                            archive_format.compression_format(),
+                            config.system.backups.compression_level,
+                            None,
+                            &[ignore],
+                        )
+                        .await
+                        {
+                            tracing::error!(
+                                "failed to create tar archive for btrfs backup: {}",
+                                err
+                            );
+                        }
+                    }
                 }
             }
         });
