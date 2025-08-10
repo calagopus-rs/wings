@@ -38,6 +38,41 @@ pub enum CompressionType {
     Zstd,
 }
 
+impl CompressionType {
+    pub fn writer(
+        self,
+        destination: impl AsyncWrite + Send + Unpin + 'static,
+        compression_level: CompressionLevel,
+    ) -> Box<dyn AsyncWrite + Send + Unpin> {
+        match self {
+            CompressionType::None => Box::new(destination),
+            CompressionType::Gz => {
+                Box::new(async_compression::tokio::write::GzipEncoder::with_quality(
+                    destination,
+                    async_compression::Level::Precise(
+                        compression_level.flate2_compression_level().level() as i32,
+                    ),
+                ))
+            }
+            CompressionType::Bz2 => {
+                Box::new(async_compression::tokio::write::BzEncoder::new(destination))
+            }
+            CompressionType::Xz => {
+                Box::new(async_compression::tokio::write::XzEncoder::new(destination))
+            }
+            CompressionType::Lz4 => Box::new(async_compression::tokio::write::Lz4Encoder::new(
+                destination,
+            )),
+            CompressionType::Zstd => {
+                Box::new(async_compression::tokio::write::ZstdEncoder::with_quality(
+                    destination,
+                    async_compression::Level::Precise(compression_level.zstd_compression_level()),
+                ))
+            }
+        }
+    }
+}
+
 #[derive(Clone, Copy, ToSchema, Deserialize, Serialize, Default)]
 #[serde(rename_all = "snake_case")]
 #[schema(rename_all = "snake_case")]
@@ -84,7 +119,7 @@ pub enum ArchiveType {
 #[derive(ToSchema, Deserialize, Default, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
 #[schema(rename_all = "snake_case")]
-pub enum ArchiveFormat {
+pub enum StreamableArchiveFormat {
     Tar,
     #[default]
     TarGz,
@@ -93,7 +128,47 @@ pub enum ArchiveFormat {
     TarLz4,
     TarZstd,
     Zip,
-    SevenZip,
+}
+
+impl StreamableArchiveFormat {
+    #[inline]
+    pub fn compression_format(self) -> CompressionType {
+        match self {
+            StreamableArchiveFormat::Tar => CompressionType::None,
+            StreamableArchiveFormat::TarGz => CompressionType::Gz,
+            StreamableArchiveFormat::TarXz => CompressionType::Xz,
+            StreamableArchiveFormat::TarBz2 => CompressionType::Bz2,
+            StreamableArchiveFormat::TarLz4 => CompressionType::Lz4,
+            StreamableArchiveFormat::TarZstd => CompressionType::Zstd,
+            StreamableArchiveFormat::Zip => CompressionType::None,
+        }
+    }
+
+    #[inline]
+    pub fn extension(self) -> &'static str {
+        match self {
+            StreamableArchiveFormat::Tar => "tar",
+            StreamableArchiveFormat::TarGz => "tar.gz",
+            StreamableArchiveFormat::TarXz => "tar.xz",
+            StreamableArchiveFormat::TarBz2 => "tar.bz2",
+            StreamableArchiveFormat::TarLz4 => "tar.lz4",
+            StreamableArchiveFormat::TarZstd => "tar.zst",
+            StreamableArchiveFormat::Zip => "zip",
+        }
+    }
+
+    #[inline]
+    pub fn mime_type(self) -> &'static str {
+        match self {
+            StreamableArchiveFormat::Tar => "application/x-tar",
+            StreamableArchiveFormat::TarGz => "application/gzip",
+            StreamableArchiveFormat::TarXz => "application/x-xz",
+            StreamableArchiveFormat::TarBz2 => "application/x-bzip2",
+            StreamableArchiveFormat::TarLz4 => "application/x-lz4",
+            StreamableArchiveFormat::TarZstd => "application/zstd",
+            StreamableArchiveFormat::Zip => "application/zip",
+        }
+    }
 }
 
 #[inline]
@@ -822,41 +897,14 @@ impl Archive {
         bytes_archived: Option<Arc<AtomicU64>>,
         ignored: &[ignore::gitignore::Gitignore],
     ) -> Result<(), anyhow::Error> {
-        let writer: Box<dyn AsyncWrite + Send + Unpin> = match compression_type {
-            CompressionType::None => Box::new(destination),
-            CompressionType::Gz => {
-                Box::new(async_compression::tokio::write::GzipEncoder::with_quality(
-                    destination,
-                    async_compression::Level::Precise(
-                        compression_level.flate2_compression_level().level() as i32,
-                    ),
-                ))
-            }
-            CompressionType::Bz2 => {
-                Box::new(async_compression::tokio::write::BzEncoder::new(destination))
-            }
-            CompressionType::Xz => {
-                Box::new(async_compression::tokio::write::XzEncoder::new(destination))
-            }
-            CompressionType::Lz4 => Box::new(async_compression::tokio::write::Lz4Encoder::new(
-                destination,
-            )),
-            CompressionType::Zstd => {
-                Box::new(async_compression::tokio::write::ZstdEncoder::with_quality(
-                    destination,
-                    async_compression::Level::Precise(compression_level.zstd_compression_level()),
-                ))
-            }
-        };
+        let writer: Box<dyn AsyncWrite + Send + Unpin> =
+            compression_type.writer(destination, compression_level);
         let mut archive = tokio_tar::Builder::new(writer);
+        let base = filesystem.relative_path(base);
 
         'sources: for source in sources {
-            let source = base.join(source);
-
-            let relative = match source.strip_prefix(base) {
-                Ok(path) => path,
-                Err(_) => continue,
-            };
+            let relative = source;
+            let source = base.join(&relative);
 
             let source_metadata = match filesystem.async_symlink_metadata(&source).await {
                 Ok(metadata) => metadata,
@@ -902,7 +950,7 @@ impl Archive {
                     .await?
                     .with_ignored(ignored);
                 while let Some(Ok((_, path))) = walker.next_entry().await {
-                    let relative = match path.strip_prefix(base) {
+                    let relative = match path.strip_prefix(&base) {
                         Ok(path) => path,
                         Err(_) => continue,
                     };
@@ -1002,8 +1050,8 @@ impl Archive {
 
     pub async fn create_zip(
         filesystem: super::cap::CapFilesystem,
-        destination: impl Write + Seek + Send + 'static,
-        base: PathBuf,
+        destination: impl Write + Send + 'static,
+        base: &Path,
         sources: Vec<PathBuf>,
         compression_level: CompressionLevel,
         bytes_archived: Option<Arc<AtomicU64>>,
@@ -1011,19 +1059,15 @@ impl Archive {
     ) -> Result<(), anyhow::Error> {
         let abort = Arc::new(AtomicBool::new(false));
         let guard = AbortGuard(Arc::clone(&abort));
+        let base = filesystem.relative_path(base);
 
         tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
             let is_aborted = || abort.load(Ordering::Relaxed);
-            let mut archive = zip::ZipWriter::new(destination);
+            let mut archive = zip::ZipWriter::new_stream(destination);
 
             'sources: for source in sources {
-                let source = base.join(&source);
-                let source = filesystem.relative_path(&source);
-
-                let relative = match source.strip_prefix(&base) {
-                    Ok(path) => path,
-                    Err(_) => continue,
-                };
+                let relative = source;
+                let source = base.join(&relative);
 
                 let source_metadata = match filesystem.symlink_metadata(&source) {
                     Ok(metadata) => metadata,
@@ -1179,26 +1223,22 @@ impl Archive {
     pub async fn create_7z(
         filesystem: super::cap::CapFilesystem,
         destination: impl Write + Seek + Send + 'static,
-        base: PathBuf,
+        base: &Path,
         sources: Vec<PathBuf>,
         bytes_archived: Option<Arc<AtomicU64>>,
         ignored: Vec<ignore::gitignore::Gitignore>,
     ) -> Result<(), anyhow::Error> {
         let abort = Arc::new(AtomicBool::new(false));
         let guard = AbortGuard(Arc::clone(&abort));
+        let base = filesystem.relative_path(base);
 
         tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
             let is_aborted = || abort.load(Ordering::Relaxed);
             let mut archive = sevenz_rust2::ArchiveWriter::new(destination)?;
 
             for source in sources {
-                let source = base.join(&source);
-                let source = filesystem.relative_path(&source);
-
-                let relative = match source.strip_prefix(&base) {
-                    Ok(path) => path,
-                    Err(_) => continue,
-                };
+                let relative = source;
+                let source = base.join(&relative);
 
                 let source_metadata = match filesystem.symlink_metadata(&source) {
                     Ok(metadata) => metadata,

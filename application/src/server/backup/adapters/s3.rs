@@ -4,8 +4,9 @@ use crate::{
         limited_writer::AsyncLimitedWriter,
     },
     remote::backups::RawServerBackup,
-    server::backup::{
-        Backup, BackupCleanExt, BackupCreateExt, BackupExt, BackupFindExt, BrowseBackup,
+    server::{
+        backup::{Backup, BackupCleanExt, BackupCreateExt, BackupExt, BackupFindExt, BrowseBackup},
+        filesystem::archive::StreamableArchiveFormat,
     },
 };
 use cap_std::fs::{Permissions, PermissionsExt};
@@ -323,6 +324,7 @@ impl BackupExt for S3Backup {
     async fn download(
         &self,
         _config: &Arc<crate::config::Config>,
+        _archive_format: StreamableArchiveFormat,
     ) -> Result<crate::response::ApiResponse, anyhow::Error> {
         Err(anyhow::anyhow!(
             "this backup adapter does not support downloads"

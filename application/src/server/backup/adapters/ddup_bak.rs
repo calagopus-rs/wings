@@ -3,13 +3,17 @@ use crate::{
     models::DirectoryEntry,
     remote::backups::RawServerBackup,
     response::ApiResponse,
-    server::backup::{
-        Backup, BackupBrowseExt, BackupCleanExt, BackupCreateExt, BackupExt, BackupFindExt,
-        BrowseBackup,
+    server::{
+        backup::{
+            Backup, BackupBrowseExt, BackupCleanExt, BackupCreateExt, BackupExt, BackupFindExt,
+            BrowseBackup,
+        },
+        filesystem::archive::StreamableArchiveFormat,
     },
 };
 use axum::{body::Body, http::HeaderMap};
 use cap_std::fs::Permissions;
+use chrono::{Datelike, Timelike};
 use ddup_bak::archive::entries::Entry;
 use ignore::{WalkBuilder, overrides::OverrideBuilder};
 use sha1::Digest;
@@ -112,78 +116,36 @@ pub struct DdupBakBackup {
 impl DdupBakBackup {
     fn tar_recursive_convert_entries(
         entry: &Entry,
-        exit_early: &mut bool,
         repository: &ddup_bak::repository::Repository,
-        archive: &mut tar::Builder<
-            flate2::write::GzEncoder<tokio_util::io::SyncIoBridge<tokio::io::DuplexStream>>,
-        >,
-        parent_path: &str,
-    ) {
-        if *exit_early {
-            return;
-        }
+        archive: &mut tar::Builder<impl Write + 'static>,
+        parent_path: &Path,
+    ) -> Result<(), anyhow::Error> {
+        let mut entry_header = tar::Header::new_gnu();
+        entry_header.set_uid(entry.owner().0 as u64);
+        entry_header.set_gid(entry.owner().1 as u64);
+        entry_header.set_mode(entry.mode().bits());
+
+        entry_header.set_mtime(
+            entry
+                .mtime()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        );
+
+        let path = parent_path.join(entry.name());
 
         match entry {
-            Entry::Directory(entries) => {
-                let path = if parent_path.is_empty() {
-                    entries.name.clone()
-                } else {
-                    format!("{}/{}", parent_path, entries.name)
-                };
-
-                let mut entry_header = tar::Header::new_gnu();
-                entry_header.set_uid(entries.owner.0 as u64);
-                entry_header.set_gid(entries.owner.1 as u64);
-                entry_header.set_mode(entries.mode.bits());
-
-                entry_header.set_mtime(
-                    entries
-                        .mtime
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs(),
-                );
+            Entry::Directory(dir) => {
                 entry_header.set_entry_type(tar::EntryType::Directory);
 
-                let dir_path = if path.ends_with('/') {
-                    path.clone()
-                } else {
-                    format!("{path}/")
-                };
+                archive.append_data(&mut entry_header, &path, std::io::empty())?;
 
-                if archive
-                    .append_data(&mut entry_header, &dir_path, std::io::empty())
-                    .is_err()
-                {
-                    *exit_early = true;
-
-                    return;
-                }
-
-                for entry in entries.entries.iter() {
-                    Self::tar_recursive_convert_entries(
-                        entry, exit_early, repository, archive, &path,
-                    );
+                for entry in dir.entries.iter() {
+                    Self::tar_recursive_convert_entries(entry, repository, archive, &path)?;
                 }
             }
             Entry::File(file) => {
-                let path = if parent_path.is_empty() {
-                    file.name.clone()
-                } else {
-                    format!("{}/{}", parent_path, file.name)
-                };
-
-                let mut entry_header = tar::Header::new_gnu();
-                entry_header.set_uid(file.owner.0 as u64);
-                entry_header.set_gid(file.owner.1 as u64);
-                entry_header.set_mode(file.mode.bits());
-
-                entry_header.set_mtime(
-                    file.mtime
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs(),
-                );
                 entry_header.set_entry_type(tar::EntryType::Regular);
                 entry_header.set_size(file.size_real);
 
@@ -193,41 +155,83 @@ impl DdupBakBackup {
                     size_real,
                 );
 
-                if archive
-                    .append_data(&mut entry_header, &path, reader)
-                    .is_err()
-                {
-                    *exit_early = true;
-                }
+                archive.append_data(&mut entry_header, &path, reader)?;
             }
             Entry::Symlink(link) => {
-                let path = if parent_path.is_empty() {
-                    link.name.clone()
-                } else {
-                    format!("{}/{}", parent_path, link.name)
-                };
-
-                let mut entry_header = tar::Header::new_gnu();
-                entry_header.set_uid(link.owner.0 as u64);
-                entry_header.set_gid(link.owner.1 as u64);
-                entry_header.set_mode(link.mode.bits());
-
-                entry_header.set_mtime(
-                    link.mtime
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs(),
-                );
                 entry_header.set_entry_type(tar::EntryType::Symlink);
 
-                if archive
-                    .append_link(&mut entry_header, &path, &link.target)
-                    .is_err()
-                {
-                    *exit_early = true;
-                }
+                archive.append_link(&mut entry_header, &path, &link.target)?;
             }
         }
+
+        Ok(())
+    }
+
+    fn zip_recursive_convert_entries(
+        entry: &Entry,
+        repository: &ddup_bak::repository::Repository,
+        zip: &mut zip::ZipWriter<
+            zip::write::StreamWriter<tokio_util::io::SyncIoBridge<tokio::io::DuplexStream>>,
+        >,
+        compression_level: crate::server::filesystem::archive::CompressionLevel,
+        parent_path: &Path,
+    ) -> Result<(), anyhow::Error> {
+        let size = match entry {
+            Entry::File(file) => file.size,
+            _ => 0,
+        };
+
+        let mut options: zip::write::FileOptions<'_, ()> = zip::write::FileOptions::default()
+            .compression_level(Some(
+                compression_level.flate2_compression_level().level() as i64
+            ))
+            .unix_permissions(entry.mode().bits())
+            .large_file(size >= u32::MAX as u64);
+
+        {
+            let mtime: chrono::DateTime<chrono::Local> = chrono::DateTime::from(entry.mtime());
+
+            options = options.last_modified_time(zip::DateTime::from_date_and_time(
+                mtime.year() as u16,
+                mtime.month() as u8,
+                mtime.day() as u8,
+                mtime.hour() as u8,
+                mtime.minute() as u8,
+                mtime.second() as u8,
+            )?);
+        }
+
+        let path = parent_path.join(entry.name());
+
+        match entry {
+            Entry::Directory(dir) => {
+                zip.add_directory(path.to_string_lossy(), options)?;
+
+                for entry in dir.entries.iter() {
+                    Self::zip_recursive_convert_entries(
+                        entry,
+                        repository,
+                        zip,
+                        compression_level,
+                        &path,
+                    )?;
+                }
+            }
+            Entry::File(file) => {
+                let mut reader = FixedReader::new(
+                    Box::new(repository.entry_reader(Entry::File(file.clone())).unwrap()),
+                    file.size_real as usize,
+                );
+
+                zip.start_file(path.to_string_lossy(), options)?;
+                std::io::copy(&mut reader, zip)?;
+            }
+            Entry::Symlink(link) => {
+                zip.add_symlink(&link.name, &link.target, options)?;
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -407,43 +411,74 @@ impl BackupExt for DdupBakBackup {
     async fn download(
         &self,
         config: &Arc<crate::config::Config>,
+        archive_format: StreamableArchiveFormat,
     ) -> Result<ApiResponse, anyhow::Error> {
         let repository = get_repository(config).await;
 
         let archive = self.archive.clone();
+        let compression_level = config.system.backups.compression_level;
         let (reader, writer) = tokio::io::duplex(crate::BUFFER_SIZE);
 
-        let compression_level = config.system.backups.compression_level;
-        tokio::task::spawn_blocking(move || {
-            let writer = tokio_util::io::SyncIoBridge::new(writer);
-            let writer =
-                flate2::write::GzEncoder::new(writer, compression_level.flate2_compression_level());
+        match archive_format {
+            StreamableArchiveFormat::Zip => {
+                tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
+                    let writer = tokio_util::io::SyncIoBridge::new(writer);
+                    let mut zip = zip::ZipWriter::new_stream(writer);
 
-            let mut tar = tar::Builder::new(writer);
-            tar.mode(tar::HeaderMode::Complete);
+                    for entry in archive.entries.iter() {
+                        DdupBakBackup::zip_recursive_convert_entries(
+                            entry,
+                            &repository,
+                            &mut zip,
+                            compression_level,
+                            Path::new(""),
+                        )?;
+                    }
 
-            let exit_early = &mut false;
-            for entry in archive.entries() {
-                if *exit_early {
-                    break;
-                }
+                    zip.finish()?;
 
-                Self::tar_recursive_convert_entries(entry, exit_early, &repository, &mut tar, "");
+                    Ok(())
+                });
             }
+            _ => {
+                let writer = archive_format
+                    .compression_format()
+                    .writer(writer, compression_level);
 
-            if !*exit_early {
-                tar.finish().unwrap();
+                tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
+                    let writer = tokio_util::io::SyncIoBridge::new(writer);
+
+                    let mut tar = tar::Builder::new(writer);
+                    tar.mode(tar::HeaderMode::Complete);
+
+                    for entry in archive.entries.iter() {
+                        DdupBakBackup::tar_recursive_convert_entries(
+                            entry,
+                            &repository,
+                            &mut tar,
+                            Path::new(""),
+                        )?;
+                    }
+
+                    tar.finish()?;
+
+                    Ok(())
+                });
             }
-        });
+        }
 
         let mut headers = HeaderMap::with_capacity(2);
         headers.insert(
             "Content-Disposition",
-            format!("attachment; filename={}.tar.gz", self.uuid)
-                .parse()
-                .unwrap(),
+            format!(
+                "attachment; filename={}.{}",
+                self.uuid,
+                archive_format.extension()
+            )
+            .parse()
+            .unwrap(),
         );
-        headers.insert("Content-Type", "application/gzip".parse().unwrap());
+        headers.insert("Content-Type", archive_format.mime_type().parse().unwrap());
 
         Ok(ApiResponse::new(Body::from_stream(
             tokio_util::io::ReaderStream::with_capacity(reader, crate::BUFFER_SIZE),
@@ -888,6 +923,7 @@ impl BackupBrowseExt for BrowseDdupBakBackup {
     async fn read_directory_archive(
         &self,
         path: PathBuf,
+        archive_format: StreamableArchiveFormat,
     ) -> Result<tokio::io::DuplexStream, anyhow::Error> {
         let archive = self.archive.clone();
 
@@ -901,69 +937,111 @@ impl BackupBrowseExt for BrowseDdupBakBackup {
         };
 
         let repository = get_repository(&self.server.config).await;
+        let compression_level = self.server.config.system.backups.compression_level;
         let (reader, writer) = tokio::io::duplex(crate::BUFFER_SIZE);
 
-        let compression_level = self.server.config.system.backups.compression_level;
-        tokio::task::spawn_blocking(move || {
-            let writer = tokio_util::io::SyncIoBridge::new(writer);
-            let writer =
-                flate2::write::GzEncoder::new(writer, compression_level.flate2_compression_level());
-            let mut tar = tar::Builder::new(writer);
-            tar.mode(tar::HeaderMode::Complete);
+        match archive_format {
+            StreamableArchiveFormat::Zip => {
+                tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
+                    let writer = tokio_util::io::SyncIoBridge::new(writer);
+                    let mut zip = zip::ZipWriter::new_stream(writer);
 
-            let exit_early = &mut false;
+                    match archive.find_archive_entry(&path) {
+                        Some(entry) => {
+                            let entry = match entry {
+                                ddup_bak::archive::entries::Entry::Directory(entry) => entry,
+                                _ => {
+                                    return Err(anyhow::anyhow!(std::io::Error::from(
+                                        rustix::io::Errno::NOENT
+                                    )));
+                                }
+                            };
 
-            match archive.find_archive_entry(&path) {
-                Some(entry) => {
-                    let entry = match entry {
-                        ddup_bak::archive::entries::Entry::Directory(entry) => entry,
-                        _ => {
-                            *exit_early = true;
-                            return;
+                            for entry in entry.entries.iter() {
+                                DdupBakBackup::zip_recursive_convert_entries(
+                                    entry,
+                                    &repository,
+                                    &mut zip,
+                                    compression_level,
+                                    Path::new(""),
+                                )?;
+                            }
+
+                            zip.finish()?;
+                        }
+                        None => {
+                            if path.components().count() == 0 {
+                                for entry in archive.entries() {
+                                    DdupBakBackup::zip_recursive_convert_entries(
+                                        entry,
+                                        &repository,
+                                        &mut zip,
+                                        compression_level,
+                                        Path::new(""),
+                                    )?;
+                                }
+
+                                zip.finish()?;
+                            }
                         }
                     };
 
-                    for entry in &entry.entries {
-                        if *exit_early {
-                            break;
-                        }
+                    Ok(())
+                });
+            }
+            _ => {
+                let writer = archive_format
+                    .compression_format()
+                    .writer(writer, compression_level);
 
-                        DdupBakBackup::tar_recursive_convert_entries(
-                            entry,
-                            exit_early,
-                            &repository,
-                            &mut tar,
-                            "",
-                        );
-                    }
+                tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
+                    let writer = tokio_util::io::SyncIoBridge::new(writer);
 
-                    if !*exit_early {
-                        tar.finish().ok();
-                    }
-                }
-                None => {
-                    if path.components().count() == 0 {
-                        for entry in archive.entries() {
-                            if *exit_early {
-                                break;
+                    let mut tar = tar::Builder::new(writer);
+                    tar.mode(tar::HeaderMode::Complete);
+
+                    match archive.find_archive_entry(&path) {
+                        Some(entry) => {
+                            let entry = match entry {
+                                ddup_bak::archive::entries::Entry::Directory(entry) => entry,
+                                _ => {
+                                    return Err(anyhow::anyhow!(std::io::Error::from(
+                                        rustix::io::Errno::NOENT
+                                    )));
+                                }
+                            };
+
+                            for entry in entry.entries.iter() {
+                                DdupBakBackup::tar_recursive_convert_entries(
+                                    entry,
+                                    &repository,
+                                    &mut tar,
+                                    Path::new(""),
+                                )?;
                             }
 
-                            DdupBakBackup::tar_recursive_convert_entries(
-                                entry,
-                                exit_early,
-                                &repository,
-                                &mut tar,
-                                "",
-                            );
+                            tar.finish()?;
                         }
+                        None => {
+                            if path.components().count() == 0 {
+                                for entry in archive.entries() {
+                                    DdupBakBackup::tar_recursive_convert_entries(
+                                        entry,
+                                        &repository,
+                                        &mut tar,
+                                        Path::new(""),
+                                    )?;
+                                }
 
-                        if !*exit_early {
-                            tar.finish().ok();
+                                tar.finish()?;
+                            }
                         }
-                    }
-                }
-            };
-        });
+                    };
+
+                    Ok(())
+                });
+            }
+        }
 
         Ok(reader)
     }
@@ -988,14 +1066,12 @@ impl BackupBrowseExt for BrowseDdupBakBackup {
         let (reader, writer) = tokio::io::duplex(crate::BUFFER_SIZE);
 
         let compression_level = self.server.config.system.backups.compression_level;
-        tokio::task::spawn_blocking(move || {
+        tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
             let writer = tokio_util::io::SyncIoBridge::new(writer);
             let writer =
                 flate2::write::GzEncoder::new(writer, compression_level.flate2_compression_level());
             let mut tar = tar::Builder::new(writer);
             tar.mode(tar::HeaderMode::Complete);
-
-            let exit_early = &mut false;
 
             for file_path in file_paths {
                 let path = path.join(&file_path);
@@ -1005,52 +1081,41 @@ impl BackupBrowseExt for BrowseDdupBakBackup {
                         let entry = match entry {
                             ddup_bak::archive::entries::Entry::Directory(dir) => dir,
                             _ => {
-                                *exit_early = true;
-                                return;
+                                return Err(anyhow::anyhow!(std::io::Error::from(
+                                    rustix::io::Errno::NOENT
+                                )));
                             }
                         };
 
                         for entry in entry.entries.iter() {
-                            if *exit_early {
-                                break;
-                            }
-
                             DdupBakBackup::tar_recursive_convert_entries(
                                 entry,
-                                exit_early,
                                 &repository,
                                 &mut tar,
-                                "",
-                            );
+                                Path::new(""),
+                            )?;
                         }
 
-                        if !*exit_early {
-                            tar.finish().ok();
-                        }
+                        tar.finish()?;
                     }
                     None => {
                         if path.components().count() == 0 {
                             for entry in archive.entries() {
-                                if *exit_early {
-                                    break;
-                                }
-
                                 DdupBakBackup::tar_recursive_convert_entries(
                                     entry,
-                                    exit_early,
                                     &repository,
                                     &mut tar,
-                                    "",
-                                );
+                                    Path::new(""),
+                                )?;
                             }
 
-                            if !*exit_early {
-                                tar.finish().ok();
-                            }
+                            tar.finish()?;
                         }
                     }
                 };
             }
+
+            Ok(())
         });
 
         Ok(reader)

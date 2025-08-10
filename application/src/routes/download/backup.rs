@@ -5,6 +5,7 @@ mod get {
     use crate::{
         response::{ApiResponse, ApiResponseResult},
         routes::GetState,
+        server::filesystem::archive::StreamableArchiveFormat,
     };
     use axum::{extract::Query, http::StatusCode};
     use serde::Deserialize;
@@ -13,6 +14,9 @@ mod get {
     #[derive(ToSchema, Deserialize)]
     pub struct Params {
         token: String,
+
+        #[serde(default)]
+        archive_format: StreamableArchiveFormat,
     }
 
     #[derive(Deserialize)]
@@ -58,12 +62,6 @@ mod get {
                 .ok();
         }
 
-        if !state.config.jwt.one_time_id(&payload.unique_id).await {
-            return ApiResponse::error("token has already been used")
-                .with_status(StatusCode::UNAUTHORIZED)
-                .ok();
-        }
-
         if let Some(server_uuid) = payload.server_uuid {
             let server = state
                 .server_manager
@@ -87,7 +85,7 @@ mod get {
             }
         };
 
-        match backup.download(&state.config).await {
+        match backup.download(&state.config, data.archive_format).await {
             Ok(response) => response,
             Err(err) => {
                 tracing::error!("failed to download backup: {:#?}", err);

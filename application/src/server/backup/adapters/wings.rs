@@ -12,7 +12,7 @@ use crate::{
             Backup, BackupBrowseExt, BackupCleanExt, BackupCreateExt, BackupExt, BackupFindExt,
             BrowseBackup,
         },
-        filesystem::archive::multi_reader::MultiReader,
+        filesystem::archive::{StreamableArchiveFormat, multi_reader::MultiReader},
     },
 };
 use axum::{body::Body, http::HeaderMap};
@@ -220,7 +220,7 @@ impl BackupCreateExt for WingsBackup {
                     crate::server::filesystem::archive::Archive::create_zip(
                         server.filesystem.clone(),
                         writer,
-                        PathBuf::from(""),
+                        Path::new(""),
                         sources.into_iter().map(PathBuf::from).collect(),
                         server.config.system.backups.compression_level,
                         Some(progress),
@@ -266,6 +266,7 @@ impl BackupExt for WingsBackup {
     async fn download(
         &self,
         _config: &Arc<crate::config::Config>,
+        _archive_format: StreamableArchiveFormat,
     ) -> Result<ApiResponse, anyhow::Error> {
         let file = tokio::fs::File::open(&self.path).await?;
 
@@ -836,85 +837,105 @@ impl BackupBrowseExt for BrowseWingsBackup {
     async fn read_directory_archive(
         &self,
         path: PathBuf,
+        archive_format: StreamableArchiveFormat,
     ) -> Result<tokio::io::DuplexStream, anyhow::Error> {
         let mut archive = self.archive.clone();
 
-        let (writer, reader) = tokio::io::duplex(crate::BUFFER_SIZE);
+        let (reader, writer) = tokio::io::duplex(crate::BUFFER_SIZE);
         let compression_level = self.server.config.system.backups.compression_level;
 
-        tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
-            let writer = tokio_util::io::SyncIoBridge::new(writer);
-            let writer =
-                flate2::write::GzEncoder::new(writer, compression_level.flate2_compression_level());
+        match archive_format {
+            StreamableArchiveFormat::Zip => {
+                tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
+                    let writer = tokio_util::io::SyncIoBridge::new(writer);
+                    let mut zip = zip::ZipWriter::new_stream(writer);
 
-            let mut tar = tar::Builder::new(writer);
-            tar.mode(tar::HeaderMode::Complete);
+                    for i in 0..archive.len() {
+                        let mut entry = archive.by_index(i)?;
+                        let name = match entry.enclosed_name() {
+                            Some(name) => name,
+                            None => continue,
+                        };
 
-            for i in 0..archive.len() {
-                let entry = archive.by_index(i)?;
-                let name = match entry.enclosed_name() {
-                    Some(name) => name,
-                    None => continue,
-                };
+                        let name = match name.strip_prefix(&path) {
+                            Ok(name) => name,
+                            Err(_) => continue,
+                        };
 
-                let name = match name.strip_prefix(&path) {
-                    Ok(name) => name,
-                    Err(_) => continue,
-                };
+                        if name.components().count() == 0 {
+                            continue;
+                        }
 
-                if name.components().count() == 0 {
-                    continue;
-                }
+                        if entry.is_dir() {
+                            zip.add_directory(name.to_string_lossy(), entry.options())?;
+                        } else {
+                            zip.start_file(name.to_string_lossy(), entry.options())?;
 
-                if entry.is_dir() {
-                    let mut entry_header = tar::Header::new_gnu();
-                    if let Some(mode) = entry.unix_mode() {
-                        entry_header.set_mode(mode);
+                            std::io::copy(&mut entry, &mut zip)?;
+                        }
                     }
 
-                    entry_header.set_mtime(
-                        crate::server::filesystem::archive::zip_entry_get_modified_time(&entry)
-                            .map(|dt| dt.into_std().elapsed().unwrap_or_default().as_secs())
-                            .unwrap_or_default(),
-                    );
-                    entry_header.set_entry_type(tar::EntryType::Directory);
-
-                    tar.append_data(&mut entry_header, name, std::io::empty())?;
-                } else if entry.is_file() {
-                    let mut entry_header = tar::Header::new_gnu();
-                    if let Some(mode) = entry.unix_mode() {
-                        entry_header.set_mode(mode);
-                    }
-
-                    entry_header.set_mtime(
-                        crate::server::filesystem::archive::zip_entry_get_modified_time(&entry)
-                            .map(|dt| dt.into_std().elapsed().unwrap_or_default().as_secs())
-                            .unwrap_or_default(),
-                    );
-                    entry_header.set_entry_type(tar::EntryType::Regular);
-                    entry_header.set_size(entry.size());
-
-                    tar.append_data(&mut entry_header, name, entry)?;
-                } else if entry.is_symlink() && (1..=2048).contains(&entry.size()) {
-                    let mut entry_header = tar::Header::new_gnu();
-                    if let Some(mode) = entry.unix_mode() {
-                        entry_header.set_mode(mode);
-                    }
-
-                    entry_header.set_mtime(
-                        crate::server::filesystem::archive::zip_entry_get_modified_time(&entry)
-                            .map(|dt| dt.into_std().elapsed().unwrap_or_default().as_secs())
-                            .unwrap_or_default(),
-                    );
-                    entry_header.set_entry_type(tar::EntryType::Symlink);
-
-                    let link_name = std::io::read_to_string(entry)?;
-                    tar.append_link(&mut entry_header, name, link_name)?;
-                }
+                    Ok(())
+                });
             }
+            _ => {
+                let writer = archive_format
+                    .compression_format()
+                    .writer(writer, compression_level);
 
-            Ok(())
-        });
+                tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
+                    let writer = tokio_util::io::SyncIoBridge::new(writer);
+
+                    let mut tar = tar::Builder::new(writer);
+                    tar.mode(tar::HeaderMode::Complete);
+
+                    for i in 0..archive.len() {
+                        let entry = archive.by_index(i)?;
+                        let name = match entry.enclosed_name() {
+                            Some(name) => name,
+                            None => continue,
+                        };
+
+                        let name = match name.strip_prefix(&path) {
+                            Ok(name) => name,
+                            Err(_) => continue,
+                        };
+
+                        if name.components().count() == 0 {
+                            continue;
+                        }
+
+                        let mut entry_header = tar::Header::new_gnu();
+                        if let Some(mode) = entry.unix_mode() {
+                            entry_header.set_mode(mode);
+                        }
+                        entry_header.set_mtime(
+                            crate::server::filesystem::archive::zip_entry_get_modified_time(&entry)
+                                .map(|dt| dt.into_std().elapsed().unwrap_or_default().as_secs())
+                                .unwrap_or_default(),
+                        );
+
+                        if entry.is_dir() {
+                            entry_header.set_entry_type(tar::EntryType::Directory);
+
+                            tar.append_data(&mut entry_header, name, std::io::empty())?;
+                        } else if entry.is_file() {
+                            entry_header.set_entry_type(tar::EntryType::Regular);
+                            entry_header.set_size(entry.size());
+
+                            tar.append_data(&mut entry_header, name, entry)?;
+                        } else if entry.is_symlink() && (1..=2048).contains(&entry.size()) {
+                            entry_header.set_entry_type(tar::EntryType::Symlink);
+
+                            let link_name = std::io::read_to_string(entry)?;
+                            tar.append_link(&mut entry_header, name, link_name)?;
+                        }
+                    }
+
+                    Ok(())
+                });
+            }
+        }
 
         Ok(reader)
     }
@@ -926,7 +947,7 @@ impl BackupBrowseExt for BrowseWingsBackup {
     ) -> Result<tokio::io::DuplexStream, anyhow::Error> {
         let mut archive = self.archive.clone();
 
-        let (writer, reader) = tokio::io::duplex(crate::BUFFER_SIZE);
+        let (reader, writer) = tokio::io::duplex(crate::BUFFER_SIZE);
         let compression_level = self.server.config.system.backups.compression_level;
 
         tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {

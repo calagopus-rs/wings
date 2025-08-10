@@ -2,9 +2,12 @@ use crate::{
     io::counting_reader::AsyncCountingReader,
     remote::backups::RawServerBackup,
     response::ApiResponse,
-    server::backup::{
-        Backup, BackupBrowseExt, BackupCleanExt, BackupCreateExt, BackupExt, BackupFindExt,
-        BrowseBackup,
+    server::{
+        backup::{
+            Backup, BackupBrowseExt, BackupCleanExt, BackupCreateExt, BackupExt, BackupFindExt,
+            BrowseBackup,
+        },
+        filesystem::archive::StreamableArchiveFormat,
     },
 };
 use axum::{body::Body, http::HeaderMap};
@@ -211,6 +214,7 @@ impl BackupExt for BtrfsBackup {
     async fn download(
         &self,
         config: &Arc<crate::config::Config>,
+        archive_format: StreamableArchiveFormat,
     ) -> Result<ApiResponse, anyhow::Error> {
         let subvolume_path = Self::get_subvolume_path(config, self.uuid);
 
@@ -231,19 +235,44 @@ impl BackupExt for BtrfsBackup {
             let config = Arc::clone(config);
 
             async move {
-                if let Err(err) = crate::server::filesystem::archive::Archive::create_tar(
-                    filesystem,
-                    writer,
-                    Path::new(""),
-                    names.into_iter().map(PathBuf::from).collect(),
-                    crate::server::filesystem::archive::CompressionType::Gz,
-                    config.system.backups.compression_level,
-                    None,
-                    &[ignore],
-                )
-                .await
-                {
-                    tracing::error!("failed to create tar archive for Btrfs backup: {}", err);
+                match archive_format {
+                    StreamableArchiveFormat::Zip => {
+                        if let Err(err) = crate::server::filesystem::archive::Archive::create_zip(
+                            filesystem,
+                            tokio_util::io::SyncIoBridge::new(writer),
+                            Path::new(""),
+                            names.into_iter().map(PathBuf::from).collect(),
+                            config.system.backups.compression_level,
+                            None,
+                            vec![ignore],
+                        )
+                        .await
+                        {
+                            tracing::error!(
+                                "failed to create zip archive for btrfs backup: {}",
+                                err
+                            );
+                        }
+                    }
+                    _ => {
+                        if let Err(err) = crate::server::filesystem::archive::Archive::create_tar(
+                            filesystem,
+                            writer,
+                            Path::new(""),
+                            names.into_iter().map(PathBuf::from).collect(),
+                            archive_format.compression_format(),
+                            config.system.backups.compression_level,
+                            None,
+                            &[ignore],
+                        )
+                        .await
+                        {
+                            tracing::error!(
+                                "failed to create tar archive for btrfs backup: {}",
+                                err
+                            );
+                        }
+                    }
                 }
             }
         });
@@ -251,11 +280,15 @@ impl BackupExt for BtrfsBackup {
         let mut headers = HeaderMap::with_capacity(2);
         headers.insert(
             "Content-Disposition",
-            format!("attachment; filename={}.tar.gz", self.uuid)
-                .parse()
-                .unwrap(),
+            format!(
+                "attachment; filename={}.{}",
+                self.uuid,
+                archive_format.extension()
+            )
+            .parse()
+            .unwrap(),
         );
-        headers.insert("Content-Type", "application/gzip".parse().unwrap());
+        headers.insert("Content-Type", archive_format.mime_type().parse().unwrap());
 
         Ok(ApiResponse::new(Body::from_stream(
             tokio_util::io::ReaderStream::with_capacity(reader, crate::BUFFER_SIZE),
@@ -594,6 +627,7 @@ impl BackupBrowseExt for BrowseBtrfsBackup {
     async fn read_directory_archive(
         &self,
         path: PathBuf,
+        archive_format: StreamableArchiveFormat,
     ) -> Result<tokio::io::DuplexStream, anyhow::Error> {
         if self.ignore.matched(&path, true).is_ignore() {
             return Err(anyhow::anyhow!(std::io::Error::from(
@@ -610,19 +644,44 @@ impl BackupBrowseExt for BrowseBtrfsBackup {
             let ignore = self.ignore.clone();
 
             async move {
-                if let Err(err) = crate::server::filesystem::archive::Archive::create_tar(
-                    filesystem,
-                    writer,
-                    &path,
-                    names.into_iter().map(PathBuf::from).collect(),
-                    crate::server::filesystem::archive::CompressionType::Gz,
-                    config.system.backups.compression_level,
-                    None,
-                    &[ignore],
-                )
-                .await
-                {
-                    tracing::error!("failed to create tar archive for btrfs backup: {}", err);
+                match archive_format {
+                    StreamableArchiveFormat::Zip => {
+                        if let Err(err) = crate::server::filesystem::archive::Archive::create_zip(
+                            filesystem,
+                            tokio_util::io::SyncIoBridge::new(writer),
+                            &path,
+                            names.into_iter().map(PathBuf::from).collect(),
+                            config.system.backups.compression_level,
+                            None,
+                            vec![ignore],
+                        )
+                        .await
+                        {
+                            tracing::error!(
+                                "failed to create zip archive for btrfs backup: {}",
+                                err
+                            );
+                        }
+                    }
+                    _ => {
+                        if let Err(err) = crate::server::filesystem::archive::Archive::create_tar(
+                            filesystem,
+                            writer,
+                            &path,
+                            names.into_iter().map(PathBuf::from).collect(),
+                            archive_format.compression_format(),
+                            config.system.backups.compression_level,
+                            None,
+                            &[ignore],
+                        )
+                        .await
+                        {
+                            tracing::error!(
+                                "failed to create tar archive for btrfs backup: {}",
+                                err
+                            );
+                        }
+                    }
                 }
             }
         });

@@ -5,12 +5,27 @@ mod post {
     use crate::{
         response::{ApiResponse, ApiResponseResult},
         routes::{ApiError, GetState, api::servers::_server_::GetServer},
-        server::filesystem::archive::{ArchiveFormat, CompressionType},
+        server::filesystem::archive::CompressionType,
     };
     use axum::http::StatusCode;
     use serde::Deserialize;
     use std::path::PathBuf;
     use utoipa::ToSchema;
+
+    #[derive(ToSchema, Deserialize, Default, Clone, Copy)]
+    #[serde(rename_all = "snake_case")]
+    #[schema(rename_all = "snake_case")]
+    pub enum ArchiveFormat {
+        Tar,
+        #[default]
+        TarGz,
+        TarXz,
+        TarBz2,
+        TarLz4,
+        TarZstd,
+        Zip,
+        SevenZip,
+    }
 
     #[derive(ToSchema, Deserialize)]
     pub struct Payload {
@@ -137,7 +152,7 @@ mod post {
                         crate::server::filesystem::archive::Archive::create_zip(
                             server.filesystem.clone(),
                             writer,
-                            root,
+                            &root,
                             data.files.into_iter().map(PathBuf::from).collect(),
                             state.config.system.backups.compression_level,
                             None,
@@ -160,7 +175,7 @@ mod post {
                         crate::server::filesystem::archive::Archive::create_7z(
                             server.filesystem.clone(),
                             writer,
-                            root,
+                            &root,
                             data.files.into_iter().map(PathBuf::from).collect(),
                             None,
                             vec![ignored],

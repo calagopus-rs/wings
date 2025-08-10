@@ -110,16 +110,16 @@ mod post {
             }
         };
 
-        let overrides = if payload.ignored_files.is_empty() {
+        let ignored = if payload.ignored_files.is_empty() {
             None
         } else {
-            let mut override_builder = ignore::overrides::OverrideBuilder::new("/");
+            let mut ignore_builder = ignore::gitignore::GitignoreBuilder::new("/");
 
             for file in payload.ignored_files {
-                override_builder.add(&file).ok();
+                ignore_builder.add_line(None, &file).ok();
             }
 
-            override_builder.build().ok()
+            ignore_builder.build().ok()
         };
 
         let directory = PathBuf::from(data.directory);
@@ -144,9 +144,9 @@ mod post {
             };
             let file_path = directory.join(filename);
 
-            if overrides
+            if ignored
                 .as_ref()
-                .map(|o| o.matched(&file_path, false).is_whitelist())
+                .map(|o| o.matched(&file_path, false).is_ignore())
                 .unwrap_or(false)
                 || server.filesystem.is_ignored(&file_path, false).await
             {

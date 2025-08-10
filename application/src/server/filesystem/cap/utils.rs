@@ -273,7 +273,9 @@ impl<'a> WalkDir<'a> {
 
                     return Some(Ok((is_dir, full_path)));
                 }
-                Some(Err(err)) => return Some(Err(err.into())),
+                Some(Err(err)) => {
+                    return Some(Err(err.into()));
+                }
                 None => {
                     self.stack.pop();
                 }

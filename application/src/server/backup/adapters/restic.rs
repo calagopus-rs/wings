@@ -2,9 +2,12 @@ use crate::{
     models::DirectoryEntry,
     remote::backups::{RawServerBackup, ResticBackupConfiguration},
     response::ApiResponse,
-    server::backup::{
-        Backup, BackupBrowseExt, BackupCleanExt, BackupCreateExt, BackupExt, BackupFindExt,
-        BrowseBackup,
+    server::{
+        backup::{
+            Backup, BackupBrowseExt, BackupCleanExt, BackupCreateExt, BackupExt, BackupFindExt,
+            BrowseBackup,
+        },
+        filesystem::archive::StreamableArchiveFormat,
     },
 };
 use axum::{body::Body, http::HeaderMap};
@@ -476,6 +479,7 @@ impl BackupExt for ResticBackup {
     async fn download(
         &self,
         config: &Arc<crate::config::Config>,
+        archive_format: StreamableArchiveFormat,
     ) -> Result<crate::response::ApiResponse, anyhow::Error> {
         let child = Command::new("restic")
             .envs(&self.configuration.environment)
@@ -487,38 +491,73 @@ impl BackupExt for ResticBackup {
             .arg("dump")
             .arg(format!("{}:{}", self.short_id, self.server_path.display()))
             .arg("/")
+            .arg("--archive")
+            .arg(match archive_format {
+                StreamableArchiveFormat::Zip => "zip",
+                _ => "tar",
+            })
             .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
             .spawn()?;
 
-        let (reader, writer) = tokio::io::duplex(crate::BUFFER_SIZE);
+        match archive_format {
+            StreamableArchiveFormat::Zip => {
+                let mut headers = HeaderMap::with_capacity(2);
+                headers.insert(
+                    "Content-Disposition",
+                    format!("attachment; filename={}.zip", self.uuid)
+                        .parse()
+                        .unwrap(),
+                );
+                headers.insert("Content-Type", "application/zip".parse().unwrap());
 
-        let compression_level = config.system.backups.compression_level;
-        tokio::spawn(async move {
-            let mut stdout = child.stdout.unwrap();
-            let mut writer = async_compression::tokio::write::GzipEncoder::with_quality(
-                writer,
-                async_compression::Level::Precise(
-                    compression_level.flate2_compression_level().level() as i32,
-                ),
-            );
+                Ok(ApiResponse::new(Body::from_stream(
+                    tokio_util::io::ReaderStream::with_capacity(
+                        child.stdout.unwrap(),
+                        crate::BUFFER_SIZE,
+                    ),
+                ))
+                .with_headers(headers))
+            }
+            _ => {
+                let (reader, writer) = tokio::io::duplex(crate::BUFFER_SIZE);
 
-            tokio::io::copy(&mut stdout, &mut writer).await.ok();
-            writer.shutdown().await.ok();
-        });
+                let compression_level = config.system.backups.compression_level;
+                tokio::spawn(async move {
+                    let mut stdout = child.stdout.unwrap();
+                    let mut writer = archive_format
+                        .compression_format()
+                        .writer(writer, compression_level);
 
-        let mut headers = HeaderMap::with_capacity(2);
-        headers.insert(
-            "Content-Disposition",
-            format!("attachment; filename={}.tar.gz", self.uuid)
-                .parse()
-                .unwrap(),
-        );
-        headers.insert("Content-Type", "application/gzip".parse().unwrap());
+                    if let Err(err) = tokio::io::copy(&mut stdout, &mut writer).await {
+                        tracing::error!(
+                            "failed to compress tar archive for restic backup: {}",
+                            err
+                        );
+                    }
 
-        Ok(ApiResponse::new(Body::from_stream(
-            tokio_util::io::ReaderStream::with_capacity(reader, crate::BUFFER_SIZE),
-        ))
-        .with_headers(headers))
+                    writer.shutdown().await.ok();
+                });
+
+                let mut headers = HeaderMap::with_capacity(2);
+                headers.insert(
+                    "Content-Disposition",
+                    format!(
+                        "attachment; filename={}.{}",
+                        self.uuid,
+                        archive_format.extension()
+                    )
+                    .parse()
+                    .unwrap(),
+                );
+                headers.insert("Content-Type", archive_format.mime_type().parse().unwrap());
+
+                Ok(ApiResponse::new(Body::from_stream(
+                    tokio_util::io::ReaderStream::with_capacity(reader, crate::BUFFER_SIZE),
+                ))
+                .with_headers(headers))
+            }
+        }
     }
 
     async fn restore(
@@ -842,6 +881,7 @@ impl BackupBrowseExt for BrowseResticBackup {
     async fn read_directory_archive(
         &self,
         path: PathBuf,
+        archive_format: StreamableArchiveFormat,
     ) -> Result<tokio::io::DuplexStream, anyhow::Error> {
         let entry = self
             .entries
@@ -855,7 +895,7 @@ impl BackupBrowseExt for BrowseResticBackup {
         }
 
         let full_path = PathBuf::from(&self.server_path).join(&entry.path);
-        let (writer, reader) = tokio::io::duplex(crate::BUFFER_SIZE);
+        let (reader, mut writer) = tokio::io::duplex(crate::BUFFER_SIZE);
 
         let child = Command::new("restic")
             .envs(&self.configuration.environment)
@@ -867,6 +907,11 @@ impl BackupBrowseExt for BrowseResticBackup {
             .arg("dump")
             .arg(format!("{}:{}", self.short_id, full_path.display()))
             .arg("/")
+            .arg("--archive")
+            .arg(match archive_format {
+                StreamableArchiveFormat::Zip => "zip",
+                _ => "tar",
+            })
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())
             .spawn()?;
@@ -874,15 +919,29 @@ impl BackupBrowseExt for BrowseResticBackup {
         let compression_level = self.server.config.system.backups.compression_level;
         tokio::spawn(async move {
             let mut stdout = child.stdout.unwrap();
-            let mut writer = async_compression::tokio::write::GzipEncoder::with_quality(
-                writer,
-                async_compression::Level::Precise(
-                    compression_level.flate2_compression_level().level() as i32,
-                ),
-            );
 
-            tokio::io::copy(&mut stdout, &mut writer).await.ok();
-            writer.shutdown().await.ok();
+            match archive_format {
+                StreamableArchiveFormat::Zip => {
+                    if let Err(err) = tokio::io::copy(&mut stdout, &mut writer).await {
+                        tracing::error!("failed to copy zip archive for restic backup: {}", err);
+                    }
+                    writer.shutdown().await.ok();
+                }
+                _ => {
+                    let mut writer = archive_format
+                        .compression_format()
+                        .writer(writer, compression_level);
+
+                    if let Err(err) = tokio::io::copy(&mut stdout, &mut writer).await {
+                        tracing::error!(
+                            "failed to compress tar archive for restic backup: {}",
+                            err
+                        );
+                    }
+
+                    writer.shutdown().await.ok();
+                }
+            }
         });
 
         Ok(reader)
