@@ -604,15 +604,24 @@ impl Filesystem {
         tokio::task::spawn_blocking({
             let cap_filesystem = self.cap_filesystem.clone();
             let path = self.relative_path(path.as_ref());
+            let base_path = self.base_path.clone();
 
             move || {
-                Ok::<_, anyhow::Error>(rustix::fs::chownat(
-                    cap_filesystem.get_inner()?.as_fd(),
-                    path,
-                    Some(owner_uid),
-                    Some(owner_gid),
-                    rustix::fs::AtFlags::SYMLINK_NOFOLLOW,
-                )?)
+                if path == PathBuf::from("") || path == PathBuf::from("/") {
+                    Ok::<_, anyhow::Error>(std::os::unix::fs::chown(
+                        base_path,
+                        Some(owner_uid.as_raw()),
+                        Some(owner_gid.as_raw()),
+                    )?)
+                } else {
+                    Ok(rustix::fs::chownat(
+                        cap_filesystem.get_inner()?.as_fd(),
+                        path,
+                        Some(owner_uid),
+                        Some(owner_gid),
+                        rustix::fs::AtFlags::SYMLINK_NOFOLLOW,
+                    )?)
+                }
             }
         })
         .await??;
