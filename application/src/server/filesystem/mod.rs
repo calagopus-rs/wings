@@ -92,9 +92,13 @@ impl Filesystem {
                                             let cap_filesystem = cap_filesystem.clone();
 
                                             async move {
-                                                let metadata = cap_filesystem
+                                                let metadata = match cap_filesystem
                                                     .async_symlink_metadata(&path)
-                                                    .await?;
+                                                    .await
+                                                {
+                                                    Ok(metadata) => metadata,
+                                                    Err(_) => return Ok(()),
+                                                };
                                                 let size = metadata.len();
 
                                                 if metadata.is_dir()
@@ -594,13 +598,14 @@ impl Filesystem {
     pub async fn chown_path(&self, path: impl AsRef<Path>) -> Result<(), anyhow::Error> {
         let metadata = self.async_metadata(path.as_ref()).await?;
 
-        if !metadata.is_dir() {
-            let path = self.relative_path(path.as_ref());
-            let cap_filesystem = self.cap_filesystem.clone();
-            let owner_uid = rustix::fs::Uid::from_raw_unchecked(self.config.system.user.uid);
-            let owner_gid = rustix::fs::Gid::from_raw_unchecked(self.config.system.user.gid);
+        let owner_uid = rustix::fs::Uid::from_raw_unchecked(self.config.system.user.uid);
+        let owner_gid = rustix::fs::Gid::from_raw_unchecked(self.config.system.user.gid);
 
-            tokio::task::spawn_blocking(move || {
+        tokio::task::spawn_blocking({
+            let cap_filesystem = self.cap_filesystem.clone();
+            let path = self.relative_path(path.as_ref());
+
+            move || {
                 Ok::<_, anyhow::Error>(rustix::fs::chownat(
                     cap_filesystem.get_inner()?.as_fd(),
                     path,
@@ -608,12 +613,12 @@ impl Filesystem {
                     Some(owner_gid),
                     rustix::fs::AtFlags::SYMLINK_NOFOLLOW,
                 )?)
-            })
-            .await?
-        } else {
+            }
+        })
+        .await??;
+
+        if metadata.is_dir() {
             let cap_filesystem = self.cap_filesystem.clone();
-            let owner_uid = rustix::fs::Uid::from_raw_unchecked(self.config.system.user.uid);
-            let owner_gid = rustix::fs::Gid::from_raw_unchecked(self.config.system.user.gid);
 
             self.async_walk_dir(path)
                 .await?
@@ -624,19 +629,24 @@ impl Filesystem {
 
                         async move {
                             tokio::task::spawn_blocking(move || {
-                                Ok::<_, anyhow::Error>(rustix::fs::chownat(
+                                rustix::fs::chownat(
                                     cap_filesystem.get_inner()?.as_fd(),
                                     path,
                                     Some(owner_uid),
                                     Some(owner_gid),
                                     rustix::fs::AtFlags::SYMLINK_NOFOLLOW,
-                                )?)
+                                )
+                                .ok();
+
+                                Ok(())
                             })
                             .await?
                         }
                     }),
                 )
                 .await
+        } else {
+            Ok(())
         }
     }
 
