@@ -191,9 +191,7 @@ impl BackupCreateExt for WingsBackup {
                     };
 
                     total.fetch_add(metadata.len(), Ordering::Relaxed);
-                    if !metadata.is_dir() {
-                        total_files += 1;
-                    }
+                    total_files += 1;
                 }
 
                 Ok::<_, anyhow::Error>(total_files)

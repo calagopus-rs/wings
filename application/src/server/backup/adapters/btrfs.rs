@@ -117,9 +117,7 @@ impl BackupCreateExt for BtrfsBackup {
                     };
 
                     total_size += metadata.len();
-                    if !metadata.is_dir() {
-                        total_files += 1;
-                    }
+                    total_files += 1;
                 }
 
                 Ok::<_, anyhow::Error>((total_size, total_files))

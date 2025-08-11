@@ -362,10 +362,11 @@ impl BackupCreateExt for DdupBakBackup {
                 let mut total_files = 0;
 
                 fn recursive_size(total_size: &mut u64, total_files: &mut u64, entry: Entry) {
+                    *total_files += 1;
+
                     match entry {
                         Entry::File(file) => {
                             *total_size += file.size_real;
-                            *total_files += 1;
                         }
                         Entry::Directory(directory) => {
                             directory
