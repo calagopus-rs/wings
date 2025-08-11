@@ -156,11 +156,19 @@ impl BackupFindExt for ResticBackup {
                 let mut found = false;
                 let mut cache = RESTIC_BACKUP_CACHE.write().await;
                 for snapshot in snapshots {
-                    if snapshot.tags.contains(&uuid.to_string()) {
+                    let snapshot_uuid = match snapshot.tags.first() {
+                        Some(tag) => match uuid::Uuid::parse_str(tag) {
+                            Ok(uuid) => uuid,
+                            Err(_) => continue,
+                        },
+                        _ => continue,
+                    };
+
+                    if snapshot_uuid == uuid {
                         found = true;
                     }
 
-                    cache.insert(uuid, (snapshot, Arc::clone(&configuration)));
+                    cache.insert(snapshot_uuid, (snapshot, Arc::clone(&configuration)));
                 }
                 drop(cache);
 
@@ -281,7 +289,15 @@ impl BackupFindExt for ResticBackup {
                 let mut backup = None;
                 let mut cache = RESTIC_BACKUP_CACHE.write().await;
                 for snapshot in snapshots {
-                    if snapshot.tags.contains(&uuid.to_string()) {
+                    let snapshot_uuid = match snapshot.tags.first() {
+                        Some(tag) => match uuid::Uuid::parse_str(tag) {
+                            Ok(uuid) => uuid,
+                            Err(_) => continue,
+                        },
+                        _ => continue,
+                    };
+
+                    if snapshot_uuid == uuid {
                         backup = Some(ResticBackup {
                             uuid,
                             short_id: snapshot.short_id.clone(),
@@ -298,7 +314,7 @@ impl BackupFindExt for ResticBackup {
                         });
                     }
 
-                    cache.insert(uuid, (snapshot, Arc::clone(&configuration)));
+                    cache.insert(snapshot_uuid, (snapshot, Arc::clone(&configuration)));
                 }
                 drop(cache);
 
