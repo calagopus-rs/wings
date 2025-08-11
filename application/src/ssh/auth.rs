@@ -153,7 +153,7 @@ impl russh::server::Handler for SshSession {
             .get_sftp_auth(
                 AuthenticationType::PublicKey,
                 username,
-                &public_key.to_openssh().unwrap(),
+                &public_key.to_openssh()?,
             )
             .await
         {

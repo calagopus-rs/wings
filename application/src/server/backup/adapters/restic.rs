@@ -519,55 +519,94 @@ impl BackupExt for ResticBackup {
         config: &Arc<crate::config::Config>,
         archive_format: StreamableArchiveFormat,
     ) -> Result<crate::response::ApiResponse, anyhow::Error> {
-        let child = Command::new("restic")
-            .envs(&self.configuration.environment)
-            .arg("--json")
-            .arg("--no-lock")
-            .arg("--repo")
-            .arg(&self.configuration.repository)
-            .args(self.configuration.password())
-            .arg("dump")
-            .arg(format!("{}:{}", self.short_id, self.server_path.display()))
-            .arg("/")
-            .arg("--archive")
-            .arg(match archive_format {
-                StreamableArchiveFormat::Zip => "zip",
-                _ => "tar",
-            })
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .spawn()?;
+        let compression_level = config.system.backups.compression_level;
+        let (reader, writer) = tokio::io::duplex(crate::BUFFER_SIZE);
 
         match archive_format {
             StreamableArchiveFormat::Zip => {
-                let mut headers = HeaderMap::with_capacity(2);
-                headers.insert(
-                    "Content-Disposition",
-                    format!("attachment; filename={}.zip", self.uuid)
-                        .parse()
-                        .unwrap(),
-                );
-                headers.insert("Content-Type", "application/zip".parse().unwrap());
+                let child = std::process::Command::new("restic")
+                    .envs(&self.configuration.environment)
+                    .arg("--json")
+                    .arg("--no-lock")
+                    .arg("--repo")
+                    .arg(&self.configuration.repository)
+                    .args(self.configuration.password())
+                    .arg("dump")
+                    .arg(format!("{}:{}", self.short_id, self.server_path.display()))
+                    .arg("/")
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()?;
 
-                Ok(ApiResponse::new(Body::from_stream(
-                    tokio_util::io::ReaderStream::with_capacity(
-                        child.stdout.unwrap(),
-                        crate::BUFFER_SIZE,
-                    ),
-                ))
-                .with_headers(headers))
+                tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
+                    let writer = tokio_util::io::SyncIoBridge::new(writer);
+                    let mut archive = zip::ZipWriter::new_stream(writer);
+
+                    let mut subtar = tar::Archive::new(child.stdout.unwrap());
+                    let mut entries = subtar.entries()?;
+
+                    while let Some(Ok(mut entry)) = entries.next() {
+                        let header = entry.header().clone();
+                        let relative = entry.path()?;
+
+                        let mut options: zip::write::FileOptions<'_, ()> =
+                            zip::write::FileOptions::default()
+                                .compression_level(Some(
+                                    compression_level.flate2_compression_level().level() as i64,
+                                ))
+                                .unix_permissions(header.mode()?)
+                                .large_file(header.size()? >= u32::MAX as u64);
+                        if let Ok(mtime) = header.mtime()
+                            && let Some(mtime) = chrono::DateTime::from_timestamp(mtime as i64, 0)
+                        {
+                            options =
+                                options.last_modified_time(zip::DateTime::from_date_and_time(
+                                    mtime.year() as u16,
+                                    mtime.month() as u8,
+                                    mtime.day() as u8,
+                                    mtime.hour() as u8,
+                                    mtime.minute() as u8,
+                                    mtime.second() as u8,
+                                )?);
+                        }
+
+                        match header.entry_type() {
+                            tar::EntryType::Directory => {
+                                archive.add_directory(relative.to_string_lossy(), options)?;
+                            }
+                            tar::EntryType::Regular => {
+                                archive.start_file(relative.to_string_lossy(), options)?;
+                                std::io::copy(&mut entry, &mut archive)?;
+                            }
+                            _ => continue,
+                        }
+                    }
+
+                    Ok(())
+                });
             }
             _ => {
-                let (reader, writer) = tokio::io::duplex(crate::BUFFER_SIZE);
+                let child = Command::new("restic")
+                    .envs(&self.configuration.environment)
+                    .arg("--json")
+                    .arg("--no-lock")
+                    .arg("--repo")
+                    .arg(&self.configuration.repository)
+                    .args(self.configuration.password())
+                    .arg("dump")
+                    .arg(format!("{}:{}", self.short_id, self.server_path.display()))
+                    .arg("/")
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()?;
 
-                let compression_level = config.system.backups.compression_level;
                 tokio::spawn(async move {
-                    let mut stdout = child.stdout.unwrap();
                     let mut writer = archive_format
                         .compression_format()
                         .writer(writer, compression_level);
 
-                    if let Err(err) = tokio::io::copy(&mut stdout, &mut writer).await {
+                    if let Err(err) = tokio::io::copy(&mut child.stdout.unwrap(), &mut writer).await
+                    {
                         tracing::error!(
                             "failed to compress tar archive for restic backup: {}",
                             err
@@ -576,26 +615,25 @@ impl BackupExt for ResticBackup {
 
                     writer.shutdown().await.ok();
                 });
-
-                let mut headers = HeaderMap::with_capacity(2);
-                headers.insert(
-                    "Content-Disposition",
-                    format!(
-                        "attachment; filename={}.{}",
-                        self.uuid,
-                        archive_format.extension()
-                    )
-                    .parse()
-                    .unwrap(),
-                );
-                headers.insert("Content-Type", archive_format.mime_type().parse().unwrap());
-
-                Ok(ApiResponse::new(Body::from_stream(
-                    tokio_util::io::ReaderStream::with_capacity(reader, crate::BUFFER_SIZE),
-                ))
-                .with_headers(headers))
             }
         }
+
+        let mut headers = HeaderMap::with_capacity(2);
+        headers.insert(
+            "Content-Disposition",
+            format!(
+                "attachment; filename={}.{}",
+                self.uuid,
+                archive_format.extension()
+            )
+            .parse()?,
+        );
+        headers.insert("Content-Type", archive_format.mime_type().parse()?);
+
+        Ok(ApiResponse::new(Body::from_stream(
+            tokio_util::io::ReaderStream::with_capacity(reader, crate::BUFFER_SIZE),
+        ))
+        .with_headers(headers))
     }
 
     async fn restore(
@@ -807,7 +845,7 @@ impl BrowseResticBackup {
                 .unwrap_or_default()
                 .to_string_lossy()
                 .to_string(),
-            created: chrono::DateTime::from_timestamp(0, 0).unwrap(),
+            created: chrono::DateTime::from_timestamp(0, 0).unwrap_or_default(),
             modified: entry.mtime,
             mode: mode_str,
             mode_bits: format!("{:o}", entry.mode & 0o777),
@@ -933,44 +971,94 @@ impl BackupBrowseExt for BrowseResticBackup {
         }
 
         let full_path = PathBuf::from(&self.server_path).join(&entry.path);
-        let (reader, mut writer) = tokio::io::duplex(crate::BUFFER_SIZE);
-
-        let child = Command::new("restic")
-            .envs(&self.configuration.environment)
-            .arg("--json")
-            .arg("--no-lock")
-            .arg("--repo")
-            .arg(&self.configuration.repository)
-            .args(self.configuration.password())
-            .arg("dump")
-            .arg(format!("{}:{}", self.short_id, full_path.display()))
-            .arg("/")
-            .arg("--archive")
-            .arg(match archive_format {
-                StreamableArchiveFormat::Zip => "zip",
-                _ => "tar",
-            })
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .spawn()?;
-
         let compression_level = self.server.config.system.backups.compression_level;
-        tokio::spawn(async move {
-            let mut stdout = child.stdout.unwrap();
+        let (reader, writer) = tokio::io::duplex(crate::BUFFER_SIZE);
 
-            match archive_format {
-                StreamableArchiveFormat::Zip => {
-                    if let Err(err) = tokio::io::copy(&mut stdout, &mut writer).await {
-                        tracing::error!("failed to copy zip archive for restic backup: {}", err);
+        match archive_format {
+            StreamableArchiveFormat::Zip => {
+                let child = std::process::Command::new("restic")
+                    .envs(&self.configuration.environment)
+                    .arg("--json")
+                    .arg("--no-lock")
+                    .arg("--repo")
+                    .arg(&self.configuration.repository)
+                    .args(self.configuration.password())
+                    .arg("dump")
+                    .arg(format!("{}:{}", self.short_id, full_path.display()))
+                    .arg("/")
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()?;
+
+                tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
+                    let writer = tokio_util::io::SyncIoBridge::new(writer);
+                    let mut archive = zip::ZipWriter::new_stream(writer);
+
+                    let mut subtar = tar::Archive::new(child.stdout.unwrap());
+                    let mut entries = subtar.entries()?;
+
+                    while let Some(Ok(mut entry)) = entries.next() {
+                        let header = entry.header().clone();
+                        let relative = entry.path()?;
+
+                        let mut options: zip::write::FileOptions<'_, ()> =
+                            zip::write::FileOptions::default()
+                                .compression_level(Some(
+                                    compression_level.flate2_compression_level().level() as i64,
+                                ))
+                                .unix_permissions(header.mode()?)
+                                .large_file(header.size()? >= u32::MAX as u64);
+                        if let Ok(mtime) = header.mtime()
+                            && let Some(mtime) = chrono::DateTime::from_timestamp(mtime as i64, 0)
+                        {
+                            options =
+                                options.last_modified_time(zip::DateTime::from_date_and_time(
+                                    mtime.year() as u16,
+                                    mtime.month() as u8,
+                                    mtime.day() as u8,
+                                    mtime.hour() as u8,
+                                    mtime.minute() as u8,
+                                    mtime.second() as u8,
+                                )?);
+                        }
+
+                        match header.entry_type() {
+                            tar::EntryType::Directory => {
+                                archive.add_directory(relative.to_string_lossy(), options)?;
+                            }
+                            tar::EntryType::Regular => {
+                                archive.start_file(relative.to_string_lossy(), options)?;
+                                std::io::copy(&mut entry, &mut archive)?;
+                            }
+                            _ => continue,
+                        }
                     }
-                    writer.shutdown().await.ok();
-                }
-                _ => {
+
+                    Ok(())
+                });
+            }
+            _ => {
+                let child = Command::new("restic")
+                    .envs(&self.configuration.environment)
+                    .arg("--json")
+                    .arg("--no-lock")
+                    .arg("--repo")
+                    .arg(&self.configuration.repository)
+                    .args(self.configuration.password())
+                    .arg("dump")
+                    .arg(format!("{}:{}", self.short_id, full_path.display()))
+                    .arg("/")
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()?;
+
+                tokio::spawn(async move {
                     let mut writer = archive_format
                         .compression_format()
                         .writer(writer, compression_level);
 
-                    if let Err(err) = tokio::io::copy(&mut stdout, &mut writer).await {
+                    if let Err(err) = tokio::io::copy(&mut child.stdout.unwrap(), &mut writer).await
+                    {
                         tracing::error!(
                             "failed to compress tar archive for restic backup: {}",
                             err
@@ -978,9 +1066,9 @@ impl BackupBrowseExt for BrowseResticBackup {
                     }
 
                     writer.shutdown().await.ok();
-                }
+                });
             }
-        });
+        }
 
         Ok(reader)
     }
@@ -1148,10 +1236,8 @@ impl BackupBrowseExt for BrowseResticBackup {
                                         Err(_) => continue,
                                     };
 
-                                    let mut reader = child.stdout.unwrap();
-
                                     archive.start_file(relative.to_string_lossy(), options)?;
-                                    std::io::copy(&mut reader, &mut archive)?;
+                                    std::io::copy(&mut child.stdout.unwrap(), &mut archive)?;
                                 }
                                 _ => continue,
                             }

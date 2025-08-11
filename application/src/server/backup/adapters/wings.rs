@@ -191,7 +191,9 @@ impl BackupCreateExt for WingsBackup {
                     };
 
                     total.fetch_add(metadata.len(), Ordering::Relaxed);
-                    total_files += 1;
+                    if !metadata.is_dir() {
+                        total_files += 1;
+                    }
                 }
 
                 Ok::<_, anyhow::Error>(total_files)
@@ -286,38 +288,30 @@ impl BackupExt for WingsBackup {
             crate::config::SystemBackupsWingsArchiveFormat::Tar => {
                 headers.insert(
                     "Content-Disposition",
-                    format!("attachment; filename={}.tar", self.uuid)
-                        .parse()
-                        .unwrap(),
+                    format!("attachment; filename={}.tar", self.uuid).parse()?,
                 );
-                headers.insert("Content-Type", "application/x-tar".parse().unwrap());
+                headers.insert("Content-Type", "application/x-tar".parse()?);
             }
             crate::config::SystemBackupsWingsArchiveFormat::TarGz => {
                 headers.insert(
                     "Content-Disposition",
-                    format!("attachment; filename={}.tar.gz", self.uuid)
-                        .parse()
-                        .unwrap(),
+                    format!("attachment; filename={}.tar.gz", self.uuid).parse()?,
                 );
-                headers.insert("Content-Type", "application/gzip".parse().unwrap());
+                headers.insert("Content-Type", "application/gzip".parse()?);
             }
             crate::config::SystemBackupsWingsArchiveFormat::TarZstd => {
                 headers.insert(
                     "Content-Disposition",
-                    format!("attachment; filename={}.tar.zst", self.uuid)
-                        .parse()
-                        .unwrap(),
+                    format!("attachment; filename={}.tar.zst", self.uuid).parse()?,
                 );
-                headers.insert("Content-Type", "application/zstd".parse().unwrap());
+                headers.insert("Content-Type", "application/zstd".parse()?);
             }
             crate::config::SystemBackupsWingsArchiveFormat::Zip => {
                 headers.insert(
                     "Content-Disposition",
-                    format!("attachment; filename={}.zip", self.uuid)
-                        .parse()
-                        .unwrap(),
+                    format!("attachment; filename={}.zip", self.uuid).parse()?,
                 );
-                headers.insert("Content-Type", "application/zip".parse().unwrap());
+                headers.insert("Content-Type", "application/zip".parse()?);
             }
         };
 

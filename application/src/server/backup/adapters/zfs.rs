@@ -144,7 +144,9 @@ impl BackupCreateExt for ZfsBackup {
                     };
 
                     total_size += metadata.len();
-                    total_files += 1;
+                    if !metadata.is_dir() {
+                        total_files += 1;
+                    }
                 }
 
                 Ok::<_, anyhow::Error>((total_size, total_files))
@@ -279,10 +281,9 @@ impl BackupExt for ZfsBackup {
                 self.uuid,
                 archive_format.extension()
             )
-            .parse()
-            .unwrap(),
+            .parse()?,
         );
-        headers.insert("Content-Type", archive_format.mime_type().parse().unwrap());
+        headers.insert("Content-Type", archive_format.mime_type().parse()?);
 
         Ok(ApiResponse::new(Body::from_stream(
             tokio_util::io::ReaderStream::with_capacity(reader, crate::BUFFER_SIZE),

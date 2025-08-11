@@ -1141,7 +1141,7 @@ impl russh_sftp::server::Handler for SftpSession {
                             .map_err(|_| StatusCode::Failure)?;
                     }
                     let mut total_bytes_read = 0;
-                    let hash_algorithm = request.hash.split(',').next().unwrap();
+                    let hash_algorithm = request.hash.split(',').next().unwrap_or("");
 
                     #[inline]
                     fn bytes(length: u64, bytes_read: usize, total_bytes_read: u64) -> usize {

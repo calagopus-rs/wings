@@ -128,8 +128,7 @@ impl DdupBakBackup {
         entry_header.set_mtime(
             entry
                 .mtime()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .duration_since(std::time::UNIX_EPOCH)?
                 .as_secs(),
         );
 
@@ -151,7 +150,7 @@ impl DdupBakBackup {
 
                 let size_real = file.size_real as usize;
                 let reader = FixedReader::new(
-                    Box::new(repository.entry_reader(Entry::File(file.clone())).unwrap()),
+                    Box::new(repository.entry_reader(Entry::File(file.clone()))?),
                     size_real,
                 );
 
@@ -218,7 +217,7 @@ impl DdupBakBackup {
             }
             Entry::File(file) => {
                 let mut reader = FixedReader::new(
-                    Box::new(repository.entry_reader(Entry::File(file.clone())).unwrap()),
+                    Box::new(repository.entry_reader(Entry::File(file.clone()))?),
                     file.size_real as usize,
                 );
 
@@ -362,11 +361,10 @@ impl BackupCreateExt for DdupBakBackup {
                 let mut total_files = 0;
 
                 fn recursive_size(total_size: &mut u64, total_files: &mut u64, entry: Entry) {
-                    *total_files += 1;
-
                     match entry {
                         Entry::File(file) => {
                             *total_size += file.size_real;
+                            *total_files += 1;
                         }
                         Entry::Directory(directory) => {
                             directory
@@ -374,7 +372,9 @@ impl BackupCreateExt for DdupBakBackup {
                                 .into_iter()
                                 .for_each(|e| recursive_size(total_size, total_files, e));
                         }
-                        Entry::Symlink(_) => {}
+                        Entry::Symlink(_) => {
+                            *total_files += 1;
+                        }
                     }
                 }
 
@@ -490,10 +490,9 @@ impl BackupExt for DdupBakBackup {
                 self.uuid,
                 archive_format.extension()
             )
-            .parse()
-            .unwrap(),
+            .parse()?,
         );
-        headers.insert("Content-Type", archive_format.mime_type().parse().unwrap());
+        headers.insert("Content-Type", archive_format.mime_type().parse()?);
 
         Ok(ApiResponse::new(Body::from_stream(
             tokio_util::io::ReaderStream::with_capacity(reader, crate::BUFFER_SIZE),
@@ -729,7 +728,7 @@ impl BrowseDdupBakBackup {
                 .unwrap_or_default()
                 .to_string_lossy()
                 .to_string(),
-            created: chrono::DateTime::from_timestamp(0, 0).unwrap(),
+            created: chrono::DateTime::from_timestamp(0, 0).unwrap_or_default(),
             modified: chrono::DateTime::from_timestamp(
                 entry
                     .mtime()
@@ -738,7 +737,7 @@ impl BrowseDdupBakBackup {
                     .as_secs() as i64,
                 0,
             )
-            .unwrap(),
+            .unwrap_or_default(),
             mode: mode_str,
             mode_bits: format!("{:o}", entry.mode().bits() & 0o777),
             size,

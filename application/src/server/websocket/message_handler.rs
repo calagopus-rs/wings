@@ -26,7 +26,7 @@ pub async fn handle_message(
                 sender,
                 WebsocketMessage::new(
                     WebsocketEvent::ServerStats,
-                    &[serde_json::to_string(&server.resource_usage().await).unwrap()],
+                    &[serde_json::to_string(&server.resource_usage().await)?],
                 ),
             )
             .await;

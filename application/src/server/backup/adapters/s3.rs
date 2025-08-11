@@ -60,15 +60,15 @@ impl BoundedReader {
         offset: u64,
         size: u64,
         bytes_written: Arc<AtomicU64>,
-    ) -> Self {
-        file.seek(std::io::SeekFrom::Start(offset)).await.unwrap();
+    ) -> Result<Self, std::io::Error> {
+        file.seek(std::io::SeekFrom::Start(offset)).await?;
 
-        Self {
-            file: file.try_clone().await.unwrap(),
+        Ok(Self {
+            file: file.try_clone().await?,
             size,
             position: 0,
             bytes_written,
-        }
+        })
     }
 }
 
@@ -188,7 +188,9 @@ impl BackupCreateExt for S3Backup {
                     };
 
                     total.fetch_add(metadata.len(), Ordering::Relaxed);
-                    total_files += 1;
+                    if !metadata.is_dir() {
+                        total_files += 1;
+                    }
                 }
 
                 Ok::<_, anyhow::Error>(total_files)
@@ -256,7 +258,7 @@ impl BackupCreateExt for S3Backup {
                                     part_size,
                                     Arc::clone(&progress),
                                 )
-                                .await,
+                                .await?,
                                 server.config.system.backups.write_limit * 1024 * 1024,
                             ),
                             crate::BUFFER_SIZE,

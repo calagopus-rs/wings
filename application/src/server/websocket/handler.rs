@@ -1,4 +1,5 @@
 use crate::{
+    response::ApiResponse,
     routes::GetState,
     server::{
         permissions::Permission,
@@ -9,7 +10,7 @@ use axum::{
     body::Bytes,
     extract::{ConnectInfo, Path, WebSocketUpgrade, ws::Message},
     http::{HeaderMap, StatusCode},
-    response::Response,
+    response::{IntoResponse, Response},
 };
 use futures_util::{SinkExt, StreamExt};
 use std::{net::SocketAddr, pin::Pin, sync::Arc};
@@ -33,14 +34,9 @@ pub async fn handle_ws(
     let server = match server {
         Some(server) => server,
         None => {
-            return Response::builder()
-                .status(StatusCode::NOT_FOUND)
-                .header("Content-Type", "application/json")
-                .body(axum::body::Body::from(
-                    serde_json::to_string(&crate::routes::ApiError::new("server not found"))
-                        .unwrap(),
-                ))
-                .unwrap();
+            return ApiResponse::error("server not found")
+                .with_status(StatusCode::NOT_FOUND)
+                .into_response();
         }
     };
 

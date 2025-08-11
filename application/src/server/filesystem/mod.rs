@@ -818,7 +818,7 @@ impl Filesystem {
                     .as_secs() as i64,
                 0,
             )
-            .unwrap(),
+            .unwrap_or_default(),
             modified: chrono::DateTime::from_timestamp(
                 metadata
                     .modified()
@@ -831,7 +831,7 @@ impl Filesystem {
                     .as_secs() as i64,
                 0,
             )
-            .unwrap(),
+            .unwrap_or_default(),
             mode: mode_str,
             mode_bits: format!("{:o}", metadata.permissions().mode() & 0o777),
             size,
