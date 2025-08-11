@@ -1,6 +1,7 @@
-use cap_std::fs::{Metadata, OpenOptions};
+use cap_std::fs::{Metadata, OpenOptions, PermissionsExt};
 use std::{
     collections::VecDeque,
+    os::{fd::AsFd, unix::fs::PermissionsExt as StdPermissionsExt},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -493,8 +494,17 @@ impl CapFilesystem {
     ) -> Result<(), anyhow::Error> {
         let path = self.relative_path(path.as_ref());
 
-        let inner = self.async_get_inner().await?;
-        tokio::task::spawn_blocking(move || inner.set_permissions(path, permissions)).await??;
+        if path.components().next().is_none() {
+            tokio::fs::set_permissions(
+                &*self.base_path,
+                std::fs::Permissions::from_mode(permissions.mode()),
+            )
+            .await?;
+        } else {
+            let inner = self.async_get_inner().await?;
+
+            tokio::task::spawn_blocking(move || inner.set_permissions(path, permissions)).await??;
+        }
 
         Ok(())
     }
@@ -508,6 +518,123 @@ impl CapFilesystem {
 
         let inner = self.get_inner()?;
         inner.set_permissions(path, permissions)?;
+
+        Ok(())
+    }
+
+    pub async fn async_set_symlink_permissions(
+        &self,
+        path: impl AsRef<Path>,
+        permissions: cap_std::fs::Permissions,
+    ) -> Result<(), anyhow::Error> {
+        let path = self.relative_path(path.as_ref());
+
+        if path.components().next().is_none() {
+            tokio::fs::set_permissions(
+                &*self.base_path,
+                std::fs::Permissions::from_mode(permissions.mode()),
+            )
+            .await?;
+        } else {
+            let inner = self.async_get_inner().await?;
+
+            tokio::task::spawn_blocking(move || {
+                rustix::fs::chmodat(
+                    inner.as_fd(),
+                    path,
+                    rustix::fs::Mode::from_raw_mode(permissions.mode()),
+                    rustix::fs::AtFlags::SYMLINK_NOFOLLOW,
+                )
+            })
+            .await??;
+        }
+
+        Ok(())
+    }
+
+    pub fn set_symlink_permissions(
+        &self,
+        path: impl AsRef<Path>,
+        permissions: cap_std::fs::Permissions,
+    ) -> Result<(), anyhow::Error> {
+        let path = self.relative_path(path.as_ref());
+
+        if path.components().next().is_none() {
+            std::fs::set_permissions(
+                &*self.base_path,
+                std::fs::Permissions::from_mode(permissions.mode()),
+            )?;
+        } else {
+            let inner = self.get_inner()?;
+
+            rustix::fs::chmodat(
+                inner.as_fd(),
+                path,
+                rustix::fs::Mode::from_raw_mode(permissions.mode()),
+                rustix::fs::AtFlags::SYMLINK_NOFOLLOW,
+            )?;
+        }
+
+        Ok(())
+    }
+
+    pub async fn async_set_times(
+        &self,
+        path: impl AsRef<Path>,
+        modification_time: std::time::SystemTime,
+        access_time: Option<std::time::SystemTime>,
+    ) -> Result<(), anyhow::Error> {
+        let path = self.relative_path(path.as_ref());
+        let inner = self.async_get_inner().await?;
+
+        let elapsed_modification = modification_time.duration_since(std::time::UNIX_EPOCH)?;
+        let elapsed_access = access_time
+            .unwrap_or_else(std::time::SystemTime::now)
+            .duration_since(std::time::UNIX_EPOCH)?;
+
+        let times = rustix::fs::Timestamps {
+            last_modification: elapsed_modification.try_into()?,
+            last_access: elapsed_access.try_into()?,
+        };
+
+        tokio::task::spawn_blocking(move || {
+            rustix::fs::utimensat(
+                inner.as_fd(),
+                path,
+                &times,
+                rustix::fs::AtFlags::SYMLINK_NOFOLLOW,
+            )
+        })
+        .await??;
+
+        Ok(())
+    }
+
+    pub fn set_times(
+        &self,
+        path: impl AsRef<Path>,
+        modification_time: std::time::SystemTime,
+        access_time: Option<std::time::SystemTime>,
+    ) -> Result<(), anyhow::Error> {
+        let path = self.relative_path(path.as_ref());
+        let inner = self.get_inner()?;
+
+        let elapsed_modification = modification_time.duration_since(std::time::UNIX_EPOCH)?;
+        let elapsed_access = access_time
+            .unwrap_or_else(std::time::SystemTime::now)
+            .duration_since(std::time::UNIX_EPOCH)?;
+
+        let times = rustix::fs::Timestamps {
+            last_modification: elapsed_modification.try_into()?,
+            last_access: elapsed_access.try_into()?,
+        };
+
+        rustix::fs::utimensat(
+            inner.as_fd(),
+            path,
+            &times,
+            rustix::fs::AtFlags::SYMLINK_NOFOLLOW,
+        )?;
 
         Ok(())
     }

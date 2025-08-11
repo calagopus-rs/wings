@@ -1732,7 +1732,7 @@ impl russh_sftp::server::Handler for SftpSession {
 
                     self.server
                         .filesystem
-                        .async_set_permissions(&handle.path, permissions)
+                        .async_set_symlink_permissions(&handle.path, permissions)
                         .await
                         .map_err(|_| StatusCode::Failure)?;
                 }

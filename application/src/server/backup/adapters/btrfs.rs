@@ -397,12 +397,23 @@ impl BackupExt for BtrfsBackup {
                                         .filesystem
                                         .async_set_permissions(&path, metadata.permissions())
                                         .await?;
-                                } else if metadata.is_symlink()
-                                    && let Ok(target) = filesystem.async_read_link(&path).await
-                                    && let Err(err) =
-                                        server.filesystem.async_symlink(&target, &path).await
-                                {
-                                    tracing::debug!("failed to create symlink from backup: {:#?}", err);
+                                    if let Ok(modified_time) = metadata.modified() {
+                                        server.filesystem.async_set_times(
+                                            &path,
+                                            modified_time.into_std(),
+                                            None,
+                                        ).await?;
+                                    }
+                                } else if metadata.is_symlink() && let Ok(target) = filesystem.async_read_link(&path).await {
+                                    if let Err(err) = server.filesystem.async_symlink(&target, &path).await {
+                                        tracing::debug!("failed to create symlink from backup: {:#?}", err);
+                                    } else if let Ok(modified_time) = metadata.modified() {
+                                        server.filesystem.async_set_times(
+                                            &path,
+                                            modified_time.into_std(),
+                                            None,
+                                        ).await?;
+                                    }
                                 }
 
                                 Ok(())

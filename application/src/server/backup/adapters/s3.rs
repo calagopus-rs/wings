@@ -394,6 +394,17 @@ impl BackupExt for S3Backup {
                             Permissions::from_mode(header.mode().unwrap_or(0o755)),
                         )
                         .await?;
+                    if let Ok(modified_time) = header.mtime() {
+                        server
+                            .filesystem
+                            .async_set_times(
+                                path.as_ref(),
+                                std::time::UNIX_EPOCH
+                                    + std::time::Duration::from_secs(modified_time),
+                                None,
+                            )
+                            .await?;
+                    }
                 }
                 tokio_tar::EntryType::Regular => {
                     server
@@ -427,6 +438,25 @@ impl BackupExt for S3Backup {
 
                     if let Err(err) = server.filesystem.async_symlink(link, path.as_ref()).await {
                         tracing::debug!("failed to create symlink from backup: {:#?}", err);
+                    } else {
+                        server
+                            .filesystem
+                            .async_set_symlink_permissions(
+                                path.as_ref(),
+                                Permissions::from_mode(header.mode().unwrap_or(0o755)),
+                            )
+                            .await?;
+                        if let Ok(modified_time) = header.mtime() {
+                            server
+                                .filesystem
+                                .async_set_times(
+                                    path.as_ref(),
+                                    std::time::UNIX_EPOCH
+                                        + std::time::Duration::from_secs(modified_time),
+                                    None,
+                                )
+                                .await?;
+                        }
                     }
                 }
                 _ => {}

@@ -429,6 +429,17 @@ impl Archive {
                                     .async_set_permissions(&destination_path, permissions)
                                     .await?;
                             }
+                            if let Ok(modified_time) = header.mtime() {
+                                server
+                                    .filesystem
+                                    .async_set_times(
+                                        &destination_path,
+                                        std::time::UNIX_EPOCH
+                                            + std::time::Duration::from_secs(modified_time),
+                                        None,
+                                    )
+                                    .await?;
+                            }
                         }
                         tokio_tar::EntryType::Regular => {
                             if let Some(parent) = destination_path.parent() {
@@ -466,6 +477,27 @@ impl Archive {
                                     "failed to create symlink from archive: {:#?}",
                                     err
                                 );
+                            } else {
+                                if let Ok(permissions) = header.mode().map(Permissions::from_mode) {
+                                    server
+                                        .filesystem
+                                        .async_set_symlink_permissions(
+                                            &destination_path,
+                                            permissions,
+                                        )
+                                        .await?;
+                                }
+                                if let Ok(modified_time) = header.mtime() {
+                                    server
+                                        .filesystem
+                                        .async_set_times(
+                                            &destination_path,
+                                            std::time::UNIX_EPOCH
+                                                + std::time::Duration::from_secs(modified_time),
+                                            None,
+                                        )
+                                        .await?;
+                                }
                             }
                         }
                         _ => {}
@@ -543,6 +575,15 @@ impl Archive {
                                                 entry.unix_mode().unwrap_or(0o755),
                                             ),
                                         )?;
+                                        if let Some(modified_time) =
+                                            zip_entry_get_modified_time(&entry)
+                                        {
+                                            server.filesystem.set_times(
+                                                &destination_path,
+                                                modified_time.into_std(),
+                                                None,
+                                            )?;
+                                        }
                                     } else if entry.is_file() {
                                         if let Some(parent) = destination_path.parent() {
                                             server.filesystem.create_dir_all(parent)?;
@@ -561,7 +602,7 @@ impl Archive {
                                         && (1..=2048).contains(&entry.size())
                                     {
                                         let link =
-                                            std::io::read_to_string(entry).unwrap_or_default();
+                                            std::io::read_to_string(&mut entry).unwrap_or_default();
 
                                         if let Err(err) =
                                             server.filesystem.symlink(link, &destination_path)
@@ -570,6 +611,22 @@ impl Archive {
                                                 "failed to create symlink from archive: {:#?}",
                                                 err
                                             );
+                                        } else {
+                                            server.filesystem.set_symlink_permissions(
+                                                &destination_path,
+                                                cap_std::fs::Permissions::from_mode(
+                                                    entry.unix_mode().unwrap_or(0o755),
+                                                ),
+                                            )?;
+                                            if let Some(modified_time) =
+                                                zip_entry_get_modified_time(&entry)
+                                            {
+                                                server.filesystem.set_times(
+                                                    &destination_path,
+                                                    modified_time.into_std(),
+                                                    None,
+                                                )?;
+                                            }
                                         }
                                     }
                                 }
@@ -737,6 +794,18 @@ impl Archive {
                                                 err.to_string().into(),
                                             ));
                                         }
+
+                                        if entry.has_last_modified_date
+                                            && let Err(err) = server.filesystem.set_times(
+                                                &destination_path,
+                                                entry.last_modified_date.into(),
+                                                None,
+                                            )
+                                        {
+                                            return Err(sevenz_rust2::Error::Other(
+                                                err.to_string().into(),
+                                            ));
+                                        }
                                     } else {
                                         if let Some(parent) = destination_path.parent()
                                             && let Err(err) =
@@ -833,25 +902,22 @@ impl Archive {
                                         entry,
                                     )?;
                                 }
+
+                                server
+                                    .filesystem
+                                    .set_times(&destination_path, dir.mtime, None)?;
                             }
                             ddup_bak::archive::entries::Entry::File(mut file) => {
-                                scope.spawn({
-                                    let server = server.clone();
+                                let mut writer = super::writer::FileSystemWriter::new(
+                                    server.clone(),
+                                    destination_path,
+                                    Some(cap_std::fs::Permissions::from_std(file.mode.into())),
+                                    Some(cap_std::time::SystemTime::from_std(file.mtime)),
+                                )?;
 
-                                    move |_| {
-                                        let mut writer = super::writer::FileSystemWriter::new(
-                                            server,
-                                            destination_path,
-                                            Some(cap_std::fs::Permissions::from_std(
-                                                file.mode.into(),
-                                            )),
-                                            Some(cap_std::time::SystemTime::from_std(file.mtime)),
-                                        )
-                                        .unwrap();
-
-                                        std::io::copy(&mut file, &mut writer).unwrap();
-                                        writer.flush().unwrap();
-                                    }
+                                scope.spawn(move |_| {
+                                    std::io::copy(&mut file, &mut writer).unwrap();
+                                    writer.flush().unwrap();
                                 });
                             }
                             ddup_bak::archive::entries::Entry::Symlink(link) => {
@@ -862,6 +928,16 @@ impl Archive {
                                         "failed to create symlink from archive: {:#?}",
                                         err
                                     );
+                                } else {
+                                    server.filesystem.set_symlink_permissions(
+                                        &destination_path,
+                                        cap_std::fs::Permissions::from_std(link.mode.into()),
+                                    )?;
+                                    server.filesystem.set_times(
+                                        &destination_path,
+                                        link.mtime,
+                                        None,
+                                    )?;
                                 }
                             }
                         }

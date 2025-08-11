@@ -12,7 +12,9 @@ use crate::{
             Backup, BackupBrowseExt, BackupCleanExt, BackupCreateExt, BackupExt, BackupFindExt,
             BrowseBackup,
         },
-        filesystem::archive::{StreamableArchiveFormat, multi_reader::MultiReader},
+        filesystem::archive::{
+            StreamableArchiveFormat, multi_reader::MultiReader, zip_entry_get_modified_time,
+        },
     },
 };
 use axum::{body::Body, http::HeaderMap};
@@ -384,6 +386,17 @@ impl BackupExt for WingsBackup {
                                     Permissions::from_mode(header.mode().unwrap_or(0o755)),
                                 )
                                 .await?;
+                            if let Ok(modified_time) = header.mtime() {
+                                server
+                                    .filesystem
+                                    .async_set_times(
+                                        path.as_ref(),
+                                        std::time::UNIX_EPOCH
+                                            + std::time::Duration::from_secs(modified_time),
+                                        None,
+                                    )
+                                    .await?;
+                            }
                         }
                         tokio_tar::EntryType::Regular => {
                             server
@@ -421,6 +434,25 @@ impl BackupExt for WingsBackup {
                                 server.filesystem.async_symlink(link, path.as_ref()).await
                             {
                                 tracing::debug!("failed to create symlink from backup: {:#?}", err);
+                            } else {
+                                server
+                                    .filesystem
+                                    .async_set_symlink_permissions(
+                                        path.as_ref(),
+                                        Permissions::from_mode(header.mode().unwrap_or(0o644)),
+                                    )
+                                    .await?;
+                                if let Ok(modified_time) = header.mtime() {
+                                    server
+                                        .filesystem
+                                        .async_set_times(
+                                            path.as_ref(),
+                                            std::time::UNIX_EPOCH
+                                                + std::time::Duration::from_secs(modified_time),
+                                            None,
+                                        )
+                                        .await?;
+                                }
                             }
                         }
                         _ => {}
@@ -476,7 +508,7 @@ impl BackupExt for WingsBackup {
                                         return Ok(());
                                     }
 
-                                    let entry = archive.by_index(i)?;
+                                    let mut entry = archive.by_index(i)?;
                                     let path = match entry.enclosed_name() {
                                         Some(path) => path,
                                         None => continue,
@@ -525,13 +557,27 @@ impl BackupExt for WingsBackup {
                                         std::io::copy(&mut reader, &mut writer)?;
                                         writer.flush()?;
                                     } else if entry.is_symlink() && (1..=2048).contains(&entry.size()) {
-                                        let link = std::io::read_to_string(entry).unwrap_or_default();
+                                        let link = std::io::read_to_string(&mut entry).unwrap_or_default();
 
                                         if let Err(err) = server.filesystem.symlink(link, &path) {
                                             tracing::debug!(
                                                 "failed to create symlink from backup: {:#?}",
                                                 err
                                             );
+                                        } else {
+                                            server.filesystem.set_symlink_permissions(
+                                                &path,
+                                                Permissions::from_mode(
+                                                    entry.unix_mode().unwrap_or(0o644),
+                                                ),
+                                            )?;
+                                            if let Some(modified_time) = zip_entry_get_modified_time(&entry) {
+                                                server.filesystem.set_times(
+                                                    &path,
+                                                    modified_time.into_std(),
+                                                    None,
+                                                )?;
+                                            }
                                         }
                                     }
                                 }
@@ -910,7 +956,7 @@ impl BackupBrowseExt for BrowseWingsBackup {
                             entry_header.set_mode(mode);
                         }
                         entry_header.set_mtime(
-                            crate::server::filesystem::archive::zip_entry_get_modified_time(&entry)
+                            zip_entry_get_modified_time(&entry)
                                 .map(|dt| dt.into_std().elapsed().unwrap_or_default().as_secs())
                                 .unwrap_or_default(),
                         );

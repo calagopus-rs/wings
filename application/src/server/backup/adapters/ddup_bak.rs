@@ -565,10 +565,18 @@ impl BackupExt for DdupBakBackup {
                         for entry in &directory.entries {
                             recursive_restore(runtime, repository, entry, &path, server, progress)?;
                         }
+
+                        server.filesystem.set_times(&path, directory.mtime, None)?;
                     }
                     Entry::Symlink(symlink) => {
                         if let Err(err) = server.filesystem.symlink(&symlink.target, &path) {
                             tracing::debug!("failed to create symlink from backup: {:#?}", err);
+                        } else {
+                            server.filesystem.set_symlink_permissions(
+                                &path,
+                                cap_std::fs::Permissions::from_std(symlink.mode.into()),
+                            )?;
+                            server.filesystem.set_times(&path, symlink.mtime, None)?;
                         }
                     }
                 }
