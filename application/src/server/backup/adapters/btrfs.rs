@@ -108,17 +108,21 @@ impl BackupCreateExt for BtrfsBackup {
                     .async_walk_dir(&PathBuf::from(""))
                     .await?
                     .with_ignored(&ignored);
-                let mut total = 0;
+                let mut total_size = 0;
+                let mut total_files = 0;
                 while let Some(Ok((_, path))) = walker.next_entry().await {
                     let metadata = match server.filesystem.async_symlink_metadata(&path).await {
                         Ok(metadata) => metadata,
                         Err(_) => continue,
                     };
 
-                    total += metadata.len();
+                    total_size += metadata.len();
+                    if !metadata.is_dir() {
+                        total_files += 1;
+                    }
                 }
 
-                Ok::<u64, anyhow::Error>(total)
+                Ok::<_, anyhow::Error>((total_size, total_files))
             }
         };
 
@@ -188,7 +192,8 @@ impl BackupCreateExt for BtrfsBackup {
             Ok::<_, anyhow::Error>((generation, uuid))
         };
 
-        let (total_size, (generation, uuid)) = tokio::try_join!(total_task, snapshot_task)?;
+        let ((total_size, total_files), (generation, uuid)) =
+            tokio::try_join!(total_task, snapshot_task)?;
 
         Ok(RawServerBackup {
             checksum: format!(
@@ -198,6 +203,7 @@ impl BackupCreateExt for BtrfsBackup {
             ),
             checksum_type: "btrfs-subvolume".to_string(),
             size: total_size,
+            files: total_files,
             successful: true,
             parts: vec![],
         })

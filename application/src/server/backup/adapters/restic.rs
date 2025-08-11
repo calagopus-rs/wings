@@ -441,6 +441,7 @@ impl BackupCreateExt for ResticBackup {
 
         let mut snapshot_id = None;
         let mut total_bytes_processed = 0;
+        let mut total_files_processed = 0;
 
         while let Ok(Some(line)) = line_reader.next_line().await {
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&line) {
@@ -454,15 +455,18 @@ impl BackupCreateExt for ResticBackup {
                     progress.store(bytes_done, Ordering::SeqCst);
                     total.store(total_bytes, Ordering::SeqCst);
                 } else if json.get("message_type").and_then(|v| v.as_str()) == Some("summary") {
-                    let total_bytes = json
+                    total_bytes_processed = json
                         .get("total_bytes_processed")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    total_files_processed = json
+                        .get("total_files_processed")
                         .and_then(|v| v.as_u64())
                         .unwrap_or(0);
                     snapshot_id = json
                         .get("snapshot_id")
                         .and_then(|v| v.as_str())
                         .map(String::from);
-                    total_bytes_processed = total_bytes;
                 }
             }
         }
@@ -496,6 +500,7 @@ impl BackupCreateExt for ResticBackup {
             checksum: snapshot_id.unwrap_or_else(|| "unknown".to_string()),
             checksum_type: "restic".to_string(),
             size: total_bytes_processed,
+            files: total_files_processed,
             successful: true,
             parts: vec![],
         })

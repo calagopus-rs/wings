@@ -135,17 +135,21 @@ impl BackupCreateExt for ZfsBackup {
                     .async_walk_dir(&PathBuf::from(""))
                     .await?
                     .with_ignored(&ignored);
-                let mut total = 0;
+                let mut total_size = 0;
+                let mut total_files = 0;
                 while let Some(Ok((_, path))) = walker.next_entry().await {
                     let metadata = match server.filesystem.async_symlink_metadata(&path).await {
                         Ok(metadata) => metadata,
                         Err(_) => continue,
                     };
 
-                    total += metadata.len();
+                    total_size += metadata.len();
+                    if !metadata.is_dir() {
+                        total_files += 1;
+                    }
                 }
 
-                Ok::<u64, anyhow::Error>(total)
+                Ok::<_, anyhow::Error>((total_size, total_files))
             }
         };
 
@@ -189,12 +193,13 @@ impl BackupCreateExt for ZfsBackup {
             Ok::<_, anyhow::Error>(dataset_name)
         };
 
-        let (total_size, dataset_name) = tokio::try_join!(total_task, dataset_task)?;
+        let ((total_size, total_files), dataset_name) = tokio::try_join!(total_task, dataset_task)?;
 
         Ok(RawServerBackup {
             checksum: dataset_name,
             checksum_type: "zfs-subvolume".to_string(),
             size: total_size,
+            files: total_files,
             successful: true,
             parts: vec![],
         })

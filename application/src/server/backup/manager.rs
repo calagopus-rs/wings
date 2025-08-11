@@ -175,6 +175,7 @@ impl BackupManager {
                             checksum: String::new(),
                             checksum_type: String::new(),
                             size: 0,
+                            files: 0,
                             successful: false,
                             parts: vec![],
                         },
@@ -190,6 +191,7 @@ impl BackupManager {
                                 "checksum_type": "",
                                 "checksum": "",
                                 "size": 0,
+                                "files": 0,
                                 "successful": false,
                             })
                             .to_string(),
@@ -218,6 +220,7 @@ impl BackupManager {
                         "checksum_type": backup.checksum_type,
                         "checksum": backup.checksum,
                         "size": backup.size,
+                        "files": backup.files,
                         "successful": backup.successful,
                     })
                     .to_string(),

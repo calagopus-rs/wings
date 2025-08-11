@@ -147,7 +147,26 @@ impl BackupCreateExt for S3Backup {
         _ignore_raw: String,
     ) -> Result<RawServerBackup, anyhow::Error> {
         let file_name = Self::get_file_name(&server.config, uuid);
-        let writer = tokio::fs::File::create(&file_name).await?;
+        let mut file = tokio::fs::File::create(&file_name).await?;
+
+        let (mut checksum_reader, checksum_writer) = tokio::io::duplex(crate::BUFFER_SIZE);
+
+        let checksum_task = async {
+            let mut sha1 = sha1::Sha1::new();
+
+            let mut buffer = vec![0; crate::BUFFER_SIZE];
+            loop {
+                let bytes_read = checksum_reader.read(&mut buffer).await?;
+                if bytes_read == 0 {
+                    break;
+                }
+
+                sha1.update(&buffer[..bytes_read]);
+                file.write_all(&buffer[..bytes_read]).await?;
+            }
+
+            Ok::<_, anyhow::Error>(format!("{:x}", sha1.finalize()))
+        };
 
         let total_task = {
             let server = server.clone();
@@ -161,6 +180,7 @@ impl BackupCreateExt for S3Backup {
                     .async_walk_dir(Path::new(""))
                     .await?
                     .with_ignored(&ignored);
+                let mut total_files = 0;
                 while let Some(Ok((_, path))) = walker.next_entry().await {
                     let metadata = match server.filesystem.async_symlink_metadata(&path).await {
                         Ok(metadata) => metadata,
@@ -168,16 +188,19 @@ impl BackupCreateExt for S3Backup {
                     };
 
                     total.fetch_add(metadata.len(), Ordering::Relaxed);
+                    if !metadata.is_dir() {
+                        total_files += 1;
+                    }
                 }
 
-                Ok::<(), anyhow::Error>(())
+                Ok::<_, anyhow::Error>(total_files)
             }
         };
 
         let archive_task = async {
             let sources = server.filesystem.async_read_dir_all(Path::new("")).await?;
             let writer = AsyncLimitedWriter::new_with_bytes_per_second(
-                writer,
+                checksum_writer,
                 server.config.system.backups.write_limit * 1024 * 1024,
             );
 
@@ -194,20 +217,7 @@ impl BackupCreateExt for S3Backup {
             .await
         };
 
-        tokio::try_join!(total_task, archive_task)?;
-
-        let mut sha1 = sha1::Sha1::new();
-        let mut file = tokio::fs::File::open(&file_name).await?;
-
-        let mut buffer = [0; 8192];
-        loop {
-            let bytes_read = file.read(&mut buffer).await?;
-            if bytes_read == 0 {
-                break;
-            }
-
-            sha1.update(&buffer[..bytes_read]);
-        }
+        let (checksum, total_files, _) = tokio::try_join!(checksum_task, total_task, archive_task)?;
 
         let size = file.metadata().await?.len();
         let (part_size, part_urls) = server.config.client.backup_upload_urls(uuid, size).await?;
@@ -305,9 +315,10 @@ impl BackupCreateExt for S3Backup {
         tokio::fs::remove_file(&file_name).await?;
 
         Ok(RawServerBackup {
-            checksum: format!("{:x}", sha1.finalize()),
+            checksum,
             checksum_type: "sha1".to_string(),
             size,
+            files: total_files,
             successful: true,
             parts,
         })

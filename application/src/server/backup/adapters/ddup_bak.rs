@@ -304,73 +304,87 @@ impl BackupCreateExt for DdupBakBackup {
         };
 
         let server = server.clone();
-        let archive_task = tokio::task::spawn_blocking(move || -> Result<u64, anyhow::Error> {
-            let mut override_builder = OverrideBuilder::new(&server.filesystem.base_path);
+        let archive_task =
+            tokio::task::spawn_blocking(move || -> Result<(u64, u64), anyhow::Error> {
+                let mut override_builder = OverrideBuilder::new(&server.filesystem.base_path);
 
-            for line in ignore_raw.lines() {
-                if let Some(line) = line.trim().strip_prefix('!') {
-                    override_builder.add(line).ok();
-                } else {
-                    override_builder.add(&format!("!{}", line.trim())).ok();
-                }
-            }
-
-            let archive = repository.create_archive(
-                &uuid.to_string(),
-                Some(
-                    WalkBuilder::new(&server.filesystem.base_path)
-                        .overrides(override_builder.build()?)
-                        .ignore(false)
-                        .git_ignore(false)
-                        .follow_links(false)
-                        .git_global(false)
-                        .hidden(false)
-                        .build(),
-                ),
-                Some(&server.filesystem.base_path),
-                None,
-                Some({
-                    let compression_format =
-                        server.config.system.backups.ddup_bak.compression_format;
-
-                    Arc::new(move |_, metadata| {
-                        progress.fetch_add(metadata.len(), Ordering::SeqCst);
-
-                        match compression_format {
-                            crate::config::SystemBackupsDdupBakCompressionFormat::None => {
-                                ddup_bak::archive::CompressionFormat::None
-                            }
-                            crate::config::SystemBackupsDdupBakCompressionFormat::Deflate => {
-                                ddup_bak::archive::CompressionFormat::Deflate
-                            }
-                            crate::config::SystemBackupsDdupBakCompressionFormat::Gzip => {
-                                ddup_bak::archive::CompressionFormat::Gzip
-                            }
-                            crate::config::SystemBackupsDdupBakCompressionFormat::Brotli => {
-                                ddup_bak::archive::CompressionFormat::Brotli
-                            }
-                        }
-                    })
-                }),
-                server.config.system.backups.ddup_bak.create_threads,
-            )?;
-
-            repository.save()?;
-
-            fn recursive_size(entry: Entry) -> u64 {
-                match entry {
-                    Entry::File(file) => file.size_real,
-                    Entry::Directory(directory) => {
-                        directory.entries.into_iter().map(recursive_size).sum()
+                for line in ignore_raw.lines() {
+                    if let Some(line) = line.trim().strip_prefix('!') {
+                        override_builder.add(line).ok();
+                    } else {
+                        override_builder.add(&format!("!{}", line.trim())).ok();
                     }
-                    Entry::Symlink(_) => 0,
                 }
-            }
 
-            Ok(archive.into_entries().into_iter().map(recursive_size).sum())
-        });
+                let archive = repository.create_archive(
+                    &uuid.to_string(),
+                    Some(
+                        WalkBuilder::new(&server.filesystem.base_path)
+                            .overrides(override_builder.build()?)
+                            .ignore(false)
+                            .git_ignore(false)
+                            .follow_links(false)
+                            .git_global(false)
+                            .hidden(false)
+                            .build(),
+                    ),
+                    Some(&server.filesystem.base_path),
+                    None,
+                    Some({
+                        let compression_format =
+                            server.config.system.backups.ddup_bak.compression_format;
 
-        let size = match tokio::join!(total_task, archive_task) {
+                        Arc::new(move |_, metadata| {
+                            progress.fetch_add(metadata.len(), Ordering::SeqCst);
+
+                            match compression_format {
+                                crate::config::SystemBackupsDdupBakCompressionFormat::None => {
+                                    ddup_bak::archive::CompressionFormat::None
+                                }
+                                crate::config::SystemBackupsDdupBakCompressionFormat::Deflate => {
+                                    ddup_bak::archive::CompressionFormat::Deflate
+                                }
+                                crate::config::SystemBackupsDdupBakCompressionFormat::Gzip => {
+                                    ddup_bak::archive::CompressionFormat::Gzip
+                                }
+                                crate::config::SystemBackupsDdupBakCompressionFormat::Brotli => {
+                                    ddup_bak::archive::CompressionFormat::Brotli
+                                }
+                            }
+                        })
+                    }),
+                    server.config.system.backups.ddup_bak.create_threads,
+                )?;
+
+                repository.save()?;
+
+                let mut total_size = 0;
+                let mut total_files = 0;
+
+                fn recursive_size(total_size: &mut u64, total_files: &mut u64, entry: Entry) {
+                    match entry {
+                        Entry::File(file) => {
+                            *total_size += file.size_real;
+                            *total_files += 1;
+                        }
+                        Entry::Directory(directory) => {
+                            directory
+                                .entries
+                                .into_iter()
+                                .for_each(|e| recursive_size(total_size, total_files, e));
+                        }
+                        Entry::Symlink(_) => {}
+                    }
+                }
+
+                for entry in archive.entries.into_iter() {
+                    recursive_size(&mut total_size, &mut total_files, entry.clone());
+                }
+
+                Ok((total_size, total_files))
+            });
+
+        let (total_size, total_files) = match tokio::join!(total_task, archive_task) {
             (Ok(()), Ok(Ok(size))) => size,
             (Err(err), _) => return Err(err),
             (_, Err(err)) => return Err(err.into()),
@@ -393,7 +407,8 @@ impl BackupCreateExt for DdupBakBackup {
         Ok(RawServerBackup {
             checksum: format!("{}-{:x}", file.metadata().await?.len(), sha1.finalize()),
             checksum_type: "ddup-sha1".to_string(),
-            size,
+            size: total_size,
+            files: total_files,
             successful: true,
             parts: vec![],
         })

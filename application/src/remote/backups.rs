@@ -15,6 +15,7 @@ pub struct RawServerBackup {
     pub checksum: String,
     pub checksum_type: String,
     pub size: u64,
+    pub files: u64,
     pub successful: bool,
     pub parts: Vec<RawServerBackupPart>,
 }
