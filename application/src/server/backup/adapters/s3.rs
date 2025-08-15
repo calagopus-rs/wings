@@ -60,7 +60,7 @@ impl BoundedReader {
         offset: u64,
         size: u64,
         bytes_written: Arc<AtomicU64>,
-    ) -> Result<Self, std::io::Error> {
+    ) -> std::io::Result<Self> {
         file.seek(std::io::SeekFrom::Start(offset)).await?;
 
         Ok(Self {

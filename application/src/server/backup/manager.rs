@@ -15,6 +15,7 @@ pub struct BackupManager {
     config: Arc<crate::config::Config>,
     cached_backups: Arc<RwLock<HashMap<uuid::Uuid, BackupValue>>>,
     cached_browse_backups: Arc<RwLock<HashMap<uuid::Uuid, BrowseBackupValue>>>,
+    cached_browse_backup_locks: Arc<RwLock<HashMap<uuid::Uuid, Arc<tokio::sync::Mutex<()>>>>>,
     cached_backup_adapters: RwLock<HashMap<uuid::Uuid, BackupAdapter>>,
 
     task: tokio::task::JoinHandle<()>,
@@ -24,12 +25,14 @@ impl BackupManager {
     pub fn new(config: Arc<crate::config::Config>) -> Self {
         let cached_backups = Arc::new(RwLock::new(HashMap::new()));
         let cached_browse_backups = Arc::new(RwLock::new(HashMap::new()));
+        let cached_browse_backup_locks = Arc::new(RwLock::new(HashMap::new()));
 
         Self {
             config,
             cached_backups: Arc::clone(&cached_backups),
             cached_browse_backups: Arc::clone(&cached_browse_backups),
             cached_backup_adapters: RwLock::new(HashMap::new()),
+            cached_browse_backup_locks: Arc::clone(&cached_browse_backup_locks),
             task: tokio::spawn({
                 async move {
                     loop {
@@ -45,7 +48,13 @@ impl BackupManager {
                         cached_browse_backups.retain(|_, (_, last_accessed)| {
                             last_accessed.elapsed() < std::time::Duration::from_secs(300)
                         });
+
+                        let mut cached_browse_backup_locks =
+                            cached_browse_backup_locks.write().await;
+                        cached_browse_backup_locks
+                            .retain(|uuid, _| cached_browse_backups.contains_key(uuid));
                         drop(cached_browse_backups);
+                        drop(cached_browse_backup_locks);
                     }
                 }
             }),
@@ -426,6 +435,30 @@ impl BackupManager {
         Ok(None)
     }
 
+    pub async fn find_adapter(
+        &self,
+        adapter: BackupAdapter,
+        uuid: uuid::Uuid,
+    ) -> Result<Option<Arc<super::Backup>>, anyhow::Error> {
+        if let Some(backup) = self.cached_backups.write().await.get_mut(&uuid) {
+            backup.1 = std::time::Instant::now();
+
+            return Ok(Some(Arc::clone(&backup.0)));
+        }
+
+        if let Some(backup) = adapter.find(&self.config, uuid).await? {
+            let backup = Arc::new(backup);
+
+            let mut cache = self.cached_backups.write().await;
+            cache.insert(uuid, (Arc::clone(&backup), std::time::Instant::now()));
+            drop(cache);
+
+            return Ok(Some(backup));
+        }
+
+        Ok(None)
+    }
+
     pub async fn browse(
         &self,
         server: &crate::server::Server,
@@ -438,16 +471,39 @@ impl BackupManager {
         }
 
         if let Some(backup) = self.find(uuid).await? {
-            let browse_backup = Arc::new(backup.browse(server).await?);
+            let server = server.clone();
+            let cached_browse_backup_locks = Arc::clone(&self.cached_browse_backup_locks);
+            let cached_browse_backups = Arc::clone(&self.cached_browse_backups);
 
-            let mut cache = self.cached_browse_backups.write().await;
-            cache.insert(
-                uuid,
-                (Arc::clone(&browse_backup), std::time::Instant::now()),
-            );
-            drop(cache);
+            return tokio::spawn(async move {
+                let read_cached_browse_backup_locks = cached_browse_backup_locks.read().await;
+                let _guard = if let Some(lock) = read_cached_browse_backup_locks.get(&uuid) {
+                    Arc::clone(&lock)
+                } else {
+                    drop(read_cached_browse_backup_locks);
 
-            return Ok(Some(browse_backup));
+                    let lock = Arc::new(tokio::sync::Mutex::new(()));
+                    cached_browse_backup_locks
+                        .write()
+                        .await
+                        .insert(uuid, Arc::clone(&lock));
+
+                    Arc::clone(&lock)
+                };
+                let _guard = _guard.lock().await;
+
+                let browse_backup = Arc::new(backup.browse(&server).await?);
+
+                let mut cache = cached_browse_backups.write().await;
+                cache.insert(
+                    uuid,
+                    (Arc::clone(&browse_backup), std::time::Instant::now()),
+                );
+                drop(cache);
+
+                return Ok(Some(browse_backup));
+            })
+            .await?;
         }
 
         Ok(None)

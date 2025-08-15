@@ -48,7 +48,11 @@ mod post {
                 .ok();
         }
 
-        let backup = match state.backup_manager.find(backup_id).await? {
+        let backup = match state
+            .backup_manager
+            .find_adapter(data.adapter, backup_id)
+            .await?
+        {
             Some(backup) => backup,
             None => {
                 return ApiResponse::error("backup not found")
