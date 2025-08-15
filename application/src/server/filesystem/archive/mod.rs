@@ -1179,7 +1179,7 @@ impl Archive {
                             compression_level.flate2_compression_level().level() as i64,
                         ))
                         .unix_permissions(source_metadata.permissions().mode())
-                        .large_file(source_metadata.len() >= u32::MAX as u64);
+                        .large_file(source_metadata.len() >= 2 * 1024 * 1024 * 1024);
 
                 if let Ok(mtime) = source_metadata.modified() {
                     let mtime: chrono::DateTime<chrono::Utc> =
@@ -1223,7 +1223,7 @@ impl Archive {
                                     compression_level.flate2_compression_level().level() as i64,
                                 ))
                                 .unix_permissions(metadata.permissions().mode())
-                                .large_file(metadata.len() >= u32::MAX as u64);
+                                .large_file(metadata.len() >= 2 * 1024 * 1024 * 1024);
 
                         if let Ok(mtime) = metadata.modified() {
                             let mtime: chrono::DateTime<chrono::Utc> =
