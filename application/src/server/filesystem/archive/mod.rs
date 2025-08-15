@@ -1,4 +1,7 @@
-use crate::io::counting_reader::{AsyncCountingReader, CountingReader};
+use crate::io::{
+    counting_reader::{AsyncCountingReader, CountingReader},
+    fixed_reader::AsyncFixedReader,
+};
 use cap_std::fs::{Permissions, PermissionsExt as _};
 use chrono::{Datelike, Timelike};
 use futures::StreamExt;
@@ -384,7 +387,7 @@ impl Archive {
 
                 let mut writer = super::writer::AsyncFileSystemWriter::new(
                     self.server.clone(),
-                    file_name,
+                    &file_name,
                     Some(metadata.permissions()),
                     metadata.modified().ok(),
                 )
@@ -448,7 +451,7 @@ impl Archive {
 
                             let mut writer = super::writer::AsyncFileSystemWriter::new(
                                 server.clone(),
-                                destination_path,
+                                &destination_path,
                                 header.mode().map(Permissions::from_mode).ok(),
                                 header
                                     .mtime()
@@ -474,6 +477,7 @@ impl Archive {
                                 .await
                             {
                                 tracing::debug!(
+                                    path = %path.display(),
                                     "failed to create symlink from archive: {:#?}",
                                     err
                                 );
@@ -591,7 +595,7 @@ impl Archive {
 
                                         let mut writer = super::writer::FileSystemWriter::new(
                                             server.clone(),
-                                            destination_path,
+                                            &destination_path,
                                             entry.unix_mode().map(Permissions::from_mode),
                                             zip_entry_get_modified_time(&entry),
                                         )?;
@@ -608,6 +612,7 @@ impl Archive {
                                             server.filesystem.symlink(link, &destination_path)
                                         {
                                             tracing::debug!(
+                                                path = %destination_path.display(),
                                                 "failed to create symlink from archive: {:#?}",
                                                 err
                                             );
@@ -699,7 +704,7 @@ impl Archive {
 
                             let writer = super::writer::FileSystemWriter::new(
                                 self.server.clone(),
-                                destination_path,
+                                &destination_path,
                                 None,
                                 None,
                             )?;
@@ -818,7 +823,7 @@ impl Archive {
 
                                         let mut writer = super::writer::FileSystemWriter::new(
                                             server.clone(),
-                                            destination_path,
+                                            &destination_path,
                                             None,
                                             if entry.has_last_modified_date {
                                                 Some(cap_std::time::SystemTime::from_std(
@@ -910,7 +915,7 @@ impl Archive {
                             ddup_bak::archive::entries::Entry::File(mut file) => {
                                 let mut writer = super::writer::FileSystemWriter::new(
                                     server.clone(),
-                                    destination_path,
+                                    &destination_path,
                                     Some(cap_std::fs::Permissions::from_std(file.mode.into())),
                                     Some(cap_std::time::SystemTime::from_std(file.mtime)),
                                 )?;
@@ -925,6 +930,7 @@ impl Archive {
                                     server.filesystem.symlink(link.target, &destination_path)
                                 {
                                     tracing::debug!(
+                                        path = %destination_path.display(),
                                         "failed to create symlink from archive: {:#?}",
                                         err
                                     );
@@ -1071,6 +1077,8 @@ impl Archive {
                             }
                             None => Box::new(file),
                         };
+                        let reader =
+                            AsyncFixedReader::new_with_fixed_bytes(reader, metadata.len() as usize);
 
                         header.set_size(metadata.len());
                         header.set_entry_type(tokio_tar::EntryType::Regular);
@@ -1099,6 +1107,8 @@ impl Archive {
                     )),
                     None => Box::new(file),
                 };
+                let reader =
+                    AsyncFixedReader::new_with_fixed_bytes(reader, source_metadata.len() as usize);
 
                 header.set_size(source_metadata.len());
                 header.set_entry_type(tokio_tar::EntryType::Regular);

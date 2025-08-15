@@ -111,7 +111,7 @@ mod post {
                     | ArchiveFormat::TarZstd => {
                         let writer = crate::server::filesystem::writer::AsyncFileSystemWriter::new(
                             server.clone(),
-                            file_name,
+                            &file_name,
                             None,
                             None,
                         )
@@ -143,7 +143,7 @@ mod post {
 
                             move || {
                                 crate::server::filesystem::writer::FileSystemWriter::new(
-                                    server, file_name, None, None,
+                                    server, &file_name, None, None,
                                 )
                             }
                         })
@@ -166,7 +166,7 @@ mod post {
 
                             move || {
                                 crate::server::filesystem::writer::FileSystemWriter::new(
-                                    server, file_name, None, None,
+                                    server, &file_name, None, None,
                                 )
                             }
                         })

@@ -478,7 +478,7 @@ impl BackupManager {
             return tokio::spawn(async move {
                 let read_cached_browse_backup_locks = cached_browse_backup_locks.read().await;
                 let _guard = if let Some(lock) = read_cached_browse_backup_locks.get(&uuid) {
-                    Arc::clone(&lock)
+                    Arc::clone(lock)
                 } else {
                     drop(read_cached_browse_backup_locks);
 
@@ -501,7 +501,7 @@ impl BackupManager {
                 );
                 drop(cache);
 
-                return Ok(Some(browse_backup));
+                Ok(Some(browse_backup))
             })
             .await?;
         }

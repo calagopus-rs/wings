@@ -141,7 +141,7 @@ impl Download {
             let mut run_inner = async || -> Result<(), anyhow::Error> {
                 let mut writer = super::writer::AsyncFileSystemWriter::new(
                     server.clone(),
-                    destination.clone(),
+                    &destination,
                     None,
                     None,
                 )

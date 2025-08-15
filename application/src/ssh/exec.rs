@@ -160,7 +160,7 @@ impl ExecSession {
                             let writer =
                                 crate::server::filesystem::writer::AsyncFileSystemWriter::new(
                                     self.server.clone(),
-                                    destination.clone(),
+                                    &destination,
                                     None,
                                     None,
                                 )

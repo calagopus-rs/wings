@@ -1,9 +1,9 @@
 use cap_std::fs::Permissions;
 use cap_std::time::SystemTime;
 use std::future::Future;
+use std::path::Path;
 use std::{
     io::{BufWriter, Seek, SeekFrom, Write},
-    path::PathBuf,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -25,7 +25,7 @@ pub struct FileSystemWriter {
 impl FileSystemWriter {
     pub fn new(
         server: crate::server::Server,
-        destination: PathBuf,
+        destination: &Path,
         permissions: Option<Permissions>,
         modified: Option<SystemTime>,
     ) -> Result<Self, anyhow::Error> {
@@ -39,12 +39,12 @@ impl FileSystemWriter {
         let parent = server
             .filesystem
             .path_to_components(&server.filesystem.relative_path(parent_path));
-        let file = server.filesystem.create(&destination)?;
+        let file = server.filesystem.create(destination)?;
 
         if let Some(permissions) = permissions {
             server
                 .filesystem
-                .set_permissions(&destination, permissions)?;
+                .set_permissions(destination, permissions)?;
         }
 
         Ok(Self {
@@ -163,7 +163,7 @@ pub struct AsyncFileSystemWriter {
 impl AsyncFileSystemWriter {
     pub async fn new(
         server: crate::server::Server,
-        destination: PathBuf,
+        destination: &Path,
         permissions: Option<Permissions>,
         modified: Option<SystemTime>,
     ) -> Result<Self, anyhow::Error> {
@@ -177,16 +177,16 @@ impl AsyncFileSystemWriter {
         let parent = server
             .filesystem
             .path_to_components(&server.filesystem.relative_path(parent_path));
-        let file = server.filesystem.async_create(&destination).await?;
+        let file = server.filesystem.async_create(destination).await?;
 
         if let Some(permissions) = permissions {
             server
                 .filesystem
-                .async_set_permissions(&destination, permissions)
+                .async_set_permissions(destination, permissions)
                 .await?;
         }
 
-        server.filesystem.chown_path(&destination).await?;
+        server.filesystem.chown_path(destination).await?;
 
         Ok(Self {
             server,

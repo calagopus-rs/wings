@@ -380,17 +380,6 @@ impl BackupExt for S3Backup {
                 continue;
             }
 
-            if server
-                .filesystem
-                .is_ignored(
-                    &path,
-                    entry.header().entry_type() == tokio_tar::EntryType::Directory,
-                )
-                .await
-            {
-                continue;
-            }
-
             let header = entry.header();
             match header.entry_type() {
                 tokio_tar::EntryType::Directory => {
@@ -428,7 +417,7 @@ impl BackupExt for S3Backup {
 
                     let mut writer = crate::server::filesystem::writer::AsyncFileSystemWriter::new(
                         server.clone(),
-                        path.to_path_buf(),
+                        &path,
                         Some(Permissions::from_mode(header.mode().unwrap_or(0o644))),
                         header
                             .mtime()
@@ -448,7 +437,7 @@ impl BackupExt for S3Backup {
                     let link = entry.link_name().unwrap_or_default().unwrap_or_default();
 
                     if let Err(err) = server.filesystem.async_symlink(link, path.as_ref()).await {
-                        tracing::debug!("failed to create symlink from backup: {:#?}", err);
+                        tracing::debug!(path = %path.display(), "failed to create symlink from backup: {:#?}", err);
                     } else {
                         server
                             .filesystem

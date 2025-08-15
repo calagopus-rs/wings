@@ -187,7 +187,7 @@ mod post {
                                     let mut writer =
                                         crate::server::filesystem::writer::AsyncFileSystemWriter::new(
                                             server.clone(),
-                                            destination_path.to_path_buf(),
+                                            destination_path,
                                             header.mode().map(Permissions::from_mode).ok(),
                                             header
                                                 .mtime()

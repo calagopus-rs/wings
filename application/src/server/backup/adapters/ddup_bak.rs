@@ -1,5 +1,5 @@
 use crate::{
-    io::counting_reader::CountingReader,
+    io::{counting_reader::CountingReader, fixed_reader::FixedReader},
     models::DirectoryEntry,
     remote::backups::RawServerBackup,
     response::ApiResponse,
@@ -66,48 +66,6 @@ pub async fn get_repository(
     }
 }
 
-pub struct FixedReader {
-    inner: Box<dyn std::io::Read>,
-    size: usize,
-    bytes_read: usize,
-}
-
-impl FixedReader {
-    pub fn new(inner: Box<dyn std::io::Read>, size: usize) -> Self {
-        FixedReader {
-            inner,
-            size,
-            bytes_read: 0,
-        }
-    }
-}
-
-impl std::io::Read for FixedReader {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        if self.bytes_read >= self.size {
-            return Ok(0);
-        }
-
-        let remaining = self.size - self.bytes_read;
-        let to_read = std::cmp::min(buf.len(), remaining);
-        let bytes = self.inner.read(&mut buf[..to_read])?;
-
-        if bytes == 0 && remaining > 0 {
-            let zeros_to_write = std::cmp::min(buf.len(), remaining);
-            for byte in buf.iter_mut().take(zeros_to_write) {
-                *byte = 0;
-            }
-
-            self.bytes_read += zeros_to_write;
-            return Ok(zeros_to_write);
-        }
-
-        self.bytes_read += bytes;
-
-        Ok(bytes)
-    }
-}
-
 pub struct DdupBakBackup {
     uuid: uuid::Uuid,
     archive: Arc<ddup_bak::archive::Archive>,
@@ -148,10 +106,9 @@ impl DdupBakBackup {
                 entry_header.set_entry_type(tar::EntryType::Regular);
                 entry_header.set_size(file.size_real);
 
-                let size_real = file.size_real as usize;
-                let reader = FixedReader::new(
+                let reader = FixedReader::new_with_fixed_bytes(
                     Box::new(repository.entry_reader(Entry::File(file.clone()))?),
-                    size_real,
+                    file.size_real as usize,
                 );
 
                 archive.append_data(&mut entry_header, &path, reader)?;
@@ -216,7 +173,7 @@ impl DdupBakBackup {
                 }
             }
             Entry::File(file) => {
-                let mut reader = FixedReader::new(
+                let mut reader = FixedReader::new_with_fixed_bytes(
                     Box::new(repository.entry_reader(Entry::File(file.clone()))?),
                     file.size_real as usize,
                 );
@@ -559,7 +516,7 @@ impl BackupExt for DdupBakBackup {
 
                         let mut writer = crate::server::filesystem::writer::FileSystemWriter::new(
                             server.clone(),
-                            path,
+                            &path,
                             Some(Permissions::from_std(file.mode.into())),
                             Some(cap_std::time::SystemTime::from_std(file.mtime)),
                         )?;
@@ -585,7 +542,7 @@ impl BackupExt for DdupBakBackup {
                     }
                     Entry::Symlink(symlink) => {
                         if let Err(err) = server.filesystem.symlink(&symlink.target, &path) {
-                            tracing::debug!("failed to create symlink from backup: {:#?}", err);
+                            tracing::debug!(path = %path.display(), "failed to create symlink from backup: {:#?}", err);
                         } else {
                             server.filesystem.set_symlink_permissions(
                                 &path,

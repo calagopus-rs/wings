@@ -364,17 +364,6 @@ impl BackupExt for WingsBackup {
                         continue;
                     }
 
-                    if server
-                        .filesystem
-                        .is_ignored(
-                            &path,
-                            entry.header().entry_type() == tokio_tar::EntryType::Directory,
-                        )
-                        .await
-                    {
-                        continue;
-                    }
-
                     let header = entry.header();
                     match header.entry_type() {
                         tokio_tar::EntryType::Directory => {
@@ -413,7 +402,7 @@ impl BackupExt for WingsBackup {
                             let mut writer =
                                 crate::server::filesystem::writer::AsyncFileSystemWriter::new(
                                     server.clone(),
-                                    path.to_path_buf(),
+                                    &path,
                                     Some(Permissions::from_mode(header.mode().unwrap_or(0o644))),
                                     header
                                         .mtime()
@@ -436,7 +425,7 @@ impl BackupExt for WingsBackup {
                             if let Err(err) =
                                 server.filesystem.async_symlink(link, path.as_ref()).await
                             {
-                                tracing::debug!("failed to create symlink from backup: {:#?}", err);
+                                tracing::debug!(path = %path.display(), "failed to create symlink from backup: {:#?}", err);
                             } else {
                                 server
                                     .filesystem
@@ -521,13 +510,6 @@ impl BackupExt for WingsBackup {
                                         continue;
                                     }
 
-                                    if server
-                                        .filesystem
-                                        .is_ignored_sync(&path, entry.is_dir())
-                                    {
-                                        continue;
-                                    }
-
                                     if entry.is_dir() {
                                         server.filesystem.create_dir_all(&path)?;
                                         server.filesystem.set_permissions(
@@ -548,7 +530,7 @@ impl BackupExt for WingsBackup {
 
                                         let mut writer = crate::server::filesystem::writer::FileSystemWriter::new(
                                             server.clone(),
-                                            path,
+                                            &path,
                                             entry.unix_mode().map(Permissions::from_mode),
                                             crate::server::filesystem::archive::zip_entry_get_modified_time(&entry),
                                         )?;
@@ -557,13 +539,24 @@ impl BackupExt for WingsBackup {
                                             Arc::clone(&progress),
                                         );
 
-                                        std::io::copy(&mut reader, &mut writer)?;
+                                        if let Err(err) = std::io::copy(&mut reader, &mut writer) {
+                                            if err.kind() == std::io::ErrorKind::InvalidData {
+                                                tracing::warn!(
+                                                    path = %path.display(),
+                                                    "corrupted backup file: {:#?}",
+                                                    err
+                                                );
+                                            } else {
+                                                Err(err)?;
+                                            }
+                                        }
                                         writer.flush()?;
                                     } else if entry.is_symlink() && (1..=2048).contains(&entry.size()) {
                                         let link = std::io::read_to_string(&mut entry).unwrap_or_default();
 
                                         if let Err(err) = server.filesystem.symlink(link, &path) {
                                             tracing::debug!(
+                                                path = %path.display(),
                                                 "failed to create symlink from backup: {:#?}",
                                                 err
                                             );

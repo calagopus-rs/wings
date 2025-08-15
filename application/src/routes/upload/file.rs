@@ -156,7 +156,7 @@ mod post {
             let mut written_size = 0;
             let mut writer = crate::server::filesystem::writer::AsyncFileSystemWriter::new(
                 server.clone(),
-                file_path,
+                &file_path,
                 None,
                 None,
             )
