@@ -492,6 +492,10 @@ impl BackupManager {
                 };
                 let _guard = _guard.lock().await;
 
+                if let Some(browse_backup) = cached_browse_backups.read().await.get(&uuid) {
+                    return Ok(Some(Arc::clone(&browse_backup.0)));
+                }
+
                 let browse_backup = Arc::new(backup.browse(&server).await?);
 
                 let mut cache = cached_browse_backups.write().await;
