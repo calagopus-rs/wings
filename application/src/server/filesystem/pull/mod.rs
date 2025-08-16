@@ -89,9 +89,10 @@ impl Download {
             if use_header {
                 if let Some(header) = response.headers().get("Content-Disposition")
                     && let Ok(header) = header.to_str()
-                    && let Some(filename) = header.split("filename=").nth(1)
+                    && let Some(filename) =
+                        content_disposition::parse_content_disposition(header).filename_full()
                 {
-                    real_destination.push(filename.trim_matches('"'));
+                    real_destination.push(filename);
                     break 'header_check;
                 }
 
