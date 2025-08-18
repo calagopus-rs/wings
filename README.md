@@ -37,6 +37,8 @@ api:
   file_search_threads: 4
   # how many threads to use when decompressing .zip/.7z/.ddup
   file_decompression_threads: 2
+  # how many threads to use when compressing .gz/.xz
+  file_compression_threads: 2
 
 system:
   # apply a real quota limit to each server
@@ -77,6 +79,8 @@ system:
 
     # settings for the wings backup driver
     wings:
+      # how many threads to use when creating a .gz/.xz wings backup
+      create_threads: 4
       # how many threads to use when restoring a zip wings backup
       restore_threads: 4
       # what archive format to use for local (wings) backups
