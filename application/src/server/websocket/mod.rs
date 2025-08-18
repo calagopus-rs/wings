@@ -4,8 +4,9 @@ use futures_util::{SinkExt, stream::SplitSink};
 use serde::{
     Deserialize, Deserializer, Serialize,
     de::{SeqAccess, Visitor},
+    ser::SerializeSeq,
 };
-use std::marker::PhantomData;
+use std::{marker::PhantomData, sync::Arc};
 use tokio::sync::Mutex;
 
 pub mod handler;
@@ -71,6 +72,10 @@ pub enum WebsocketEvent {
     ServerTransferLogs,
     #[serde(rename = "transfer status")]
     ServerTransferStatus,
+    #[serde(rename = "schedule status")]
+    ServerScheduleStatus,
+    #[serde(rename = "schedule error")]
+    ServerScheduleError,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -78,17 +83,18 @@ pub struct WebsocketMessage {
     pub event: WebsocketEvent,
 
     #[serde(deserialize_with = "string_vec_or_empty")]
-    pub args: Vec<String>,
+    #[serde(serialize_with = "arc_vec")]
+    pub args: Arc<Vec<String>>,
 }
 
-fn string_vec_or_empty<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+fn string_vec_or_empty<'de, D>(deserializer: D) -> Result<Arc<Vec<String>>, D::Error>
 where
     D: Deserializer<'de>,
 {
     struct StringVecVisitor(PhantomData<Vec<String>>);
 
     impl<'de> Visitor<'de> for StringVecVisitor {
-        type Value = Vec<String>;
+        type Value = Arc<Vec<String>>;
 
         fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
             formatter.write_str("a string array or null")
@@ -104,18 +110,30 @@ where
                     vec.push(value);
                 }
             }
-            Ok(vec)
+            Ok(Arc::new(vec))
         }
 
         fn visit_unit<E>(self) -> Result<Self::Value, E>
         where
             E: serde::de::Error,
         {
-            Ok(Vec::new())
+            Ok(Arc::new(Vec::new()))
         }
     }
 
     deserializer.deserialize_any(StringVecVisitor(PhantomData))
+}
+
+fn arc_vec<S>(vec: &Arc<Vec<String>>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    let mut seq = serializer.serialize_seq(Some(vec.len()))?;
+    for item in vec.iter() {
+        seq.serialize_element(item)?;
+    }
+
+    seq.end()
 }
 
 impl WebsocketMessage {
@@ -123,7 +141,7 @@ impl WebsocketMessage {
     pub fn new(event: WebsocketEvent, data: &[String]) -> Self {
         Self {
             event,
-            args: data.to_vec(),
+            args: Arc::new(data.to_vec()),
         }
     }
 }

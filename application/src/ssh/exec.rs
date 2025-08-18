@@ -1,4 +1,5 @@
 use crate::{
+    io::compression::CompressionType,
     routes::State,
     server::{
         activity::{Activity, ActivityEvent},
@@ -157,45 +158,40 @@ impl ExecSession {
                                 })
                                 .await;
 
-                            let writer =
-                                crate::server::filesystem::writer::AsyncFileSystemWriter::new(
-                                    self.server.clone(),
-                                    &destination,
-                                    None,
-                                    None,
-                                )
-                                .await?;
+                            let writer = tokio::task::spawn_blocking({
+                                let server = self.server.clone();
+                                let destination = destination.clone();
+
+                                move || {
+                                    crate::server::filesystem::writer::FileSystemWriter::new(
+                                        server,
+                                        &destination,
+                                        None,
+                                        None,
+                                    )
+                                }
+                            })
+                            .await??;
                             crate::server::filesystem::archive::Archive::create_tar(
                                 self.server.filesystem.clone(),
                                 writer,
                                 base,
                                 paths,
                                 match destination.extension().and_then(|s| s.to_str()) {
-                                    Some("tar") => {
-                                        crate::server::filesystem::archive::CompressionType::None
-                                    }
-                                    Some("gz") => {
-                                        crate::server::filesystem::archive::CompressionType::Gz
-                                    }
-                                    Some("xz") => {
-                                        crate::server::filesystem::archive::CompressionType::Xz
-                                    }
-                                    Some("bz2") => {
-                                        crate::server::filesystem::archive::CompressionType::Bz2
-                                    }
-                                    Some("lz4") => {
-                                        crate::server::filesystem::archive::CompressionType::Lz4
-                                    }
-                                    Some("zst") => {
-                                        crate::server::filesystem::archive::CompressionType::Zstd
-                                    }
+                                    Some("tar") => CompressionType::None,
+                                    Some("gz") => CompressionType::Gz,
+                                    Some("xz") => CompressionType::Xz,
+                                    Some("bz2") => CompressionType::Bz2,
+                                    Some("lz4") => CompressionType::Lz4,
+                                    Some("zst") => CompressionType::Zstd,
                                     _ => {
                                         return Err(anyhow::anyhow!("Unsupported archive format."));
                                     }
                                 },
                                 self.state.config.system.backups.compression_level,
                                 None,
-                                &[self.server.filesystem.get_ignored().await],
+                                vec![self.server.filesystem.get_ignored().await],
+                                self.state.config.api.file_compression_threads,
                             )
                             .await?;
 

@@ -175,16 +175,14 @@ impl ProcessConfiguration {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         tracing::info!(
             server = %server.uuid,
-            "starting configuration file updates for server {} with {} configuration files",
-            server.uuid,
+            "starting configuration file updates with {} configuration files",
             self.configs.len()
         );
 
         if self.configs.is_empty() {
             tracing::info!(
                 server = %server.uuid,
-                "no configuration files to update for server {}",
-                server.uuid
+                "no configuration files to update"
             );
             return Ok(());
         }

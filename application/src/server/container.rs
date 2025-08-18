@@ -210,20 +210,20 @@ impl Container {
                 let mut allow_ratelimit = async || {
                     ratelimit_counter += 1;
 
-                    if server.config.throttles.enabled
-                        && server.config.throttles.line_reset_interval > 0
-                        && ratelimit_counter >= server.config.throttles.lines
+                    if server.app_state.config.throttles.enabled
+                        && server.app_state.config.throttles.line_reset_interval > 0
+                        && ratelimit_counter >= server.app_state.config.throttles.lines
                     {
                         if ratelimit_start.elapsed()
                             < std::time::Duration::from_secs(
-                                server.config.throttles.line_reset_interval,
+                                server.app_state.config.throttles.line_reset_interval,
                             )
                         {
-                            if ratelimit_counter == server.config.throttles.lines {
+                            if ratelimit_counter == server.app_state.config.throttles.lines {
                                 tracing::debug!(
                                     server = %server.uuid,
-                                    lines = server.config.throttles.lines,
-                                    reset_interval = server.config.throttles.line_reset_interval,
+                                    lines = server.app_state.config.throttles.lines,
+                                    reset_interval = server.app_state.config.throttles.line_reset_interval,
                                     "ratelimit reached for server output"
                                 );
 
@@ -249,7 +249,7 @@ impl Container {
                         if let Some(pos) = buffer[search_start..].iter().position(|&b| b == b'\n') {
                             let newline_pos = search_start + pos;
 
-                            let check_startup = |line: &String| {
+                            let check_startup = async |line: &String| {
                                 if server.state.get_state() != super::state::ServerState::Starting {
                                     return;
                                 }
@@ -277,7 +277,8 @@ impl Container {
                                             if result_line.contains(done) {
                                                 server
                                                     .state
-                                                    .set_state(super::state::ServerState::Running);
+                                                    .set_state(super::state::ServerState::Running)
+                                                    .await;
                                                 break;
                                             }
                                         }
@@ -286,7 +287,8 @@ impl Container {
                                             if line.contains(done) {
                                                 server
                                                     .state
-                                                    .set_state(super::state::ServerState::Running);
+                                                    .set_state(super::state::ServerState::Running)
+                                                    .await;
                                                 break;
                                             }
                                         }
@@ -300,7 +302,7 @@ impl Container {
                                         .trim()
                                         .to_string();
 
-                                check_startup(&line);
+                                check_startup(&line).await;
                                 if allow_ratelimit().await
                                     && let Err(err) = stdout_sender.send(line)
                                 {
@@ -320,7 +322,7 @@ impl Container {
                                 .trim()
                                 .to_string();
 
-                                check_startup(&line);
+                                check_startup(&line).await;
                                 if allow_ratelimit().await
                                     && let Err(err) = stdout_sender.send(line)
                                 {

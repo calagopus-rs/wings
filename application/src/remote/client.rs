@@ -1,5 +1,6 @@
 use crate::server::{
-    activity::ApiActivity, installation::InstallationScript, permissions::Permissions,
+    activity::ApiActivity, backup::adapters::BackupAdapter, installation::InstallationScript,
+    permissions::Permissions, schedule::ApiScheduleCompletionStatus,
 };
 use axum::http::HeaderMap;
 
@@ -63,6 +64,15 @@ impl Client {
     pub async fn send_activity(&self, activity: Vec<ApiActivity>) -> Result<(), anyhow::Error> {
         tracing::debug!("sending {} activity to remote", activity.len());
         super::send_activity(self, activity).await
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn send_schedule_status(
+        &self,
+        schedules: Vec<ApiScheduleCompletionStatus>,
+    ) -> Result<(), anyhow::Error> {
+        tracing::debug!("sending {} schedule status to remote", schedules.len());
+        super::send_schedule_status(self, schedules).await
     }
 
     #[tracing::instrument(skip(self))]
@@ -133,6 +143,37 @@ impl Client {
     }
 
     #[tracing::instrument(skip(self))]
+    pub async fn set_server_startup_variable(
+        &self,
+        uuid: uuid::Uuid,
+        env_variable: &str,
+        value: &str,
+    ) -> Result<(), anyhow::Error> {
+        tracing::info!("setting server startup variable");
+        super::servers::set_server_startup_variable(self, uuid, env_variable, value).await
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn set_server_startup_command(
+        &self,
+        uuid: uuid::Uuid,
+        command: &str,
+    ) -> Result<(), anyhow::Error> {
+        tracing::info!("setting server startup command");
+        super::servers::set_server_startup_command(self, uuid, command).await
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn set_server_startup_docker_image(
+        &self,
+        uuid: uuid::Uuid,
+        image: &str,
+    ) -> Result<(), anyhow::Error> {
+        tracing::info!("setting server startup docker image");
+        super::servers::set_server_startup_docker_image(self, uuid, image).await
+    }
+
+    #[tracing::instrument(skip(self))]
     pub async fn set_backup_status(
         &self,
         uuid: uuid::Uuid,
@@ -169,5 +210,16 @@ impl Client {
     ) -> Result<super::backups::ResticBackupConfiguration, anyhow::Error> {
         tracing::info!("getting restic backup configuration");
         super::backups::backup_restic_configuration(self, uuid).await
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn create_backup(
+        &self,
+        server: uuid::Uuid,
+        name: Option<&str>,
+        ignored_files: &[String],
+    ) -> Result<(BackupAdapter, uuid::Uuid), anyhow::Error> {
+        tracing::info!("creating backup");
+        super::backups::create_backup(self, server, name, ignored_files).await
     }
 }

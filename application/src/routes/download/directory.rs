@@ -168,12 +168,13 @@ mod get {
 
         tokio::spawn(async move {
             let ignored = server.filesystem.get_ignored().await;
+            let writer = tokio_util::io::SyncIoBridge::new(writer);
 
             match data.archive_format {
                 StreamableArchiveFormat::Zip => {
                     if let Err(err) = crate::server::filesystem::archive::Archive::create_zip(
                         server.filesystem.clone(),
-                        tokio_util::io::SyncIoBridge::new(writer),
+                        writer,
                         &path,
                         sources.into_iter().map(PathBuf::from).collect(),
                         state.config.system.backups.compression_level,
@@ -198,7 +199,8 @@ mod get {
                         data.archive_format.compression_format(),
                         state.config.system.backups.compression_level,
                         None,
-                        &[ignored],
+                        vec![ignored],
+                        state.config.api.file_compression_threads,
                     )
                     .await
                     {

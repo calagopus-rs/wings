@@ -1,8 +1,11 @@
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, AtomicU8, Ordering},
+};
 use utoipa::ToSchema;
 
-#[derive(ToSchema, Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[derive(ToSchema, Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 #[schema(rename_all = "lowercase")]
 pub enum ServerState {
@@ -54,24 +57,32 @@ pub struct ServerStateLock {
     state: AtomicU8,
     locked: AtomicBool,
     sender: tokio::sync::broadcast::Sender<super::websocket::WebsocketMessage>,
+    schedule_manager: Arc<super::schedule::manager::ScheduleManager>,
 }
 
 impl ServerStateLock {
-    pub fn new(sender: tokio::sync::broadcast::Sender<super::websocket::WebsocketMessage>) -> Self {
+    pub fn new(
+        sender: tokio::sync::broadcast::Sender<super::websocket::WebsocketMessage>,
+        schedule_manager: Arc<super::schedule::manager::ScheduleManager>,
+    ) -> Self {
         Self {
             state: AtomicU8::new(0),
             locked: AtomicBool::new(false),
             sender,
+            schedule_manager,
         }
     }
 
     #[inline]
-    pub fn set_state(&self, state: ServerState) {
+    pub async fn set_state(&self, state: ServerState) {
         if self.get_state() == state {
             return;
         }
 
         self.state.store(state.into(), Ordering::SeqCst);
+        self.schedule_manager
+            .execute_server_state_trigger(state)
+            .await;
 
         self.sender
             .send(super::websocket::WebsocketMessage::new(
@@ -121,11 +132,11 @@ impl ServerStateLock {
 
         self.locked.store(true, Ordering::SeqCst);
 
-        self.set_state(state);
+        self.set_state(state).await;
         if let Err(err) = action(aquired).await {
             tracing::error!("failed to execute power action: {:#?}", err);
 
-            self.set_state(old_state);
+            self.set_state(old_state).await;
             self.locked.store(false, Ordering::SeqCst);
 
             Err(err)

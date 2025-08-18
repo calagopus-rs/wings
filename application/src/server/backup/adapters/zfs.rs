@@ -117,11 +117,11 @@ impl BackupCreateExt for ZfsBackup {
         ignore: ignore::gitignore::Gitignore,
         ignore_raw: String,
     ) -> Result<RawServerBackup, anyhow::Error> {
-        let backup_path = Self::get_backup_path(&server.config, uuid);
+        let backup_path = Self::get_backup_path(&server.app_state.config, uuid);
         let snapshot_name = Self::get_snapshot_name(uuid);
-        let ignored_path = Self::get_ignore_path(&server.config, uuid);
+        let ignored_path = Self::get_ignore_path(&server.app_state.config, uuid);
 
-        tokio::fs::create_dir_all(Self::get_backup_path(&server.config, uuid)).await?;
+        tokio::fs::create_dir_all(Self::get_backup_path(&server.app_state.config, uuid)).await?;
 
         let total_task = {
             let server = server.clone();
@@ -237,11 +237,13 @@ impl BackupExt for ZfsBackup {
             let config = Arc::clone(config);
 
             async move {
+                let writer = tokio_util::io::SyncIoBridge::new(writer);
+
                 match archive_format {
                     StreamableArchiveFormat::Zip => {
                         if let Err(err) = crate::server::filesystem::archive::Archive::create_zip(
                             filesystem,
-                            tokio_util::io::SyncIoBridge::new(writer),
+                            writer,
                             Path::new(""),
                             names.into_iter().map(PathBuf::from).collect(),
                             config.system.backups.compression_level,
@@ -262,7 +264,8 @@ impl BackupExt for ZfsBackup {
                             archive_format.compression_format(),
                             config.system.backups.compression_level,
                             None,
-                            &[ignore],
+                            vec![ignore],
+                            config.api.file_compression_threads,
                         )
                         .await
                         {
@@ -298,7 +301,8 @@ impl BackupExt for ZfsBackup {
         total: Arc<AtomicU64>,
         _download_url: Option<String>,
     ) -> Result<(), anyhow::Error> {
-        let snapshot_path = Self::get_snapshot_path(&server.config, self.server_uuid, self.uuid);
+        let snapshot_path =
+            Self::get_snapshot_path(&server.app_state.config, self.server_uuid, self.uuid);
 
         if tokio::fs::metadata(&snapshot_path).await.is_err() {
             return Err(anyhow::anyhow!(
@@ -308,7 +312,7 @@ impl BackupExt for ZfsBackup {
         }
 
         let filesystem = crate::server::filesystem::cap::CapFilesystem::new(snapshot_path).await?;
-        let ignore = Self::get_ignore(&server.config, self.uuid).await?;
+        let ignore = Self::get_ignore(&server.app_state.config, self.uuid).await?;
 
         let total_task = {
             let filesystem = filesystem.clone();
@@ -343,7 +347,7 @@ impl BackupExt for ZfsBackup {
                 .await?
                 .with_ignored(&ignored)
                 .run_multithreaded(
-                    server.config.system.backups.btrfs.restore_threads,
+                    server.app_state.config.system.backups.btrfs.restore_threads,
                     Arc::new({
                         let server = server.clone();
                         let filesystem = filesystem.clone();
@@ -455,7 +459,8 @@ impl BackupExt for ZfsBackup {
     }
 
     async fn browse(&self, server: &crate::server::Server) -> Result<BrowseBackup, anyhow::Error> {
-        let snapshot_path = Self::get_snapshot_path(&server.config, self.server_uuid, self.uuid);
+        let snapshot_path =
+            Self::get_snapshot_path(&server.app_state.config, self.server_uuid, self.uuid);
 
         if tokio::fs::metadata(&snapshot_path).await.is_err() {
             return Err(anyhow::anyhow!(
@@ -465,7 +470,7 @@ impl BackupExt for ZfsBackup {
         }
 
         let filesystem = crate::server::filesystem::cap::CapFilesystem::new(snapshot_path).await?;
-        let ignore = Self::get_ignore(&server.config, self.uuid).await?;
+        let ignore = Self::get_ignore(&server.app_state.config, self.uuid).await?;
 
         Ok(BrowseBackup::Zfs(BrowseZfsBackup {
             server: server.clone(),
@@ -478,8 +483,8 @@ impl BackupExt for ZfsBackup {
 #[async_trait::async_trait]
 impl BackupCleanExt for ZfsBackup {
     async fn clean(server: &crate::server::Server, uuid: uuid::Uuid) -> Result<(), anyhow::Error> {
-        let backup_path = Self::get_backup_path(&server.config, uuid);
-        let dataset_path = Self::get_dataset_path(&server.config, uuid);
+        let backup_path = Self::get_backup_path(&server.app_state.config, uuid);
+        let dataset_path = Self::get_dataset_path(&server.app_state.config, uuid);
         let snapshot_name = Self::get_snapshot_name(uuid);
 
         if tokio::fs::metadata(&backup_path).await.is_err() {
@@ -619,22 +624,31 @@ impl BackupBrowseExt for BrowseZfsBackup {
         }
 
         let names = self.filesystem.async_read_dir_all(&path).await?;
+        let compression_level = self
+            .server
+            .app_state
+            .config
+            .system
+            .backups
+            .compression_level;
+        let file_compression_threads = self.server.app_state.config.api.file_compression_threads;
         let (reader, writer) = tokio::io::duplex(crate::BUFFER_SIZE);
 
         tokio::spawn({
-            let config = Arc::clone(&self.server.config);
             let filesystem = self.filesystem.clone();
             let ignore = self.ignore.clone();
 
             async move {
+                let writer = tokio_util::io::SyncIoBridge::new(writer);
+
                 match archive_format {
                     StreamableArchiveFormat::Zip => {
                         if let Err(err) = crate::server::filesystem::archive::Archive::create_zip(
                             filesystem,
-                            tokio_util::io::SyncIoBridge::new(writer),
+                            writer,
                             &path,
                             names.into_iter().map(PathBuf::from).collect(),
-                            config.system.backups.compression_level,
+                            compression_level,
                             None,
                             vec![ignore],
                         )
@@ -650,9 +664,10 @@ impl BackupBrowseExt for BrowseZfsBackup {
                             &path,
                             names.into_iter().map(PathBuf::from).collect(),
                             archive_format.compression_format(),
-                            config.system.backups.compression_level,
+                            compression_level,
                             None,
-                            &[ignore],
+                            vec![ignore],
+                            file_compression_threads,
                         )
                         .await
                         {
@@ -678,22 +693,31 @@ impl BackupBrowseExt for BrowseZfsBackup {
             )));
         }
 
+        let compression_level = self
+            .server
+            .app_state
+            .config
+            .system
+            .backups
+            .compression_level;
+        let file_compression_threads = self.server.app_state.config.api.file_compression_threads;
         let (reader, writer) = tokio::io::duplex(crate::BUFFER_SIZE);
 
         tokio::spawn({
-            let config = Arc::clone(&self.server.config);
             let filesystem = self.filesystem.clone();
             let ignore = self.ignore.clone();
 
             async move {
+                let writer = tokio_util::io::SyncIoBridge::new(writer);
+
                 match archive_format {
                     StreamableArchiveFormat::Zip => {
                         if let Err(err) = crate::server::filesystem::archive::Archive::create_zip(
                             filesystem,
-                            tokio_util::io::SyncIoBridge::new(writer),
+                            writer,
                             &path,
                             file_paths,
-                            config.system.backups.compression_level,
+                            compression_level,
                             None,
                             vec![ignore],
                         )
@@ -709,9 +733,10 @@ impl BackupBrowseExt for BrowseZfsBackup {
                             &path,
                             file_paths,
                             archive_format.compression_format(),
-                            config.system.backups.compression_level,
+                            compression_level,
                             None,
-                            &[ignore],
+                            vec![ignore],
+                            file_compression_threads,
                         )
                         .await
                         {

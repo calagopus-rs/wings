@@ -3,9 +3,9 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod post {
     use crate::{
+        io::compression::CompressionType,
         response::{ApiResponse, ApiResponseResult},
         routes::{ApiError, GetState, api::servers::_server_::GetServer},
-        server::filesystem::archive::CompressionType,
     };
     use axum::http::StatusCode;
     use serde::Deserialize;
@@ -101,6 +101,16 @@ mod post {
 
             async move {
                 let ignored = server.filesystem.get_ignored().await;
+                let writer = tokio::task::spawn_blocking({
+                    let server = server.clone();
+
+                    move || {
+                        crate::server::filesystem::writer::FileSystemWriter::new(
+                            server, &file_name, None, None,
+                        )
+                    }
+                })
+                .await??;
 
                 match data.format {
                     ArchiveFormat::Tar
@@ -109,14 +119,6 @@ mod post {
                     | ArchiveFormat::TarBz2
                     | ArchiveFormat::TarLz4
                     | ArchiveFormat::TarZstd => {
-                        let writer = crate::server::filesystem::writer::AsyncFileSystemWriter::new(
-                            server.clone(),
-                            &file_name,
-                            None,
-                            None,
-                        )
-                        .await?;
-
                         crate::server::filesystem::archive::Archive::create_tar(
                             server.filesystem.clone(),
                             writer,
@@ -133,22 +135,12 @@ mod post {
                             },
                             state.config.system.backups.compression_level,
                             None,
-                            &[ignored],
+                            vec![ignored],
+                            state.config.api.file_compression_threads,
                         )
                         .await
                     }
                     ArchiveFormat::Zip => {
-                        let writer = tokio::task::spawn_blocking({
-                            let server = server.clone();
-
-                            move || {
-                                crate::server::filesystem::writer::FileSystemWriter::new(
-                                    server, &file_name, None, None,
-                                )
-                            }
-                        })
-                        .await??;
-
                         crate::server::filesystem::archive::Archive::create_zip(
                             server.filesystem.clone(),
                             writer,
@@ -161,17 +153,6 @@ mod post {
                         .await
                     }
                     ArchiveFormat::SevenZip => {
-                        let writer = tokio::task::spawn_blocking({
-                            let server = server.clone();
-
-                            move || {
-                                crate::server::filesystem::writer::FileSystemWriter::new(
-                                    server, &file_name, None, None,
-                                )
-                            }
-                        })
-                        .await??;
-
                         crate::server::filesystem::archive::Archive::create_7z(
                             server.filesystem.clone(),
                             writer,

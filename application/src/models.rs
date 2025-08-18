@@ -2,7 +2,7 @@ use crate::server::state::ServerState;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-#[derive(ToSchema, Deserialize, Serialize)]
+#[derive(ToSchema, Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 #[schema(rename_all = "lowercase")]
 pub enum ServerPowerAction {

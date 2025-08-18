@@ -34,24 +34,25 @@ async fn container_config(
         .configuration
         .read()
         .await
-        .convert_container_resources(&server.config);
+        .convert_container_resources(&server.app_state.config);
 
     if resources.memory_reservation.is_some_and(|m| {
-        m > 0 && m < server.config.docker.installer_limits.memory as i64 * 1024 * 1024
+        m > 0 && m < server.app_state.config.docker.installer_limits.memory as i64 * 1024 * 1024
     }) {
         resources.memory = None;
         resources.memory_reservation =
-            Some(server.config.docker.installer_limits.memory as i64 * 1024 * 1024);
+            Some(server.app_state.config.docker.installer_limits.memory as i64 * 1024 * 1024);
     }
 
-    if resources
-        .cpu_quota
-        .is_some_and(|c| c > 0 && c < server.config.docker.installer_limits.cpu as i64 * 1000)
-    {
-        resources.cpu_quota = Some(server.config.docker.installer_limits.cpu as i64 * 1000);
+    if resources.cpu_quota.is_some_and(|c| {
+        c > 0 && c < server.app_state.config.docker.installer_limits.cpu as i64 * 1000
+    }) {
+        resources.cpu_quota =
+            Some(server.app_state.config.docker.installer_limits.cpu as i64 * 1000);
     }
 
-    let tmp_dir = Path::new(&server.config.system.tmp_directory).join(server.uuid.to_string());
+    let tmp_dir =
+        Path::new(&server.app_state.config.system.tmp_directory).join(server.uuid.to_string());
     tokio::fs::create_dir_all(&tmp_dir).await?;
     tokio::fs::write(
         tmp_dir.join("install.sh"),
@@ -87,16 +88,20 @@ async fn container_config(
                     ..Default::default()
                 },
             ]),
-            network_mode: Some(server.config.docker.network.mode.clone()),
-            dns: Some(server.config.docker.network.dns.clone()),
+            network_mode: Some(server.app_state.config.docker.network.mode.clone()),
+            dns: Some(server.app_state.config.docker.network.dns.clone()),
             tmpfs: Some(HashMap::from([(
                 "/tmp".to_string(),
-                format!("rw,exec,nosuid,size={}M", server.config.docker.tmpfs_size),
+                format!(
+                    "rw,exec,nosuid,size={}M",
+                    server.app_state.config.docker.tmpfs_size
+                ),
             )])),
             log_config: Some(bollard::secret::HostConfigLogConfig {
-                typ: Some(server.config.docker.log_config.r#type.to_string()),
+                typ: Some(server.app_state.config.docker.log_config.r#type.to_string()),
                 config: Some(
                     server
+                        .app_state
                         .config
                         .docker
                         .log_config
@@ -106,7 +111,7 @@ async fn container_config(
                         .collect(),
                 ),
             }),
-            userns_mode: string_to_option(&server.config.docker.userns_mode),
+            userns_mode: string_to_option(&server.app_state.config.docker.userns_mode),
             ..Default::default()
         }),
         cmd: Some(vec![
@@ -120,7 +125,7 @@ async fn container_config(
                 .configuration
                 .read()
                 .await
-                .environment(&server.config),
+                .environment(&server.app_state.config),
         ),
         labels: Some(labels),
         attach_stdin: Some(true),
@@ -155,7 +160,7 @@ async fn cleanup_container(
         env.push_str(&format!("  {var}\n"));
     }
 
-    let log_path = Path::new(&server.config.system.log_directory)
+    let log_path = Path::new(&server.app_state.config.system.log_directory)
         .join("install")
         .join(format!("{}.log", server.uuid));
     tokio::fs::create_dir_all(log_path.parent().unwrap()).await?;
@@ -241,7 +246,7 @@ pub async fn install_server(
             .configuration
             .read()
             .await
-            .environment(&server.config);
+            .environment(&server.app_state.config);
         if let Some(container_id) = container_id.lock().await.take() {
             if let Some(script) = container_script.lock().await.take() {
                 if let Err(err) =
@@ -277,11 +282,12 @@ pub async fn install_server(
         }
 
         tokio::fs::remove_dir_all(
-            Path::new(&server.config.system.tmp_directory).join(server.uuid.to_string()),
+            Path::new(&server.app_state.config.system.tmp_directory).join(server.uuid.to_string()),
         )
         .await
         .ok();
         if let Err(err) = server
+            .app_state
             .config
             .client
             .set_server_install(server.uuid, successful, reinstall)
@@ -313,6 +319,7 @@ pub async fn install_server(
     }
 
     let script = match server
+        .app_state
         .config
         .client
         .server_install_script(server.uuid)
@@ -340,7 +347,7 @@ pub async fn install_server(
     *container_script.lock().await = Some(script.clone());
 
     if let Err(err) = server
-        .pull_image(client, &script.container_image, false)
+        .pull_image(&script.container_image, false)
         .await
         .context("Failed to pull installation container image")
     {
@@ -375,8 +382,22 @@ pub async fn install_server(
     *container_id.lock().await = Some(container.id.clone());
 
     match tokio::time::timeout(
-        if server.config.docker.installer_limits.timeout_seconds > 0 {
-            std::time::Duration::from_secs(server.config.docker.installer_limits.timeout_seconds)
+        if server
+            .app_state
+            .config
+            .docker
+            .installer_limits
+            .timeout_seconds
+            > 0
+        {
+            std::time::Duration::from_secs(
+                server
+                    .app_state
+                    .config
+                    .docker
+                    .installer_limits
+                    .timeout_seconds,
+            )
         } else {
             std::time::Duration::MAX
         },
@@ -600,7 +621,7 @@ pub async fn attach_install_container(
             .configuration
             .read()
             .await
-            .environment(&server.config);
+            .environment(&server.app_state.config);
         if let Some(container_id) = container_id.lock().await.take()
             && let Err(err) = cleanup_container(
                 server,
@@ -620,11 +641,12 @@ pub async fn attach_install_container(
         }
 
         tokio::fs::remove_dir_all(
-            Path::new(&server.config.system.tmp_directory).join(server.uuid.to_string()),
+            Path::new(&server.app_state.config.system.tmp_directory).join(server.uuid.to_string()),
         )
         .await
         .ok();
         if let Err(err) = server
+            .app_state
             .config
             .client
             .set_server_install(server.uuid, successful, reinstall)
@@ -660,8 +682,22 @@ pub async fn attach_install_container(
     };
 
     if let Err(err) = tokio::time::timeout(
-        if server.config.docker.installer_limits.timeout_seconds > 0 {
-            std::time::Duration::from_secs(server.config.docker.installer_limits.timeout_seconds)
+        if server
+            .app_state
+            .config
+            .docker
+            .installer_limits
+            .timeout_seconds
+            > 0
+        {
+            std::time::Duration::from_secs(
+                server
+                    .app_state
+                    .config
+                    .docker
+                    .installer_limits
+                    .timeout_seconds,
+            )
         } else {
             std::time::Duration::MAX
         },

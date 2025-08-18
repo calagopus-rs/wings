@@ -1,4 +1,6 @@
-use crate::server::{activity::ApiActivity, permissions::Permissions};
+use crate::server::{
+    activity::ApiActivity, permissions::Permissions, schedule::ApiScheduleCompletionStatus,
+};
 use client::Client;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::json;
@@ -81,6 +83,22 @@ pub async fn send_activity(
         .post(format!("{}/activity", client.url))
         .json(&json!({
             "data": activity,
+        }))
+        .send()
+        .await?;
+
+    Ok(())
+}
+
+pub async fn send_schedule_status(
+    client: &Client,
+    schedules: Vec<ApiScheduleCompletionStatus>,
+) -> Result<(), anyhow::Error> {
+    client
+        .client
+        .post(format!("{}/schedule", client.url))
+        .json(&json!({
+            "data": schedules,
         }))
         .send()
         .await?;

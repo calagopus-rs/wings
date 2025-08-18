@@ -48,9 +48,9 @@ mod post {
         }
 
         server
-            .stop_with_kill_timeout(&state.docker, std::time::Duration::from_secs(30))
+            .stop_with_kill_timeout(std::time::Duration::from_secs(30), false)
             .await?;
-        server.sync_configuration(&state.docker).await;
+        server.sync_configuration().await;
 
         tokio::spawn(async move {
             if data.truncate_directory

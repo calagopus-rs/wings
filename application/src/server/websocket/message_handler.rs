@@ -82,7 +82,7 @@ pub async fn handle_message(
                         return Ok(());
                     }
 
-                    if let Err(err) = server.start(&state.docker, None).await {
+                    if let Err(err) = server.start(None, false).await {
                         match err.downcast::<&str>() {
                             Ok(message) => {
                                 super::send_message(sender, server.get_daemon_error(message)).await;
@@ -139,13 +139,12 @@ pub async fn handle_message(
                     if let Err(err) = if auto_kill.enabled && auto_kill.seconds > 0 {
                         server
                             .restart_with_kill_timeout(
-                                &state.docker,
                                 None,
                                 std::time::Duration::from_secs(auto_kill.seconds),
                             )
                             .await
                     } else {
-                        server.restart(&state.docker, None).await
+                        server.restart(None).await
                     } {
                         match err.downcast::<&str>() {
                             Ok(message) => {
@@ -210,12 +209,12 @@ pub async fn handle_message(
                     if let Err(err) = if auto_kill.enabled && auto_kill.seconds > 0 {
                         server
                             .stop_with_kill_timeout(
-                                &state.docker,
                                 std::time::Duration::from_secs(auto_kill.seconds),
+                                false,
                             )
                             .await
                     } else {
-                        server.stop(&state.docker, None).await
+                        server.stop(None, false).await
                     } {
                         match err.downcast::<&str>() {
                             Ok(message) => {
@@ -272,7 +271,7 @@ pub async fn handle_message(
                         return Ok(());
                     }
 
-                    if let Err(err) = server.kill(&state.docker).await {
+                    if let Err(err) = server.kill(false).await {
                         tracing::error!(
                             server = %server.uuid,
                             "failed to kill server: {:#?}",

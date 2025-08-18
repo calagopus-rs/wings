@@ -69,7 +69,7 @@ mod post {
 
         state
             .server_manager
-            .create_server(server_data, !data.skip_scripts)
+            .create_server(&state, server_data, !data.skip_scripts)
             .await;
 
         ApiResponse::json(Response {}).ok()

@@ -3,6 +3,7 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod post {
     use crate::{
+        io::compression::CompressionLevel,
         response::{ApiResponse, ApiResponseResult},
         routes::{ApiError, GetState, api::servers::_server_::GetServer},
     };
@@ -18,7 +19,7 @@ mod post {
         #[serde(default)]
         archive_format: crate::server::transfer::TransferArchiveFormat,
         #[serde(default, deserialize_with = "crate::deserialize::deserialize_optional")]
-        compression_level: Option<crate::server::filesystem::archive::CompressionLevel>,
+        compression_level: Option<CompressionLevel>,
         #[serde(
             default,
             deserialize_with = "crate::deserialize::deserialize_defaultable"
@@ -65,7 +66,6 @@ mod post {
         if transfer
             .start(
                 &state.backup_manager,
-                &state.docker,
                 data.url,
                 data.token,
                 data.backups,

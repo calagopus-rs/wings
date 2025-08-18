@@ -108,3 +108,59 @@ pub async fn set_server_transfer(
 
     Ok(())
 }
+
+pub async fn set_server_startup_variable(
+    client: &Client,
+    uuid: uuid::Uuid,
+    env_variable: &str,
+    value: &str,
+) -> Result<(), anyhow::Error> {
+    client
+        .client
+        .post(format!("{}/servers/{}/startup/variables", client.url, uuid))
+        .json(&json!({
+            "env_variable": env_variable,
+            "value": value,
+        }))
+        .send()
+        .await?;
+
+    Ok(())
+}
+
+pub async fn set_server_startup_command(
+    client: &Client,
+    uuid: uuid::Uuid,
+    command: &str,
+) -> Result<(), anyhow::Error> {
+    client
+        .client
+        .post(format!("{}/servers/{}/startup/command", client.url, uuid))
+        .json(&json!({
+            "command": command,
+        }))
+        .send()
+        .await?;
+
+    Ok(())
+}
+
+pub async fn set_server_startup_docker_image(
+    client: &Client,
+    uuid: uuid::Uuid,
+    image: &str,
+) -> Result<(), anyhow::Error> {
+    client
+        .client
+        .post(format!(
+            "{}/servers/{}/startup/docker-image",
+            client.url, uuid
+        ))
+        .json(&json!({
+            "image": image,
+        }))
+        .send()
+        .await?;
+
+    Ok(())
+}

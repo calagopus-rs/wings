@@ -13,8 +13,8 @@ mod put {
 
     #[derive(ToSchema, Deserialize)]
     pub struct RenameFile {
-        pub to: String,
         pub from: String,
+        pub to: String,
     }
 
     #[derive(ToSchema, Deserialize)]

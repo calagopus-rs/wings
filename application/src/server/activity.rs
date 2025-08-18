@@ -37,6 +37,18 @@ pub enum ActivityEvent {
     FileCompress,
     #[serde(rename = "server:file.decompress")]
     FileDecompress,
+    #[serde(rename = "server:file.create-directory")]
+    FileCreateDirectory,
+    #[serde(rename = "server:file.write")]
+    FileWrite,
+    #[serde(rename = "server:file.copy")]
+    FileCopy,
+    #[serde(rename = "server:file.delete")]
+    FileDelete,
+    #[serde(rename = "server:file.rename")]
+    FileRename,
+    #[serde(rename = "server:file.pull")]
+    FilePull,
 }
 
 impl ActivityEvent {

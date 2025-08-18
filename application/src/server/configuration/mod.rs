@@ -24,6 +24,25 @@ pub struct Mount {
     pub read_only: bool,
 }
 
+#[derive(Clone, Deserialize, Serialize)]
+pub struct ScheduleAction {
+    pub uuid: uuid::Uuid,
+
+    #[serde(flatten)]
+    pub action: super::schedule::actions::ScheduleAction,
+}
+
+#[derive(ToSchema, Clone, Deserialize, Serialize)]
+pub struct Schedule {
+    pub uuid: uuid::Uuid,
+    #[schema(value_type = Vec<serde_json::Value>)]
+    pub triggers: Vec<super::schedule::ScheduleTrigger>,
+    #[schema(value_type = serde_json::Value)]
+    pub condition: super::schedule::ScheduleCondition,
+    #[schema(value_type = Vec<serde_json::Value>)]
+    pub actions: Vec<ScheduleAction>,
+}
+
 nestify::nest! {
     #[derive(ToSchema, Deserialize, Serialize)]
     pub struct ServerConfiguration {
@@ -45,6 +64,8 @@ nestify::nest! {
         pub labels: HashMap<String, String>,
         #[serde(default)]
         pub backups: Vec<uuid::Uuid>,
+        #[serde(default)]
+        pub schedules: Vec<Schedule>,
 
         #[schema(inline)]
         pub allocations: #[derive(ToSchema, Deserialize, Serialize)] pub struct ServerConfigurationAllocations {

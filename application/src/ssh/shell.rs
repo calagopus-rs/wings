@@ -81,7 +81,7 @@ impl ShellSession {
                             return;
                         }
 
-                        if let Err(err) = self.server.start(&self.state.docker, None).await {
+                        if let Err(err) = self.server.start(None, false).await {
                             match err.downcast::<&str>() {
                                 Ok(message) => writeln(message).await,
                                 Err(err) => {
@@ -126,13 +126,12 @@ impl ShellSession {
                         if let Err(err) = if auto_kill.enabled && auto_kill.seconds > 0 {
                             self.server
                                 .restart_with_kill_timeout(
-                                    &self.state.docker,
                                     None,
                                     std::time::Duration::from_secs(auto_kill.seconds),
                                 )
                                 .await
                         } else {
-                            self.server.restart(&self.state.docker, None).await
+                            self.server.restart(None).await
                         } {
                             match err.downcast::<&str>() {
                                 Ok(message) => writeln(message).await,
@@ -179,12 +178,12 @@ impl ShellSession {
                         if let Err(err) = if auto_kill.enabled && auto_kill.seconds > 0 {
                             self.server
                                 .stop_with_kill_timeout(
-                                    &self.state.docker,
                                     std::time::Duration::from_secs(auto_kill.seconds),
+                                    false,
                                 )
                                 .await
                         } else {
-                            self.server.stop(&self.state.docker, None).await
+                            self.server.stop(None, false).await
                         } {
                             match err.downcast::<&str>() {
                                 Ok(message) => writeln(message).await,
@@ -224,7 +223,7 @@ impl ShellSession {
                             return;
                         }
 
-                        if let Err(err) = self.server.kill(&self.state.docker).await {
+                        if let Err(err) = self.server.kill(false).await {
                             tracing::error!(
                                 server = %self.server.uuid,
                                 "failed to kill server: {:#?}",

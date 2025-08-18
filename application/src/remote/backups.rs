@@ -1,4 +1,5 @@
 use super::client::Client;
+use crate::server::backup::adapters::BackupAdapter;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -110,4 +111,33 @@ pub async fn backup_restic_configuration(
     )?;
 
     Ok(response)
+}
+
+pub async fn create_backup(
+    client: &Client,
+    server: uuid::Uuid,
+    name: Option<&str>,
+    ignored_files: &[String],
+) -> Result<(BackupAdapter, uuid::Uuid), anyhow::Error> {
+    let response: Response = super::into_json(
+        client
+            .client
+            .post(format!("{}/servers/{}/backups", client.url, server))
+            .json(&json!({
+                "name": name,
+                "ignored_files": ignored_files,
+            }))
+            .send()
+            .await?
+            .text()
+            .await?,
+    )?;
+
+    #[derive(Deserialize)]
+    struct Response {
+        adapter: BackupAdapter,
+        uuid: uuid::Uuid,
+    }
+
+    Ok((response.adapter, response.uuid))
 }

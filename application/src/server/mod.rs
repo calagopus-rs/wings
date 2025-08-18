@@ -24,6 +24,7 @@ pub mod installation;
 pub mod manager;
 pub mod permissions;
 pub mod resources;
+pub mod schedule;
 pub mod script;
 pub mod state;
 pub mod transfer;
@@ -31,7 +32,7 @@ pub mod websocket;
 
 pub struct InnerServer {
     pub uuid: uuid::Uuid,
-    config: Arc<crate::config::Config>,
+    app_state: crate::routes::State,
 
     pub configuration: RwLock<configuration::ServerConfiguration>,
     pub process_configuration: RwLock<configuration::process::ProcessConfiguration>,
@@ -42,6 +43,7 @@ pub struct InnerServer {
     websocket_sender: RwLock<Option<tokio::task::JoinHandle<()>>>,
 
     pub container: RwLock<Option<Arc<container::Container>>>,
+    pub schedules: Arc<schedule::manager::ScheduleManager>,
     pub activity: activity::ActivityManager,
 
     pub state: state::ServerStateLock,
@@ -69,7 +71,7 @@ impl Server {
     pub fn new(
         configuration: configuration::ServerConfiguration,
         process_configuration: configuration::process::ProcessConfiguration,
-        config: Arc<crate::config::Config>,
+        app_state: crate::routes::State,
     ) -> Self {
         tracing::info!(
             server = %configuration.uuid,
@@ -79,31 +81,33 @@ impl Server {
         let filesystem = filesystem::Filesystem::new(
             configuration.uuid,
             configuration.build.disk_space * 1024 * 1024,
-            Arc::clone(&config),
+            Arc::clone(&app_state.config),
             &configuration.egg.file_denylist,
         );
 
         let (rx, tx) = tokio::sync::broadcast::channel(128);
 
-        let state = state::ServerStateLock::new(rx.clone());
-        let activity = activity::ActivityManager::new(configuration.uuid, &config);
+        let activity = activity::ActivityManager::new(configuration.uuid, &app_state.config);
+        let schedules = Arc::new(schedule::manager::ScheduleManager::new(Arc::clone(
+            &app_state.config,
+        )));
 
         Self(Arc::new(InnerServer {
             uuid: configuration.uuid,
-
-            config: Arc::clone(&config),
+            app_state,
 
             configuration: RwLock::new(configuration),
             process_configuration: RwLock::new(process_configuration),
 
-            websocket: rx,
+            websocket: rx.clone(),
             _websocket_receiver: tx,
             websocket_sender: RwLock::new(None),
 
             container: RwLock::new(None),
+            schedules: Arc::clone(&schedules),
             activity,
 
-            state,
+            state: state::ServerStateLock::new(rx, schedules),
             outgoing_transfer: RwLock::new(None),
             incoming_transfer: RwLock::new(None),
             installation_script: RwLock::new(None),
@@ -123,10 +127,13 @@ impl Server {
         }))
     }
 
+    pub async fn initialize_schedules(&self) {
+        self.schedules.update_schedules(self.clone()).await;
+    }
+
     pub fn setup_websocket_sender(
         &self,
         container: Arc<container::Container>,
-        client: Arc<bollard::Docker>,
     ) -> Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
         tracing::debug!(
             server = %self.uuid,
@@ -180,13 +187,12 @@ impl Server {
                     .log_daemon_with_prelude("Server is exceeding the assigned disk space limit, stopping process now.")
                     .await;
 
-                    let client_clone = Arc::clone(&client);
                     let server_clone = server.clone();
                     tokio::spawn(async move {
                         if let Err(err) = server_clone
                             .stop_with_kill_timeout(
-                                &client_clone,
                                 std::time::Duration::from_secs(30),
+                                false,
                             )
                             .await
                         {
@@ -207,14 +213,14 @@ impl Server {
                                 | state::ServerState::Starting
                                 | state::ServerState::Stopping,
                         ) {
-                            server.state.set_state(state::ServerState::Running);
+                            server.state.set_state(state::ServerState::Running).await;
                         }
                     }
                     Some(ContainerStateStatusEnum::EMPTY)
                     | Some(ContainerStateStatusEnum::DEAD)
                     | Some(ContainerStateStatusEnum::EXITED)
                     | None => {
-                        server.state.set_state(state::ServerState::Offline);
+                        server.state.set_state(state::ServerState::Offline).await;
 
                         tracing::debug!(
                             server = %server.uuid,
@@ -236,10 +242,9 @@ impl Server {
                                 .stopping
                                 .store(false, Ordering::SeqCst);
 
-                            let client = Arc::clone(&client);
                             let server = server.clone();
                             tokio::spawn(async move {
-                                if let Err(err) = server.start(&client, Some(std::time::Duration::from_secs(5))).await {
+                                if let Err(err) = server.start(Some(std::time::Duration::from_secs(5)), false).await {
                                     tracing::error!(
                                         server = %server.uuid,
                                         "failed to start server after stopping to restart: {}",
@@ -255,10 +260,10 @@ impl Server {
                             server
                                 .stopping
                                 .store(false, Ordering::SeqCst);
-                            if server.config.docker.delete_container_on_stop {
-                                server.destroy_container(&client).await;
+                            if server.app_state.config.docker.delete_container_on_stop {
+                                server.destroy_container().await;
                             }
-                        } else if server.config.system.crash_detection.enabled
+                        } else if server.app_state.config.system.crash_detection.enabled
                             && !server
                                 .crash_handled
                                 .load(Ordering::SeqCst)
@@ -269,7 +274,7 @@ impl Server {
 
                             if container_state.exit_code.is_some_and(|code| code == 0)
                                 && !container_state.oom_killed.unwrap_or(false)
-                                && !server
+                                && !server.app_state
                                     .config
                                     .system
                                     .crash_detection
@@ -279,12 +284,14 @@ impl Server {
                                     server = %server.uuid,
                                     "container exited cleanly, not restarting due to crash detection settings"
                                 );
-                                if server.config.docker.delete_container_on_stop {
-                                    server.destroy_container(&client).await;
+                                if server.app_state.config.docker.delete_container_on_stop {
+                                    server.destroy_container().await;
                                 }
 
                                 return;
                             }
+
+                            server.schedules.execute_crash_trigger().await;
 
                             server.log_daemon_with_prelude("---------- Detected server process in a crashed state! ----------").await;
                             server
@@ -303,22 +310,22 @@ impl Server {
                             let mut last_crash_lock = server.last_crash.lock().await;
                             if let Some(last_crash) = *last_crash_lock {
                                 if last_crash.elapsed().as_secs()
-                                    < server.config.system.crash_detection.timeout
+                                    < server.app_state.config.system.crash_detection.timeout
                                 {
                                     tracing::debug!(
                                         server = %server.uuid,
                                         "last crash was less than {} seconds ago, aborting automatic restart",
-                                        server.config.system.crash_detection.timeout
+                                        server.app_state.config.system.crash_detection.timeout
                                     );
 
                                     server.log_daemon_with_prelude(
                                         &format!(
                                             "Aborting automatic restart, last crash occurred less than {} seconds ago.",
-                                            server.config.system.crash_detection.timeout
+                                            server.app_state.config.system.crash_detection.timeout
                                         ),
                                     ).await;
-                                    if server.config.docker.delete_container_on_stop {
-                                        server.destroy_container(&client).await;
+                                    if server.app_state.config.docker.delete_container_on_stop {
+                                        server.destroy_container().await;
                                     }
 
                                     return;
@@ -326,7 +333,7 @@ impl Server {
                                     tracing::debug!(
                                         server = %server.uuid,
                                         "last crash was more than {} seconds ago, restarting server",
-                                        server.config.system.crash_detection.timeout
+                                        server.app_state.config.system.crash_detection.timeout
                                     );
 
                                     last_crash_lock.replace(std::time::Instant::now());
@@ -347,10 +354,9 @@ impl Server {
                                 "restarting server due to crash"
                             );
 
-                            let client = Arc::clone(&client);
                             let server = server.clone();
                             tokio::spawn(async move {
-                                if let Err(err) = server.start(&client, Some(std::time::Duration::from_secs(5))).await {
+                                if let Err(err) = server.start(Some(std::time::Duration::from_secs(5)), false).await {
                                     tracing::error!(
                                         server = %server.uuid,
                                         "failed to start server after crash: {}",
@@ -405,7 +411,6 @@ impl Server {
         &self,
         configuration: configuration::ServerConfiguration,
         process_configuration: configuration::process::ProcessConfiguration,
-        client: &Arc<bollard::Docker>,
     ) {
         self.filesystem
             .update_ignored(&configuration.egg.file_denylist)
@@ -414,8 +419,9 @@ impl Server {
             .store(configuration.suspended, Ordering::SeqCst);
         *self.configuration.write().await = configuration;
         *self.process_configuration.write().await = process_configuration;
+        self.schedules.update_schedules(self.clone()).await;
 
-        if let Err(err) = self.sync_container(client).await {
+        if let Err(err) = self.sync_container().await {
             tracing::error!(
                 server = %self.uuid,
                 "failed to sync container: {}",
@@ -424,13 +430,12 @@ impl Server {
         }
     }
 
-    pub async fn sync_configuration(&self, client: &Arc<bollard::Docker>) {
-        match self.config.client.server(self.uuid).await {
+    pub async fn sync_configuration(&self) {
+        match self.app_state.config.client.server(self.uuid).await {
             Ok(configuration) => {
                 self.update_configuration(
                     configuration.settings,
                     configuration.process_configuration,
-                    client,
                 )
                 .await;
             }
@@ -444,8 +449,8 @@ impl Server {
         }
     }
 
-    pub fn reset_state(&self) {
-        self.state.set_state(state::ServerState::Offline);
+    pub async fn reset_state(&self) {
+        self.state.set_state(state::ServerState::Offline).await;
     }
 
     #[inline]
@@ -456,10 +461,7 @@ impl Server {
             || self.transferring.load(Ordering::SeqCst)
     }
 
-    pub async fn setup_container(
-        &self,
-        client: &Arc<bollard::Docker>,
-    ) -> Result<(), bollard::errors::Error> {
+    pub async fn setup_container(&self) -> Result<(), bollard::errors::Error> {
         self.crash_handled.store(false, Ordering::SeqCst);
 
         if self.container.read().await.is_some() {
@@ -471,10 +473,12 @@ impl Server {
             "setting up container"
         );
 
-        let container = client
+        let container = self
+            .app_state
+            .docker
             .create_container(
                 Some(bollard::container::CreateContainerOptions {
-                    name: if self.config.docker.server_name_in_container_name {
+                    name: if self.app_state.config.docker.server_name_in_container_name {
                         let name = &self.configuration.read().await.meta.name;
                         let mut name_filtered = "".to_string();
                         for c in name.chars() {
@@ -494,7 +498,11 @@ impl Server {
                 self.configuration
                     .read()
                     .await
-                    .container_config(&self.config, client, &self.filesystem)
+                    .container_config(
+                        &self.app_state.config,
+                        &self.app_state.docker,
+                        &self.filesystem,
+                    )
                     .await,
             )
             .await?;
@@ -503,23 +511,19 @@ impl Server {
             container::Container::new(
                 container.id.clone(),
                 self.process_configuration.read().await.startup.clone(),
-                Arc::clone(client),
+                Arc::clone(&self.app_state.docker),
                 self.clone(),
             )
             .await?,
         );
 
-        self.setup_websocket_sender(Arc::clone(&container), Arc::clone(client))
-            .await;
+        self.setup_websocket_sender(Arc::clone(&container)).await;
         *self.container.write().await = Some(container);
 
         Ok(())
     }
 
-    pub async fn attach_container(
-        &self,
-        client: &Arc<bollard::Docker>,
-    ) -> Result<(), bollard::errors::Error> {
+    pub async fn attach_container(&self) -> Result<(), bollard::errors::Error> {
         if self.container.read().await.is_some() {
             return Ok(());
         }
@@ -529,7 +533,9 @@ impl Server {
             "attaching to container"
         );
 
-        if let Ok(containers) = client
+        if let Ok(containers) = self
+            .app_state
+            .docker
             .list_containers(Some(bollard::container::ListContainersOptions {
                 all: true,
                 filters: HashMap::from([("name".to_string(), vec![self.uuid.to_string()])]),
@@ -577,15 +583,14 @@ impl Server {
                     container::Container::new(
                         container.to_string(),
                         self.process_configuration.read().await.startup.clone(),
-                        Arc::clone(client),
+                        Arc::clone(&self.app_state.docker),
                         self.clone(),
                     )
                     .await?,
                 );
 
                 self.crash_handled.store(true, Ordering::SeqCst);
-                self.setup_websocket_sender(Arc::clone(&container), Arc::clone(client))
-                    .await;
+                self.setup_websocket_sender(Arc::clone(&container)).await;
                 *self.container.write().await = Some(container);
 
                 tokio::spawn({
@@ -605,22 +610,20 @@ impl Server {
         Ok(())
     }
 
-    pub async fn sync_container(
-        &self,
-        client: &bollard::Docker,
-    ) -> Result<(), bollard::errors::Error> {
+    pub async fn sync_container(&self) -> Result<(), bollard::errors::Error> {
         self.filesystem
             .update_disk_limit(self.configuration.read().await.build.disk_space * 1024 * 1024)
             .await;
 
         if let Some(container) = self.container.read().await.as_ref() {
-            client
+            self.app_state
+                .docker
                 .update_container(
                     &container.docker_id,
                     self.configuration
                         .read()
                         .await
-                        .container_update_config(&self.config),
+                        .container_update_config(&self.app_state.config),
                 )
                 .await?;
         }
@@ -681,7 +684,7 @@ impl Server {
     pub async fn log_daemon_with_prelude(&self, message: &str) {
         let prelude = ansi_term::Color::Yellow
             .bold()
-            .paint(format!("[{} Daemon]:", self.config.app_name));
+            .paint(format!("[{} Daemon]:", self.app_state.config.app_name));
 
         self.websocket
             .send(websocket::WebsocketMessage::new(
@@ -717,12 +720,7 @@ impl Server {
         )
     }
 
-    pub async fn pull_image(
-        &self,
-        client: &Arc<bollard::Docker>,
-        image: &str,
-        quiet: bool,
-    ) -> Result<(), bollard::errors::Error> {
+    pub async fn pull_image(&self, image: &str, quiet: bool) -> Result<(), bollard::errors::Error> {
         tracing::info!(
             server = %self.uuid,
             image = %image,
@@ -738,7 +736,7 @@ impl Server {
 
         if !image.ends_with("~") {
             let mut registry_auth = None;
-            for (registry, config) in self.config.docker.registries.iter() {
+            for (registry, config) in self.app_state.config.docker.registries.iter() {
                 if image.starts_with(registry) {
                     registry_auth = Some(bollard::auth::DockerCredentials {
                         username: Some(config.username.clone()),
@@ -751,7 +749,7 @@ impl Server {
 
             let (image, tag) = image.split_once(':').unwrap_or((image, "latest"));
 
-            let mut stream = client.create_image(
+            let mut stream = self.app_state.docker.create_image(
                 Some(bollard::image::CreateImageOptions {
                     from_image: image,
                     tag,
@@ -786,7 +784,9 @@ impl Server {
                                 .await;
                         }
 
-                        if let Ok(images) = client
+                        if let Ok(images) = self
+                            .app_state
+                            .docker
                             .list_images(Some(bollard::image::ListImagesOptions {
                                 all: true,
                                 filters: HashMap::from([("reference", vec![image])]),
@@ -828,8 +828,8 @@ impl Server {
 
     pub async fn start(
         &self,
-        client: &Arc<bollard::Docker>,
         aquire_timeout: Option<std::time::Duration>,
+        skip_schedules: bool,
     ) -> Result<(), anyhow::Error> {
         if self.is_locked_state() {
             return Err(anyhow::anyhow!(
@@ -852,83 +852,92 @@ impl Server {
             "starting server"
         );
 
-        match self
-            .state
-            .execute_action(
-                state::ServerState::Starting,
-                |_| async {
-                    self.filesystem.setup().await;
-                    self.destroy_container(client).await;
+        let server = self.clone();
+        tokio::spawn(async move {
+            match server
+                .state
+                .execute_action(
+                    state::ServerState::Starting,
+                    |_| async {
+                        server.filesystem.setup().await;
+                        server.destroy_container().await;
 
-                    self.sync_configuration(client).await;
+                        server.sync_configuration().await;
 
-                    self.log_daemon_with_prelude("Updating process configuration files...")
-                        .await;
-                    if let Err(err) = self.process_configuration
-                        .read()
-                        .await
-                        .update_files(self)
-                        .await {
-                        tracing::error!(
-                            server = %self.uuid,
-                            "failed to update process configuration files: {}",
-                            err
-                        );
-                    }
+                        server.log_daemon_with_prelude("Updating process configuration files...")
+                            .await;
+                        if let Err(err) = server.process_configuration
+                            .read()
+                            .await
+                            .update_files(&server)
+                            .await {
+                            tracing::error!(
+                                server = %server.uuid,
+                                "failed to update process configuration files: {}",
+                                err
+                            );
+                        }
 
-                    if self.config.system.check_permissions_on_boot {
-                        tracing::debug!(
-                            server = %self.uuid,
-                            "checking permissions on boot"
-                        );
-                        self.log_daemon_with_prelude(
-                            "Ensuring file permissions are set correctly, this could take a few seconds...",
+                        if server.app_state.config.system.check_permissions_on_boot {
+                            tracing::debug!(
+                                server = %server.uuid,
+                                "checking permissions on boot"
+                            );
+                            server.log_daemon_with_prelude(
+                                "Ensuring file permissions are set correctly, this could take a few seconds...",
+                            )
+                            .await;
+
+                            server.filesystem.chown_path(&server.filesystem.base_path).await?;
+                        }
+
+                        server.pull_image(
+                            &server.configuration.read().await.container.image,
+                            false,
                         )
-                        .await;
+                        .await?;
 
-                        self.filesystem.chown_path(&self.filesystem.base_path).await?;
-                    }
+                        server.setup_container().await?;
 
-                    self.pull_image(
-                        client,
-                        &self.configuration.read().await.container.image,
-                        false,
-                    )
-                    .await?;
+                        let container = match &*server.container.read().await {
+                            Some(container) => container.docker_id.clone(),
+                            None => return Ok(())
+                        };
 
-                    self.setup_container(client).await?;
+                        if let Err(err) = server.app_state.docker.start_container::<String>(&container, None).await {
+                            tracing::error!(
+                                server = %server.uuid,
+                                "failed to start container: {}",
+                                err
+                            );
 
-                    let container = match &*self.container.read().await {
-                        Some(container) => container.docker_id.clone(),
-                        None => return Ok(())
-                    };
+                            return Err(anyhow::anyhow!(err));
+                        }
 
-                    if let Err(err) = client.start_container::<String>(&container, None).await {
-                        tracing::error!(
-                            server = %self.uuid,
-                            "failed to start container: {}",
-                            err
-                        );
+                        Ok(())
+                    },
+                    aquire_timeout,
+                )
+                .await {
+                    Ok(true) => {
+                        if !skip_schedules {
+                            server.schedules.execute_power_action_trigger(crate::models::ServerPowerAction::Start).await;
+                        }
 
-                        return Err(anyhow::anyhow!(err));
-                    }
-
-                    Ok(())
-                },
-                aquire_timeout,
-            )
-            .await {
-                Ok(true) => Ok(()),
-                Ok(false) => {
-                    Err(anyhow::anyhow!(
-                        "Another power action is currently being processed for this server, please try again later."
-                    ))
-                },
-                Err(err) => Err(err),
-            }
+                        Ok(())
+                    },
+                    Ok(false) => {
+                        Err(anyhow::anyhow!(
+                            "Another power action is currently being processed for this server, please try again later."
+                        ))
+                    },
+                    Err(err) => Err(err),
+                }
+        })
+        .await?
     }
 
-    pub async fn kill(&self, client: &bollard::Docker) -> Result<(), bollard::errors::Error> {
+    pub async fn kill(&self, skip_schedules: bool) -> Result<(), anyhow::Error> {
         if self.state.get_state() == state::ServerState::Offline {
             return Ok(());
         }
@@ -943,27 +952,39 @@ impl Server {
             "killing server"
         );
 
-        self.stopping.store(true, Ordering::SeqCst);
-        if client
-            .kill_container(
-                &container,
-                Some(bollard::container::KillContainerOptions {
-                    signal: "SIGKILL".to_string(),
-                }),
-            )
-            .await
-            .is_err()
-        {
-            self.reset_state();
-        }
+        let server = self.clone();
+        tokio::spawn(async move {
+            server.stopping.store(true, Ordering::SeqCst);
+            if server
+                .app_state
+                .docker
+                .kill_container(
+                    &container,
+                    Some(bollard::container::KillContainerOptions {
+                        signal: "SIGKILL".to_string(),
+                    }),
+                )
+                .await
+                .is_ok()
+            {
+                if !skip_schedules {
+                    server
+                        .schedules
+                        .execute_power_action_trigger(crate::models::ServerPowerAction::Kill)
+                        .await;
+                }
+                server.reset_state().await;
+            }
 
-        Ok(())
+            Ok(())
+        })
+        .await?
     }
 
     pub async fn stop(
         &self,
-        client: &Arc<bollard::Docker>,
         aquire_timeout: Option<std::time::Duration>,
+        skip_schedules: bool,
     ) -> Result<(), anyhow::Error> {
         if self.state.get_state() == state::ServerState::Offline {
             return Err(anyhow::anyhow!("Server is already stopped."));
@@ -983,129 +1004,137 @@ impl Server {
             "stopping server"
         );
 
-        match self
-            .state
-            .execute_action(
-                state::ServerState::Stopping,
-                |_| async {
-                    self.stopping.store(true, Ordering::SeqCst);
+        let server = self.clone();
+        tokio::spawn(async move {
+            match server
+                .state
+                .execute_action(
+                    state::ServerState::Stopping,
+                    |_| async {
+                        server.stopping.store(true, Ordering::SeqCst);
 
-                    let stop = &self.process_configuration.read().await.stop;
+                        let stop = &server.process_configuration.read().await.stop;
 
-                    match stop.r#type.as_str() {
-                        "signal" => {
-                            tokio::spawn({
-                                let client = Arc::clone(client);
-                                let container = container.clone();
-                                let value = stop.value.clone();
-                                let server = self.clone();
+                        match stop.r#type.as_str() {
+                            "signal" => {
+                                tokio::spawn({
+                                    let container = container.clone();
+                                    let value = stop.value.clone();
+                                    let server = server.clone();
 
-                                async move {
-                                    client
-                                        .kill_container(
-                                            &container,
-                                            Some(bollard::container::KillContainerOptions {
-                                                signal: match value {
-                                                    Some(signal) => {
-                                                        match signal.to_uppercase().as_str() {
-                                                            "SIGABRT" => "SIGABRT".to_string(),
-                                                            "SIGINT" => "SIGINT".to_string(),
-                                                            "SIGTERM" => "SIGTERM".to_string(),
-                                                            "SIGQUIT" => "SIGQUIT".to_string(),
-                                                            "SIGKILL" => "SIGKILL".to_string(),
-                                                            _ => {
-                                                                tracing::error!(
-                                                                    server = %server.uuid,
-                                                                    "invalid signal: {}, defaulting to SIGKILL",
-                                                                    signal
-                                                                );
+                                    async move {
+                                        server.app_state.docker
+                                            .kill_container(
+                                                &container,
+                                                Some(bollard::container::KillContainerOptions {
+                                                    signal: match value {
+                                                        Some(signal) => {
+                                                            match signal.to_uppercase().as_str() {
+                                                                "SIGABRT" => "SIGABRT".to_string(),
+                                                                "SIGINT" => "SIGINT".to_string(),
+                                                                "SIGTERM" => "SIGTERM".to_string(),
+                                                                "SIGQUIT" => "SIGQUIT".to_string(),
+                                                                "SIGKILL" => "SIGKILL".to_string(),
+                                                                _ => {
+                                                                    tracing::error!(
+                                                                        server = %server.uuid,
+                                                                        "invalid signal: {}, defaulting to SIGKILL",
+                                                                        signal
+                                                                    );
 
-                                                                "SIGKILL".to_string()
+                                                                    "SIGKILL".to_string()
+                                                                }
                                                             }
                                                         }
-                                                    }
-                                                    _ => "SIGKILL".to_string(),
-                                                },
-                                            }),
-                                        )
-                                        .await
-                                        .unwrap()
-                                }
-                            });
+                                                        _ => "SIGKILL".to_string(),
+                                                    },
+                                                }),
+                                            )
+                                            .await
+                                            .unwrap()
+                                    }
+                                });
 
-                            Ok(())
-                        }
-                        "command" => {
-                            if let Some(stdin) = self.container_stdin().await {
-                                let mut command = stop.value.clone().unwrap_or_default();
-                                command.push('\n');
+                                Ok(())
+                            }
+                            "command" => {
+                                if let Some(stdin) = server.container_stdin().await {
+                                    let mut command = stop.value.clone().unwrap_or_default();
+                                    command.push('\n');
 
-                                if let Err(err) = stdin.send(command).await {
+                                    if let Err(err) = stdin.send(command).await {
+                                        tracing::error!(
+                                            server = %server.uuid,
+                                            "failed to send command to container stdin: {}",
+                                            err
+                                        );
+                                    }
+                                } else {
                                     tracing::error!(
-                                        server = %self.uuid,
-                                        "failed to send command to container stdin: {}",
-                                        err
+                                        server = %server.uuid,
+                                        "failed to get container stdin"
                                     );
                                 }
-                            } else {
-                                tracing::error!(
-                                    server = %self.uuid,
-                                    "failed to get container stdin"
-                                );
+
+                                Ok(())
                             }
+                            _ => {
+                                tracing::error!(
+                                    server = %server.uuid,
+                                    "invalid stop type: {}, defaulting to docker stop",
+                                    stop.r#type
+                                );
 
-                            Ok(())
+                                tokio::spawn({
+                                    let client = Arc::clone(&server.app_state.docker);
+                                    let container = container.clone();
+
+                                    async move {
+                                        client
+                                            .stop_container(
+                                                &container,
+                                                Some(bollard::container::StopContainerOptions {
+                                                    t: -1,
+                                                }),
+                                            )
+                                            .await
+                                            .unwrap()
+                                    }
+                                });
+
+                                Ok(())
+                            }
                         }
-                        _ => {
-                            tracing::error!(
-                                server = %self.uuid,
-                                "invalid stop type: {}, defaulting to docker stop",
-                                stop.r#type
-                            );
-
-                            tokio::spawn({
-                                let client = Arc::clone(client);
-                                let container = container.clone();
-
-                                async move {
-                                    client
-                                        .stop_container(
-                                            &container,
-                                            Some(bollard::container::StopContainerOptions {
-                                                t: -1,
-                                            }),
-                                        )
-                                        .await
-                                        .unwrap()
-                                }
-                            });
-
-                            Ok(())
+                    },
+                    aquire_timeout,
+                )
+                .await {
+                    Ok(true) => {
+                        if !skip_schedules {
+                            server.schedules.execute_power_action_trigger(crate::models::ServerPowerAction::Stop).await;
                         }
+
+                        Ok(())
+                    },
+                    Ok(false) => {
+                        server.stopping.store(false, Ordering::SeqCst);
+
+                        Err(anyhow::anyhow!(
+                            "Another power action is currently being processed for this server, please try again later."
+                        ))
+                    },
+                    Err(err) => {
+                        server.stopping.store(false, Ordering::SeqCst);
+
+                        Err(err)
                     }
-                },
-                aquire_timeout,
-            )
-            .await {
-                Ok(true) =>  Ok(()),
-                Ok(false) => {
-                    self.stopping.store(false, Ordering::SeqCst);
-
-                    Err(anyhow::anyhow!(
-                        "Another power action is currently being processed for this server, please try again later."
-                    ))
-                },
-                Err(err) => {
-                    self.stopping.store(false, Ordering::SeqCst);
-
-                    Err(err)
                 }
-            }
+        })
+        .await?
     }
 
     pub async fn restart(
         &self,
-        client: &Arc<bollard::Docker>,
         aquire_timeout: Option<std::time::Duration>,
     ) -> Result<(), anyhow::Error> {
         if self.restarting.load(Ordering::SeqCst) {
@@ -1117,22 +1146,30 @@ impl Server {
             "restarting server"
         );
 
-        if self.state.get_state() != state::ServerState::Offline {
-            if self.state.get_state() != state::ServerState::Stopping {
-                self.stop(client, aquire_timeout).await?;
+        let server = self.clone();
+        tokio::spawn(async move {
+            if server.state.get_state() != state::ServerState::Offline {
+                if server.state.get_state() != state::ServerState::Stopping {
+                    server.stop(aquire_timeout, true).await?;
+                }
+
+                server.restarting.store(true, Ordering::SeqCst);
+            } else {
+                server.start(aquire_timeout, true).await?;
             }
 
-            self.restarting.store(true, Ordering::SeqCst);
-        } else {
-            self.start(client, aquire_timeout).await?;
-        }
+            server
+                .schedules
+                .execute_power_action_trigger(crate::models::ServerPowerAction::Restart)
+                .await;
 
-        Ok(())
+            Ok(())
+        })
+        .await?
     }
 
     pub async fn restart_with_kill_timeout(
         &self,
-        client: &Arc<bollard::Docker>,
         aquire_timeout: Option<std::time::Duration>,
         timeout: std::time::Duration,
     ) -> Result<(), anyhow::Error> {
@@ -1146,23 +1183,27 @@ impl Server {
             timeout.as_secs()
         );
 
-        if self.state.get_state() != state::ServerState::Offline {
-            if self.state.get_state() != state::ServerState::Stopping {
-                self.stop_with_kill_timeout(client, timeout).await?;
+        let server = self.clone();
+        tokio::spawn(async move {
+            if server.state.get_state() != state::ServerState::Offline {
+                if server.state.get_state() != state::ServerState::Stopping {
+                    server.stop_with_kill_timeout(timeout, true).await?;
+                }
+
+                server.restarting.store(true, Ordering::SeqCst);
+            } else {
+                server.start(aquire_timeout, true).await?;
             }
 
-            self.restarting.store(true, Ordering::SeqCst);
-        } else {
-            self.start(client, aquire_timeout).await?;
-        }
-
-        Ok(())
+            Ok(())
+        })
+        .await?
     }
 
     pub async fn stop_with_kill_timeout(
         &self,
-        client: &Arc<bollard::Docker>,
         timeout: std::time::Duration,
+        skip_schedules: bool,
     ) -> Result<(), anyhow::Error> {
         if self.state.get_state() == state::ServerState::Offline {
             return Ok(());
@@ -1180,37 +1221,43 @@ impl Server {
         ))
         .await;
 
-        let mut stream = client.wait_container::<String>(
-            match &self.container.read().await.as_ref() {
-                Some(container) => &container.docker_id,
-                None => return Ok(()),
-            },
-            None,
-        );
-
-        if self.state.get_state() != state::ServerState::Stopping {
-            self.stop(client, None).await?;
-        }
-
-        if tokio::time::timeout(timeout, stream.next()).await.is_err() {
-            tracing::info!(
-                server = %self.uuid,
-                "kill timeout reached, killing server"
+        let server = self.clone();
+        tokio::spawn(async move {
+            let mut stream = server.app_state.docker.wait_container::<String>(
+                match &server.container.read().await.as_ref() {
+                    Some(container) => &container.docker_id,
+                    None => return Ok(()),
+                },
+                None,
             );
 
-            self.kill(client).await?;
-        }
+            if server.state.get_state() != state::ServerState::Stopping {
+                server.stop(None, skip_schedules).await?;
+            }
 
-        Ok(())
+            if tokio::time::timeout(timeout, stream.next()).await.is_err() {
+                tracing::info!(
+                    server = %server.uuid,
+                    "kill timeout reached, killing server"
+                );
+
+                server.kill(skip_schedules).await?;
+            }
+
+            Ok(())
+        })
+        .await?
     }
 
-    pub async fn destroy_container(&self, client: &bollard::Docker) {
+    pub async fn destroy_container(&self) {
         tracing::info!(
             server = %self.uuid,
             "destroying container"
         );
 
-        if let Ok(containers) = client
+        if let Ok(containers) = self
+            .app_state
+            .docker
             .list_containers(Some(bollard::container::ListContainersOptions {
                 all: true,
                 filters: HashMap::from([("name".to_string(), vec![self.uuid.to_string()])]),
@@ -1230,7 +1277,9 @@ impl Server {
                     }
                 };
 
-                if let Err(err) = client
+                if let Err(err) = self
+                    .app_state
+                    .docker
                     .remove_container(
                         &container,
                         Some(bollard::container::RemoveContainerOptions {
@@ -1256,15 +1305,15 @@ impl Server {
         }
     }
 
-    pub async fn destroy(&self, client: &bollard::Docker) {
+    pub async fn destroy(&self) {
         tracing::info!(
             server = %self.uuid,
             "destroying server"
         );
 
         self.suspended.store(true, Ordering::SeqCst);
-        self.kill(client).await.ok();
-        self.destroy_container(client).await;
+        self.kill(true).await.ok();
+        self.destroy_container().await;
 
         tokio::spawn({
             let server = self.clone();

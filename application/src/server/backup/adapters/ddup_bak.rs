@@ -1,5 +1,9 @@
 use crate::{
-    io::{counting_reader::CountingReader, fixed_reader::FixedReader},
+    io::{
+        compression::{CompressionLevel, writer::CompressionWriter},
+        counting_reader::CountingReader,
+        fixed_reader::FixedReader,
+    },
     models::DirectoryEntry,
     remote::backups::RawServerBackup,
     response::ApiResponse,
@@ -129,7 +133,7 @@ impl DdupBakBackup {
         zip: &mut zip::ZipWriter<
             zip::write::StreamWriter<tokio_util::io::SyncIoBridge<tokio::io::DuplexStream>>,
         >,
-        compression_level: crate::server::filesystem::archive::CompressionLevel,
+        compression_level: CompressionLevel,
         parent_path: &Path,
     ) -> Result<(), anyhow::Error> {
         let size = match entry {
@@ -138,9 +142,7 @@ impl DdupBakBackup {
         };
 
         let mut options: zip::write::FileOptions<'_, ()> = zip::write::FileOptions::default()
-            .compression_level(Some(
-                compression_level.flate2_compression_level().level() as i64
-            ))
+            .compression_level(Some(compression_level.to_deflate_level() as i64))
             .unix_permissions(entry.mode().bits())
             .large_file(size >= u32::MAX as u64);
         {
@@ -231,7 +233,7 @@ impl BackupCreateExt for DdupBakBackup {
         ignore: ignore::gitignore::Gitignore,
         ignore_raw: String,
     ) -> Result<RawServerBackup, anyhow::Error> {
-        let repository = get_repository(&server.config).await;
+        let repository = get_repository(&server.app_state.config).await;
         let path = repository.archive_path(&uuid.to_string());
 
         let total_task = {
@@ -287,8 +289,13 @@ impl BackupCreateExt for DdupBakBackup {
                     Some(&server.filesystem.base_path),
                     None,
                     Some({
-                        let compression_format =
-                            server.config.system.backups.ddup_bak.compression_format;
+                        let compression_format = server
+                            .app_state
+                            .config
+                            .system
+                            .backups
+                            .ddup_bak
+                            .compression_format;
 
                         Arc::new(move |_, metadata| {
                             progress.fetch_add(metadata.len(), Ordering::SeqCst);
@@ -309,7 +316,13 @@ impl BackupCreateExt for DdupBakBackup {
                             }
                         })
                     }),
-                    server.config.system.backups.ddup_bak.create_threads,
+                    server
+                        .app_state
+                        .config
+                        .system
+                        .backups
+                        .ddup_bak
+                        .create_threads,
                 )?;
 
                 repository.save()?;
@@ -413,13 +426,14 @@ impl BackupExt for DdupBakBackup {
                 });
             }
             _ => {
-                let writer = archive_format
-                    .compression_format()
-                    .writer(writer, compression_level);
+                let writer = CompressionWriter::new(
+                    tokio_util::io::SyncIoBridge::new(writer),
+                    archive_format.compression_format(),
+                    compression_level,
+                    config.api.file_compression_threads,
+                );
 
                 tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
-                    let writer = tokio_util::io::SyncIoBridge::new(writer);
-
                     let mut tar = tar::Builder::new(writer);
                     tar.mode(tar::HeaderMode::Complete);
 
@@ -464,7 +478,7 @@ impl BackupExt for DdupBakBackup {
         total: Arc<AtomicU64>,
         _download_url: Option<String>,
     ) -> Result<(), anyhow::Error> {
-        let repository = get_repository(&server.config).await;
+        let repository = get_repository(&server.app_state.config).await;
 
         let archive = self.archive.clone();
 
@@ -600,7 +614,7 @@ impl BackupExt for DdupBakBackup {
 #[async_trait::async_trait]
 impl BackupCleanExt for DdupBakBackup {
     async fn clean(server: &crate::server::Server, uuid: uuid::Uuid) -> Result<(), anyhow::Error> {
-        let repository = get_repository(&server.config).await;
+        let repository = get_repository(&server.app_state.config).await;
 
         tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
             repository.delete_archive(&uuid.to_string(), None)?;
@@ -872,7 +886,7 @@ impl BackupBrowseExt for BrowseDdupBakBackup {
             }
         };
 
-        let repository = get_repository(&self.server.config).await;
+        let repository = get_repository(&self.server.app_state.config).await;
         let mut entry_reader = repository.entry_reader(entry.clone())?;
         let (reader, mut writer) = tokio::io::duplex(crate::BUFFER_SIZE);
 
@@ -915,8 +929,14 @@ impl BackupBrowseExt for BrowseDdupBakBackup {
             }
         };
 
-        let repository = get_repository(&self.server.config).await;
-        let compression_level = self.server.config.system.backups.compression_level;
+        let repository = get_repository(&self.server.app_state.config).await;
+        let compression_level = self
+            .server
+            .app_state
+            .config
+            .system
+            .backups
+            .compression_level;
         let (reader, writer) = tokio::io::duplex(crate::BUFFER_SIZE);
 
         match archive_format {
@@ -969,13 +989,14 @@ impl BackupBrowseExt for BrowseDdupBakBackup {
                 });
             }
             _ => {
-                let writer = archive_format
-                    .compression_format()
-                    .writer(writer, compression_level);
+                let writer = CompressionWriter::new(
+                    tokio_util::io::SyncIoBridge::new(writer),
+                    archive_format.compression_format(),
+                    compression_level,
+                    self.server.app_state.config.api.file_compression_threads,
+                );
 
                 tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
-                    let writer = tokio_util::io::SyncIoBridge::new(writer);
-
                     let mut tar = tar::Builder::new(writer);
                     tar.mode(tar::HeaderMode::Complete);
 
@@ -1042,8 +1063,14 @@ impl BackupBrowseExt for BrowseDdupBakBackup {
             }
         };
 
-        let repository = get_repository(&self.server.config).await;
-        let compression_level = self.server.config.system.backups.compression_level;
+        let repository = get_repository(&self.server.app_state.config).await;
+        let compression_level = self
+            .server
+            .app_state
+            .config
+            .system
+            .backups
+            .compression_level;
         let (reader, writer) = tokio::io::duplex(crate::BUFFER_SIZE);
 
         match archive_format {
@@ -1071,13 +1098,14 @@ impl BackupBrowseExt for BrowseDdupBakBackup {
                 });
             }
             _ => {
-                let writer = archive_format
-                    .compression_format()
-                    .writer(writer, compression_level);
+                let writer = CompressionWriter::new(
+                    tokio_util::io::SyncIoBridge::new(writer),
+                    archive_format.compression_format(),
+                    compression_level,
+                    self.server.app_state.config.api.file_compression_threads,
+                );
 
                 tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
-                    let writer = tokio_util::io::SyncIoBridge::new(writer);
-
                     let mut tar = tar::Builder::new(writer);
                     tar.mode(tar::HeaderMode::Complete);
 

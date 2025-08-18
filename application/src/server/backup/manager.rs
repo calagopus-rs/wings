@@ -176,6 +176,7 @@ impl BackupManager {
                 progress_task.abort();
 
                 server
+                    .app_state
                     .config
                     .client
                     .set_backup_status(
@@ -215,6 +216,7 @@ impl BackupManager {
         };
 
         server
+            .app_state
             .config
             .client
             .set_backup_status(uuid, &backup)
@@ -254,7 +256,6 @@ impl BackupManager {
     pub async fn restore(
         &self,
         backup: &super::Backup,
-        client: &Arc<bollard::Docker>,
         server: &crate::server::Server,
         truncate_directory: bool,
         download_url: Option<String>,
@@ -265,7 +266,7 @@ impl BackupManager {
 
         server.restoring.store(true, Ordering::SeqCst);
         if let Err(err) = server
-            .stop_with_kill_timeout(client, std::time::Duration::from_secs(30))
+            .stop_with_kill_timeout(std::time::Duration::from_secs(30), false)
             .await
         {
             tracing::error!(
@@ -276,6 +277,7 @@ impl BackupManager {
 
             server.restoring.store(false, Ordering::SeqCst);
             server
+                .app_state
                 .config
                 .client
                 .set_backup_restore_status(backup.uuid(), false)
@@ -301,6 +303,7 @@ impl BackupManager {
 
             server.restoring.store(false, Ordering::SeqCst);
             server
+                .app_state
                 .config
                 .client
                 .set_backup_restore_status(backup.uuid(), false)
@@ -362,6 +365,7 @@ impl BackupManager {
                     ))
                     .await;
                 server
+                    .app_state
                     .config
                     .client
                     .set_backup_restore_status(backup.uuid(), true)
@@ -387,6 +391,7 @@ impl BackupManager {
 
                 server.restoring.store(false, Ordering::SeqCst);
                 server
+                    .app_state
                     .config
                     .client
                     .set_backup_restore_status(backup.uuid(), false)

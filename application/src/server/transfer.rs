@@ -1,5 +1,6 @@
-use crate::{
-    io::counting_reader::AsyncCountingReader, server::filesystem::archive::CompressionLevel,
+use crate::io::{
+    compression::{CompressionLevel, CompressionType},
+    counting_reader::AsyncCountingReader,
 };
 use human_bytes::human_bytes;
 use serde::Deserialize;
@@ -103,6 +104,7 @@ impl OutgoingServerTransfer {
 
     async fn transfer_failure(server: &super::Server) {
         server
+            .app_state
             .config
             .client
             .set_server_transfer(server.uuid, false, Vec::new())
@@ -123,14 +125,12 @@ impl OutgoingServerTransfer {
     pub fn start(
         &mut self,
         backup_manager: &Arc<super::backup::manager::BackupManager>,
-        client: &Arc<bollard::Docker>,
         url: String,
         token: String,
         backups: Vec<uuid::Uuid>,
         delete_backups: bool,
     ) -> Result<(), anyhow::Error> {
         let backup_manager = Arc::clone(backup_manager);
-        let client = Arc::clone(client);
         let bytes_archived = Arc::clone(&self.bytes_archived);
         let archive_format = self.archive_format;
         let compression_level = self.compression_level;
@@ -144,7 +144,7 @@ impl OutgoingServerTransfer {
         let old_task = self.task.replace(tokio::spawn(async move {
             if server.state.get_state() != super::state::ServerState::Offline
                 && let Err(err) = server
-                    .stop_with_kill_timeout(&client, std::time::Duration::from_secs(15))
+                    .stop_with_kill_timeout(std::time::Duration::from_secs(15), true)
                     .await
             {
                 tracing::error!(
@@ -178,20 +178,21 @@ impl OutgoingServerTransfer {
 
                     crate::server::filesystem::archive::Archive::create_tar(
                         server.filesystem.clone(),
-                        checksummed_writer,
+                        tokio_util::io::SyncIoBridge::new(checksummed_writer),
                         Path::new(""),
                         sources.into_iter().map(PathBuf::from).collect(),
                         match archive_format {
-                            TransferArchiveFormat::Tar => crate::server::filesystem::archive::CompressionType::None,
-                            TransferArchiveFormat::TarGz => crate::server::filesystem::archive::CompressionType::Gz,
-                            TransferArchiveFormat::TarXz => crate::server::filesystem::archive::CompressionType::Xz,
-                            TransferArchiveFormat::TarBz2 => crate::server::filesystem::archive::CompressionType::Bz2,
-                            TransferArchiveFormat::TarLz4 => crate::server::filesystem::archive::CompressionType::Lz4,
-                            TransferArchiveFormat::TarZstd => crate::server::filesystem::archive::CompressionType::Zstd,
+                            TransferArchiveFormat::Tar => CompressionType::None,
+                            TransferArchiveFormat::TarGz => CompressionType::Gz,
+                            TransferArchiveFormat::TarXz => CompressionType::Xz,
+                            TransferArchiveFormat::TarBz2 => CompressionType::Bz2,
+                            TransferArchiveFormat::TarLz4 => CompressionType::Lz4,
+                            TransferArchiveFormat::TarZstd => CompressionType::Zstd,
                         },
                         compression_level,
                         Some(Arc::clone(&bytes_archived)),
-                        &[]
+                        vec![],
+                        server.app_state.config.api.file_compression_threads,
                     )
                     .await
                 }
@@ -245,7 +246,7 @@ impl OutgoingServerTransfer {
                     if let Ok(Some(backup)) = backup_manager.find(*backup).await {
                         match backup.adapter() {
                             super::backup::adapters::BackupAdapter::Wings => {
-                                let file_name = match super::backup::adapters::wings::WingsBackup::get_first_file_name(&server.config, backup.uuid()).await {
+                                let file_name = match super::backup::adapters::wings::WingsBackup::get_first_file_name(&server.app_state.config, backup.uuid()).await {
                                     Ok((_, file_name)) => file_name,
                                     Err(err) => {
                                         tracing::error!(
@@ -393,7 +394,7 @@ impl OutgoingServerTransfer {
                 match backup_manager.find(backup).await {
                     Ok(Some(backup)) => {
                         if delete_backups {
-                            if let Err(err) = backup.delete(&server.config).await {
+                            if let Err(err) = backup.delete(&server.app_state.config).await {
                                 tracing::error!(
                                     server = %server.uuid,
                                     "failed to delete backup {}: {}",

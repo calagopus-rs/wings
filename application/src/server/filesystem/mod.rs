@@ -677,10 +677,21 @@ impl Filesystem {
         }
 
         if self.cap_filesystem.is_uninitialized().await {
-            match cap_std::fs::Dir::open_ambient_dir(&self.base_path, cap_std::ambient_authority())
+            let base_path = self.base_path.clone();
+            match tokio::task::spawn_blocking(move || {
+                cap_std::fs::Dir::open_ambient_dir(&base_path, cap_std::ambient_authority())
+            })
+            .await
             {
-                Ok(dir) => {
+                Ok(Ok(dir)) => {
                     *self.cap_filesystem.inner.write().await = Some(Arc::new(dir));
+                }
+                Ok(Err(err)) => {
+                    tracing::error!(
+                        path = %self.base_path.display(),
+                        "failed to open server base directory: {}",
+                        err
+                    );
                 }
                 Err(err) => {
                     tracing::error!(
@@ -703,10 +714,21 @@ impl Filesystem {
         }
 
         if self.cap_filesystem.is_uninitialized().await {
-            match cap_std::fs::Dir::open_ambient_dir(&self.base_path, cap_std::ambient_authority())
+            let base_path = self.base_path.clone();
+            match tokio::task::spawn_blocking(move || {
+                cap_std::fs::Dir::open_ambient_dir(&base_path, cap_std::ambient_authority())
+            })
+            .await
             {
-                Ok(dir) => {
+                Ok(Ok(dir)) => {
                     *self.cap_filesystem.inner.write().await = Some(Arc::new(dir));
+                }
+                Ok(Err(err)) => {
+                    tracing::error!(
+                        path = %self.base_path.display(),
+                        "failed to open server base directory: {}",
+                        err
+                    );
                 }
                 Err(err) => {
                     tracing::error!(

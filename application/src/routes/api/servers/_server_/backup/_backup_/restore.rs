@@ -64,13 +64,7 @@ mod post {
         tokio::spawn(async move {
             if let Err(err) = state
                 .backup_manager
-                .restore(
-                    &backup,
-                    &state.docker,
-                    &server,
-                    data.truncate_directory,
-                    data.download_url,
-                )
+                .restore(&backup, &server, data.truncate_directory, data.download_url)
                 .await
             {
                 tracing::error!(

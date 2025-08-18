@@ -62,7 +62,13 @@ impl Download {
         if let Some(host) = url.host_str()
             && let Ok(ip) = std::net::IpAddr::from_str(host)
         {
-            for cidr in server.config.api.remote_download_blocked_cidrs.iter() {
+            for cidr in server
+                .app_state
+                .config
+                .api
+                .remote_download_blocked_cidrs
+                .iter()
+            {
                 if cidr.contains(&ip) {
                     tracing::warn!("blocking internal IP address in pull: {}", ip);
                     return Err(anyhow::anyhow!("IP address {} is blocked", ip));
@@ -70,7 +76,7 @@ impl Download {
             }
         }
 
-        let response = get_download_client(&server.config)
+        let response = get_download_client(&server.app_state.config)
             .await?
             .get(url)
             .send()

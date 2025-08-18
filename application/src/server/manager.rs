@@ -11,19 +11,25 @@ use tokio::{
 };
 
 pub struct Manager {
-    config: Arc<crate::config::Config>,
-    client: Arc<bollard::Docker>,
-
     pub servers: Arc<RwLock<Vec<Server>>>,
 }
 
 impl Manager {
-    pub async fn new(
-        config: Arc<crate::config::Config>,
-        client: Arc<bollard::Docker>,
+    pub fn new(raw_servers: &[crate::remote::servers::RawServer]) -> Self {
+        let mut servers = Vec::new();
+        servers.reserve_exact(raw_servers.len());
+
+        Self {
+            servers: Arc::new(RwLock::new(servers)),
+        }
+    }
+
+    pub async fn boot(
+        &self,
+        app_state: &crate::routes::State,
         raw_servers: Vec<crate::remote::servers::RawServer>,
-    ) -> Arc<Self> {
-        let states_path = Path::new(&config.system.root_directory).join("states.json");
+    ) {
+        let states_path = Path::new(&app_state.config.system.root_directory).join("states.json");
         let mut states: HashMap<uuid::Uuid, ServerState> = serde_json::from_str(
             tokio::fs::read_to_string(&states_path)
                 .await
@@ -32,7 +38,8 @@ impl Manager {
         )
         .unwrap_or_default();
 
-        let installing_path = Path::new(&config.system.root_directory).join("installing.json");
+        let installing_path =
+            Path::new(&app_state.config.system.root_directory).join("installing.json");
         let mut installing: HashMap<uuid::Uuid, (bool, super::installation::InstallationScript)> =
             serde_json::from_str(
                 tokio::fs::read_to_string(&installing_path)
@@ -42,20 +49,21 @@ impl Manager {
             )
             .unwrap_or_default();
 
-        let mut servers = Vec::new();
+        let mut servers = self.servers.write().await;
         let semaphore = Arc::new(Semaphore::new(
-            config.remote_query.boot_servers_per_page as usize,
+            app_state.config.remote_query.boot_servers_per_page as usize,
         ));
 
         for s in raw_servers {
-            let server = Server::new(s.settings, s.process_configuration, Arc::clone(&config));
+            let server = Server::new(s.settings, s.process_configuration, app_state.clone());
             let state = states.remove(&server.uuid).unwrap_or_default();
 
+            server.initialize_schedules().await;
             server.filesystem.attach().await;
 
             if let Some((reinstall, container_script)) = installing.remove(&server.uuid) {
                 tokio::spawn({
-                    let client = Arc::clone(&client);
+                    let client = Arc::clone(&app_state.docker);
                     let server = server.clone();
 
                     async move {
@@ -81,9 +89,8 @@ impl Manager {
                         }
                     }
                 });
-            } else if config.remote_query.boot_servers_per_page > 0 {
+            } else if app_state.config.remote_query.boot_servers_per_page > 0 {
                 tokio::spawn({
-                    let client = Arc::clone(&client);
                     let semaphore = Arc::clone(&semaphore);
                     let server = server.clone();
 
@@ -94,7 +101,7 @@ impl Manager {
                             state
                         );
 
-                        match server.attach_container(&client).await {
+                        match server.attach_container().await {
                             Ok(_) => {
                                 tracing::debug!(server = %server.uuid, "server attached successfully");
                             }
@@ -116,7 +123,7 @@ impl Manager {
                         {
                             let _ = semaphore.acquire().await.unwrap();
 
-                            server.start(&client, None).await.ok();
+                            server.start(None, false).await.ok();
                         }
                     }
                 });
@@ -125,10 +132,8 @@ impl Manager {
             servers.push(server);
         }
 
-        let servers = Arc::new(RwLock::new(servers));
-
         tokio::spawn({
-            let servers = Arc::clone(&servers);
+            let servers = Arc::clone(&self.servers);
 
             async move {
                 let mut states_file = match File::create(&states_path).await {
@@ -172,7 +177,7 @@ impl Manager {
         });
 
         tokio::spawn({
-            let servers = Arc::clone(&servers);
+            let servers = Arc::clone(&self.servers);
 
             async move {
                 let mut installing_file = match File::create(&installing_path).await {
@@ -218,12 +223,6 @@ impl Manager {
                 }
             }
         });
-
-        Arc::new(Self {
-            config,
-            client,
-            servers,
-        })
     }
 
     pub async fn get_servers(&self) -> tokio::sync::RwLockReadGuard<'_, Vec<Server>> {
@@ -232,20 +231,21 @@ impl Manager {
 
     pub async fn create_server(
         &self,
+        app_state: &crate::routes::State,
         raw_server: crate::remote::servers::RawServer,
         install_server: bool,
     ) -> Server {
         let server = Server::new(
             raw_server.settings,
             raw_server.process_configuration,
-            Arc::clone(&self.config),
+            app_state.clone(),
         );
 
         server.filesystem.setup().await;
 
         if install_server {
             tokio::spawn({
-                let client = Arc::clone(&self.client);
+                let client = Arc::clone(&app_state.docker);
                 let server = server.clone();
 
                 async move {
@@ -264,7 +264,7 @@ impl Manager {
                         .await
                         .start_on_completion
                         .is_some_and(|s| s)
-                        && let Err(err) = server.start(&client, None).await
+                        && let Err(err) = server.start(None, false).await
                     {
                         tracing::error!(
                             server = %server.uuid,
@@ -288,11 +288,7 @@ impl Manager {
             let server = servers.remove(pos);
             server.suspended.store(true, Ordering::SeqCst);
 
-            tokio::spawn({
-                let client = Arc::clone(&self.client);
-
-                async move { server.destroy(&client).await }
-            });
+            tokio::spawn(async move { server.destroy().await });
         }
     }
 }

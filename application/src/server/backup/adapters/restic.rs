@@ -1,4 +1,5 @@
 use crate::{
+    io::compression::writer::CompressionWriter,
     models::DirectoryEntry,
     remote::backups::{RawServerBackup, ResticBackupConfiguration},
     response::ApiResponse,
@@ -12,7 +13,6 @@ use crate::{
 };
 use axum::{body::Body, http::HeaderMap};
 use chrono::{Datelike, Timelike};
-use futures::StreamExt;
 use human_bytes::human_bytes;
 use serde::Deserialize;
 use std::{
@@ -23,11 +23,7 @@ use std::{
         atomic::{AtomicU64, Ordering},
     },
 };
-use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt},
-    process::Command,
-    sync::RwLock,
-};
+use tokio::{io::AsyncBufReadExt, process::Command, sync::RwLock};
 
 type ResticBackupCache =
     RwLock<HashMap<uuid::Uuid, (ResticSnapshot, Arc<ResticBackupConfiguration>)>>;
@@ -62,6 +58,7 @@ pub struct ResticBackup {
     uuid: uuid::Uuid,
     short_id: String,
 
+    config: Arc<crate::config::Config>,
     server_path: PathBuf,
     configuration: Arc<ResticBackupConfiguration>,
 }
@@ -197,6 +194,7 @@ impl BackupFindExt for ResticBackup {
             return Ok(Some(Backup::Restic(ResticBackup {
                 uuid,
                 short_id: snapshot.short_id.clone(),
+                config: Arc::clone(config),
                 server_path: match snapshot.paths.first() {
                     Some(path) => PathBuf::from(path),
                     None => {
@@ -257,6 +255,7 @@ impl BackupFindExt for ResticBackup {
                         backup = Some(ResticBackup {
                             uuid,
                             short_id: snapshot.short_id.clone(),
+                            config: Arc::clone(config),
                             server_path: match snapshot.paths.first() {
                                 Some(path) => PathBuf::from(path),
                                 None => {
@@ -317,6 +316,7 @@ impl BackupFindExt for ResticBackup {
                         backup = Some(ResticBackup {
                             uuid,
                             short_id: snapshot.short_id.clone(),
+                            config: Arc::clone(config),
                             server_path: match snapshot.paths.first() {
                                 Some(path) => PathBuf::from(path),
                                 None => {
@@ -361,22 +361,28 @@ impl BackupCreateExt for ResticBackup {
         }
 
         let (mut child, configuration) =
-            if tokio::fs::metadata(&server.config.system.backups.restic.password_file)
+            if tokio::fs::metadata(&server.app_state.config.system.backups.restic.password_file)
                 .await
                 .is_ok()
             {
                 (
                     Command::new("restic")
-                        .envs(&server.config.system.backups.restic.environment)
+                        .envs(&server.app_state.config.system.backups.restic.environment)
                         .arg("--json")
                         .arg("--repo")
-                        .arg(&server.config.system.backups.restic.repository)
+                        .arg(&server.app_state.config.system.backups.restic.repository)
                         .arg("--password-file")
-                        .arg(&server.config.system.backups.restic.password_file)
+                        .arg(&server.app_state.config.system.backups.restic.password_file)
                         .arg("--retry-lock")
                         .arg(format!(
                             "{}s",
-                            server.config.system.backups.restic.retry_lock_seconds
+                            server
+                                .app_state
+                                .config
+                                .system
+                                .backups
+                                .restic
+                                .retry_lock_seconds
                         ))
                         .arg("backup")
                         .arg(&server.filesystem.base_path)
@@ -386,23 +392,53 @@ impl BackupCreateExt for ResticBackup {
                         .arg("--group-by")
                         .arg("tags")
                         .arg("--limit-download")
-                        .arg((server.config.system.backups.read_limit * 1024).to_string())
+                        .arg((server.app_state.config.system.backups.read_limit * 1024).to_string())
                         .arg("--limit-upload")
-                        .arg((server.config.system.backups.write_limit * 1024).to_string())
+                        .arg(
+                            (server.app_state.config.system.backups.write_limit * 1024).to_string(),
+                        )
                         .stdout(std::process::Stdio::piped())
                         .stderr(std::process::Stdio::piped())
                         .spawn()?,
                     ResticBackupConfiguration {
-                        repository: server.config.system.backups.restic.repository.clone(),
+                        repository: server
+                            .app_state
+                            .config
+                            .system
+                            .backups
+                            .restic
+                            .repository
+                            .clone(),
                         password_file: Some(
-                            server.config.system.backups.restic.password_file.clone(),
+                            server
+                                .app_state
+                                .config
+                                .system
+                                .backups
+                                .restic
+                                .password_file
+                                .clone(),
                         ),
-                        retry_lock_seconds: server.config.system.backups.restic.retry_lock_seconds,
-                        environment: server.config.system.backups.restic.environment.clone(),
+                        retry_lock_seconds: server
+                            .app_state
+                            .config
+                            .system
+                            .backups
+                            .restic
+                            .retry_lock_seconds,
+                        environment: server
+                            .app_state
+                            .config
+                            .system
+                            .backups
+                            .restic
+                            .environment
+                            .clone(),
                     },
                 )
             } else {
                 let configuration = server
+                    .app_state
                     .config
                     .client
                     .backup_restic_configuration(uuid)
@@ -417,7 +453,13 @@ impl BackupCreateExt for ResticBackup {
                         .arg("--retry-lock")
                         .arg(format!(
                             "{}s",
-                            server.config.system.backups.restic.retry_lock_seconds
+                            server
+                                .app_state
+                                .config
+                                .system
+                                .backups
+                                .restic
+                                .retry_lock_seconds
                         ))
                         .arg("backup")
                         .arg(&server.filesystem.base_path)
@@ -427,9 +469,11 @@ impl BackupCreateExt for ResticBackup {
                         .arg("--group-by")
                         .arg("tags")
                         .arg("--limit-download")
-                        .arg((server.config.system.backups.read_limit * 1024).to_string())
+                        .arg((server.app_state.config.system.backups.read_limit * 1024).to_string())
                         .arg("--limit-upload")
-                        .arg((server.config.system.backups.write_limit * 1024).to_string())
+                        .arg(
+                            (server.app_state.config.system.backups.write_limit * 1024).to_string(),
+                        )
                         .stdout(std::process::Stdio::piped())
                         .stderr(std::process::Stdio::piped())
                         .spawn()?,
@@ -551,9 +595,9 @@ impl BackupExt for ResticBackup {
 
                         let mut options: zip::write::FileOptions<'_, ()> =
                             zip::write::FileOptions::default()
-                                .compression_level(Some(
-                                    compression_level.flate2_compression_level().level() as i64,
-                                ))
+                                .compression_level(
+                                    Some(compression_level.to_deflate_level() as i64),
+                                )
                                 .unix_permissions(header.mode()?)
                                 .large_file(header.size()? >= u32::MAX as u64);
                         if let Ok(mtime) = header.mtime()
@@ -586,7 +630,7 @@ impl BackupExt for ResticBackup {
                 });
             }
             _ => {
-                let child = Command::new("restic")
+                let child = std::process::Command::new("restic")
                     .envs(&self.configuration.environment)
                     .arg("--json")
                     .arg("--no-lock")
@@ -600,20 +644,23 @@ impl BackupExt for ResticBackup {
                     .stderr(std::process::Stdio::null())
                     .spawn()?;
 
-                tokio::spawn(async move {
-                    let mut writer = archive_format
-                        .compression_format()
-                        .writer(writer, compression_level);
+                let file_compression_threads = self.config.api.file_compression_threads;
+                tokio::task::spawn_blocking(move || {
+                    let mut writer = CompressionWriter::new(
+                        tokio_util::io::SyncIoBridge::new(writer),
+                        archive_format.compression_format(),
+                        compression_level,
+                        file_compression_threads,
+                    );
 
-                    if let Err(err) = tokio::io::copy(&mut child.stdout.unwrap(), &mut writer).await
-                    {
+                    if let Err(err) = std::io::copy(&mut child.stdout.unwrap(), &mut writer) {
                         tracing::error!(
                             "failed to compress tar archive for restic backup: {}",
                             err
                         );
                     }
 
-                    writer.shutdown().await.ok();
+                    writer.finish().ok();
                 });
             }
         }
@@ -655,7 +702,7 @@ impl BackupExt for ResticBackup {
             .arg("--target")
             .arg(&server.filesystem.base_path)
             .arg("--limit-download")
-            .arg((server.config.system.backups.read_limit * 1024).to_string())
+            .arg((server.app_state.config.system.backups.read_limit * 1024).to_string())
             .stdout(std::process::Stdio::piped())
             .spawn()?;
 
@@ -971,7 +1018,13 @@ impl BackupBrowseExt for BrowseResticBackup {
         }
 
         let full_path = PathBuf::from(&self.server_path).join(&entry.path);
-        let compression_level = self.server.config.system.backups.compression_level;
+        let compression_level = self
+            .server
+            .app_state
+            .config
+            .system
+            .backups
+            .compression_level;
         let (reader, writer) = tokio::io::duplex(crate::BUFFER_SIZE);
 
         match archive_format {
@@ -1003,9 +1056,9 @@ impl BackupBrowseExt for BrowseResticBackup {
 
                         let mut options: zip::write::FileOptions<'_, ()> =
                             zip::write::FileOptions::default()
-                                .compression_level(Some(
-                                    compression_level.flate2_compression_level().level() as i64,
-                                ))
+                                .compression_level(
+                                    Some(compression_level.to_deflate_level() as i64),
+                                )
                                 .unix_permissions(header.mode()?)
                                 .large_file(header.size()? >= u32::MAX as u64);
                         if let Ok(mtime) = header.mtime()
@@ -1038,7 +1091,7 @@ impl BackupBrowseExt for BrowseResticBackup {
                 });
             }
             _ => {
-                let child = Command::new("restic")
+                let child = std::process::Command::new("restic")
                     .envs(&self.configuration.environment)
                     .arg("--json")
                     .arg("--no-lock")
@@ -1052,20 +1105,24 @@ impl BackupBrowseExt for BrowseResticBackup {
                     .stderr(std::process::Stdio::null())
                     .spawn()?;
 
-                tokio::spawn(async move {
-                    let mut writer = archive_format
-                        .compression_format()
-                        .writer(writer, compression_level);
+                let file_compression_threads =
+                    self.server.app_state.config.api.file_compression_threads;
+                tokio::task::spawn_blocking(move || {
+                    let mut writer = CompressionWriter::new(
+                        tokio_util::io::SyncIoBridge::new(writer),
+                        archive_format.compression_format(),
+                        compression_level,
+                        file_compression_threads,
+                    );
 
-                    if let Err(err) = tokio::io::copy(&mut child.stdout.unwrap(), &mut writer).await
-                    {
+                    if let Err(err) = std::io::copy(&mut child.stdout.unwrap(), &mut writer) {
                         tracing::error!(
                             "failed to compress tar archive for restic backup: {}",
                             err
                         );
                     }
 
-                    writer.shutdown().await.ok();
+                    writer.finish().ok();
                 });
             }
         }
@@ -1097,7 +1154,13 @@ impl BackupBrowseExt for BrowseResticBackup {
         };
 
         let full_path = PathBuf::from(&self.server_path).join(path);
-        let compression_level = self.server.config.system.backups.compression_level;
+        let compression_level = self
+            .server
+            .app_state
+            .config
+            .system
+            .backups
+            .compression_level;
         let (reader, writer) = tokio::io::duplex(crate::BUFFER_SIZE);
 
         match archive_format {
@@ -1126,7 +1189,7 @@ impl BackupBrowseExt for BrowseResticBackup {
                             let options: zip::write::FileOptions<'_, ()> =
                                 zip::write::FileOptions::default()
                                     .compression_level(Some(
-                                        compression_level.flate2_compression_level().level() as i64,
+                                        compression_level.to_deflate_level() as i64
                                     ))
                                     .unix_permissions(entry.mode)
                                     .large_file(
@@ -1176,10 +1239,7 @@ impl BackupBrowseExt for BrowseResticBackup {
                                         let mut options: zip::write::FileOptions<'_, ()> =
                                             zip::write::FileOptions::default()
                                                 .compression_level(Some(
-                                                    compression_level
-                                                        .flate2_compression_level()
-                                                        .level()
-                                                        as i64,
+                                                    compression_level.to_deflate_level() as i64,
                                                 ))
                                                 .unix_permissions(header.mode()?)
                                                 .large_file(header.size()? >= u32::MAX as u64);
@@ -1250,16 +1310,21 @@ impl BackupBrowseExt for BrowseResticBackup {
                 });
             }
             _ => {
-                tokio::spawn({
+                tokio::task::spawn_blocking({
+                    let file_compression_threads =
+                        self.server.app_state.config.api.file_compression_threads;
                     let short_id = self.short_id.clone();
                     let configuration = Arc::clone(&self.configuration);
                     let entries = Arc::clone(&self.entries);
 
-                    async move {
-                        let writer = archive_format
-                            .compression_format()
-                            .writer(writer, compression_level);
-                        let mut archive = tokio_tar::Builder::new(writer);
+                    move || {
+                        let writer = CompressionWriter::new(
+                            tokio_util::io::SyncIoBridge::new(writer),
+                            archive_format.compression_format(),
+                            compression_level,
+                            file_compression_threads,
+                        );
+                        let mut archive = tar::Builder::new(writer);
 
                         for file_path in file_paths {
                             let path = full_path.join(&file_path);
@@ -1273,21 +1338,20 @@ impl BackupBrowseExt for BrowseResticBackup {
                                 Err(_) => continue,
                             };
 
-                            let mut header = tokio_tar::Header::new_gnu();
+                            let mut header = tar::Header::new_gnu();
                             header.set_size(0);
                             header.set_mode(entry.mode);
                             header.set_mtime(entry.mtime.timestamp() as u64);
 
                             match entry.r#type {
                                 ResticEntryType::Dir => {
-                                    header.set_entry_type(tokio_tar::EntryType::Directory);
+                                    header.set_entry_type(tar::EntryType::Directory);
 
                                     if archive
-                                        .append_data(&mut header, relative, tokio::io::empty())
-                                        .await
+                                        .append_data(&mut header, relative, std::io::empty())
                                         .is_ok()
                                     {
-                                        let child = match Command::new("restic")
+                                        let child = match std::process::Command::new("restic")
                                             .envs(&configuration.environment)
                                             .arg("--json")
                                             .arg("--no-lock")
@@ -1305,24 +1369,20 @@ impl BackupBrowseExt for BrowseResticBackup {
                                             Err(_) => continue,
                                         };
 
-                                        let mut subtar =
-                                            tokio_tar::Archive::new(child.stdout.unwrap());
+                                        let mut subtar = tar::Archive::new(child.stdout.unwrap());
                                         let mut entries = match subtar.entries() {
                                             Ok(entries) => entries,
                                             Err(_) => continue,
                                         };
 
-                                        while let Some(Ok(entry)) = entries.next().await {
+                                        while let Some(Ok(entry)) = entries.next() {
                                             let mut header = entry.header().clone();
 
-                                            match archive
-                                                .append_data(
-                                                    &mut header,
-                                                    relative.join(entry.path().unwrap()),
-                                                    entry,
-                                                )
-                                                .await
-                                            {
+                                            match archive.append_data(
+                                                &mut header,
+                                                relative.join(entry.path().unwrap()),
+                                                entry,
+                                            ) {
                                                 Ok(_) => {}
                                                 Err(_) => break,
                                             }
@@ -1330,7 +1390,7 @@ impl BackupBrowseExt for BrowseResticBackup {
                                     }
                                 }
                                 ResticEntryType::File => {
-                                    let child = match Command::new("restic")
+                                    let child = match std::process::Command::new("restic")
                                         .envs(&configuration.environment)
                                         .arg("--json")
                                         .arg("--no-lock")
@@ -1349,19 +1409,18 @@ impl BackupBrowseExt for BrowseResticBackup {
                                     };
 
                                     header.set_size(entry.size.unwrap_or(0));
-                                    header.set_entry_type(tokio_tar::EntryType::Regular);
+                                    header.set_entry_type(tar::EntryType::Regular);
 
                                     archive
                                         .append_data(&mut header, relative, child.stdout.unwrap())
-                                        .await
                                         .ok();
                                 }
                                 _ => continue,
                             }
                         }
 
-                        if let Ok(mut inner) = archive.into_inner().await {
-                            inner.shutdown().await.ok();
+                        if let Ok(inner) = archive.into_inner() {
+                            inner.finish().ok();
                         }
                     }
                 });

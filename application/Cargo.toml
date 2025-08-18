@@ -1,6 +1,6 @@
 [package]
 name = "wings-rs"
-version = "0.18.9"
+version = "0.19.0"
 edition = "2024"
 
 [dependencies]
@@ -31,11 +31,9 @@ tokio-util = { workspace = true }
 uuid = { workspace = true }
 rand = { workspace = true }
 tar = "0.4.44"
-astral-tokio-tar = "0.5.2"
 zip = { version = "4.3.0", default-features = false, features = ["bzip2", "deflate", "sha1", "time", "zstd", "lzma"] }
 sevenz-rust2 = { version = "0.17.1", features = ["deflate", "brotli", "zstd", "bzip2", "lz4"] }
-flate2 = "1.1.1"
-async-compression = { version = "0.4.23", features = ["tokio", "bzip2", "gzip", "lz4", "xz", "zstd"] }
+flate2 = { version = "1.1.1", features = ["zlib-rs"], default-features = false }
 jwt = "0.16.0"
 hmac = { version = "0.12.1", features = ["std"] }
 sha2 = "0.10.9"
@@ -64,6 +62,13 @@ tikv-jemallocator = "0.6.0"
 new_mime_guess = "4.0.4"
 async-trait = "0.1.88"
 content_disposition = "0.4.0"
+cron = { version = "0.15.0", features = ["serde"] }
+chrono-tz = "0.10.4"
+gzp = "1.0.1"
+lzma-rust2 = "0.9.0"
+bzip2 = "0.6.0"
+lz4 = "1.28.1"
+zstd = "0.13.3"
 
 [build-dependencies]
 serde_json = { workspace = true }

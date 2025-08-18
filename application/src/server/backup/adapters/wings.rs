@@ -1,8 +1,9 @@
 use crate::{
     io::{
-        counting_reader::{AsyncCountingReader, CountingReader},
-        limited_reader::AsyncLimitedReader,
-        limited_writer::{AsyncLimitedWriter, LimitedWriter},
+        compression::{CompressionType, reader::CompressionReader, writer::CompressionWriter},
+        counting_reader::CountingReader,
+        limited_reader::LimitedReader,
+        limited_writer::LimitedWriter,
     },
     models::DirectoryEntry,
     remote::backups::RawServerBackup,
@@ -19,7 +20,6 @@ use crate::{
 };
 use axum::{body::Body, http::HeaderMap};
 use cap_std::fs::{Permissions, PermissionsExt};
-use futures::StreamExt;
 use sha1::Digest;
 use std::{
     io::{Read, Seek, Write},
@@ -29,7 +29,7 @@ use std::{
         atomic::{AtomicU64, AtomicUsize, Ordering},
     },
 };
-use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 pub struct WingsBackup {
     uuid: uuid::Uuid,
@@ -149,7 +149,7 @@ impl BackupCreateExt for WingsBackup {
         ignore: ignore::gitignore::Gitignore,
         _ignore_raw: String,
     ) -> Result<RawServerBackup, anyhow::Error> {
-        let file_name = Self::get_file_name(&server.config, uuid);
+        let file_name = Self::get_file_name(&server.app_state.config, uuid);
         let mut file = tokio::fs::File::create(&file_name).await?;
 
         let (mut checksum_reader, checksum_writer) = tokio::io::duplex(crate::BUFFER_SIZE);
@@ -202,52 +202,47 @@ impl BackupCreateExt for WingsBackup {
 
         let archive_task = async move {
             let sources = server.filesystem.async_read_dir_all(Path::new("")).await?;
+            let writer = tokio_util::io::SyncIoBridge::new(checksum_writer);
+            let writer = LimitedWriter::new_with_bytes_per_second(
+                writer,
+                server.app_state.config.system.backups.write_limit * 1024 * 1024,
+            );
 
-            match server.config.system.backups.wings.archive_format {
+            match server.app_state.config.system.backups.wings.archive_format {
                 crate::config::SystemBackupsWingsArchiveFormat::Tar
                 | crate::config::SystemBackupsWingsArchiveFormat::TarGz
                 | crate::config::SystemBackupsWingsArchiveFormat::TarZstd => {
-                    let writer = AsyncLimitedWriter::new_with_bytes_per_second(
-                        checksum_writer,
-                        server.config.system.backups.write_limit * 1024 * 1024,
-                    );
-
                     crate::server::filesystem::archive::Archive::create_tar(
                         server.filesystem.clone(),
                         writer,
                         Path::new(""),
                         sources.into_iter().map(PathBuf::from).collect(),
-                        match server.config.system.backups.wings.archive_format {
+                        match server.app_state.config.system.backups.wings.archive_format {
                             crate::config::SystemBackupsWingsArchiveFormat::Tar => {
-                                crate::server::filesystem::archive::CompressionType::None
+                                CompressionType::None
                             }
                             crate::config::SystemBackupsWingsArchiveFormat::TarGz => {
-                                crate::server::filesystem::archive::CompressionType::Gz
+                                CompressionType::Gz
                             }
                             crate::config::SystemBackupsWingsArchiveFormat::TarZstd => {
-                                crate::server::filesystem::archive::CompressionType::Zstd
+                                CompressionType::Zstd
                             }
                             _ => unreachable!(),
                         },
-                        server.config.system.backups.compression_level,
+                        server.app_state.config.system.backups.compression_level,
                         Some(progress),
-                        &[ignore],
+                        vec![ignore],
+                        server.app_state.config.system.backups.wings.create_threads,
                     )
                     .await
                 }
                 crate::config::SystemBackupsWingsArchiveFormat::Zip => {
-                    let writer = tokio_util::io::SyncIoBridge::new(checksum_writer);
-                    let writer = LimitedWriter::new_with_bytes_per_second(
-                        writer,
-                        server.config.system.backups.write_limit * 1024 * 1024,
-                    );
-
                     crate::server::filesystem::archive::Archive::create_zip(
                         server.filesystem.clone(),
                         writer,
                         Path::new(""),
                         sources.into_iter().map(PathBuf::from).collect(),
-                        server.config.system.backups.compression_level,
+                        server.app_state.config.system.backups.compression_level,
                         Some(progress),
                         vec![ignore],
                     )
@@ -330,134 +325,117 @@ impl BackupExt for WingsBackup {
         total: Arc<AtomicU64>,
         _download_url: Option<String>,
     ) -> Result<(), anyhow::Error> {
-        let file = tokio::fs::File::open(&self.path).await?;
+        let file = tokio::fs::File::open(&self.path).await?.into_std().await;
 
         match self.format {
             crate::config::SystemBackupsWingsArchiveFormat::Tar
             | crate::config::SystemBackupsWingsArchiveFormat::TarGz
             | crate::config::SystemBackupsWingsArchiveFormat::TarZstd => {
-                total.store(file.metadata().await?.len(), Ordering::SeqCst);
-
-                let reader = AsyncLimitedReader::new_with_bytes_per_second(
-                    file,
-                    server.config.system.backups.read_limit * 1024 * 1024,
-                );
-                let reader = AsyncCountingReader::new_with_bytes_read(reader, progress);
-                let reader: Box<dyn tokio::io::AsyncRead + Send + Unpin> = match self.format {
-                    crate::config::SystemBackupsWingsArchiveFormat::Tar => Box::new(reader),
-                    crate::config::SystemBackupsWingsArchiveFormat::TarGz => Box::new(
-                        async_compression::tokio::bufread::GzipDecoder::new(BufReader::new(reader)),
-                    ),
-                    crate::config::SystemBackupsWingsArchiveFormat::TarZstd => Box::new(
-                        async_compression::tokio::bufread::ZstdDecoder::new(BufReader::new(reader)),
-                    ),
+                let compression_type = match self.format {
+                    crate::config::SystemBackupsWingsArchiveFormat::Tar => CompressionType::None,
+                    crate::config::SystemBackupsWingsArchiveFormat::TarGz => CompressionType::Gz,
+                    crate::config::SystemBackupsWingsArchiveFormat::TarZstd => {
+                        CompressionType::Zstd
+                    }
                     _ => unreachable!(),
                 };
-                let mut archive = tokio_tar::Archive::new(reader);
-
-                let mut entries = archive.entries()?;
-                while let Some(entry) = entries.next().await {
-                    let mut entry = entry?;
-                    let path = entry.path()?;
-
-                    if path.is_absolute() {
-                        continue;
-                    }
-
-                    let header = entry.header();
-                    match header.entry_type() {
-                        tokio_tar::EntryType::Directory => {
-                            server
-                                .filesystem
-                                .async_create_dir_all(path.as_ref())
-                                .await?;
-                            server
-                                .filesystem
-                                .async_set_permissions(
-                                    path.as_ref(),
-                                    Permissions::from_mode(header.mode().unwrap_or(0o755)),
-                                )
-                                .await?;
-                            if let Ok(modified_time) = header.mtime() {
-                                server
-                                    .filesystem
-                                    .async_set_times(
-                                        path.as_ref(),
-                                        std::time::UNIX_EPOCH
-                                            + std::time::Duration::from_secs(modified_time),
-                                        None,
-                                    )
-                                    .await?;
-                            }
-                        }
-                        tokio_tar::EntryType::Regular => {
-                            server
-                                .log_daemon(format!("(restoring): {}", path.display()))
-                                .await;
-
-                            if let Some(parent) = path.parent() {
-                                server.filesystem.async_create_dir_all(parent).await?;
-                            }
-
-                            let mut writer =
-                                crate::server::filesystem::writer::AsyncFileSystemWriter::new(
-                                    server.clone(),
-                                    &path,
-                                    Some(Permissions::from_mode(header.mode().unwrap_or(0o644))),
-                                    header
-                                        .mtime()
-                                        .map(|t| {
-                                            cap_std::time::SystemTime::from_std(
-                                                std::time::UNIX_EPOCH
-                                                    + std::time::Duration::from_secs(t),
-                                            )
-                                        })
-                                        .ok(),
-                                )
-                                .await?;
-
-                            tokio::io::copy(&mut entry, &mut writer).await?;
-                            writer.flush().await?;
-                        }
-                        tokio_tar::EntryType::Symlink => {
-                            let link = entry.link_name().unwrap_or_default().unwrap_or_default();
-
-                            if let Err(err) =
-                                server.filesystem.async_symlink(link, path.as_ref()).await
-                            {
-                                tracing::debug!(path = %path.display(), "failed to create symlink from backup: {:#?}", err);
-                            } else {
-                                server
-                                    .filesystem
-                                    .async_set_symlink_permissions(
-                                        path.as_ref(),
-                                        Permissions::from_mode(header.mode().unwrap_or(0o644)),
-                                    )
-                                    .await?;
-                                if let Ok(modified_time) = header.mtime() {
-                                    server
-                                        .filesystem
-                                        .async_set_times(
-                                            path.as_ref(),
-                                            std::time::UNIX_EPOCH
-                                                + std::time::Duration::from_secs(modified_time),
-                                            None,
-                                        )
-                                        .await?;
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            crate::config::SystemBackupsWingsArchiveFormat::Zip => {
-                let file = Arc::new(file.into_std().await);
                 let runtime = tokio::runtime::Handle::current();
                 let server = server.clone();
 
                 tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
-                    let reader = MultiReader::new(file)?;
+                    total.store(file.metadata()?.len(), Ordering::SeqCst);
+
+                    let reader = LimitedReader::new_with_bytes_per_second(
+                        file,
+                        server.app_state.config.system.backups.read_limit * 1024 * 1024,
+                    );
+                    let reader = CountingReader::new_with_bytes_read(reader, progress);
+                    let reader = CompressionReader::new(reader, compression_type);
+
+                    let mut archive = tar::Archive::new(reader);
+                    let mut entries = archive.entries()?;
+
+                    while let Some(Ok(mut entry)) = entries.next() {
+                        let path = entry.path()?;
+
+                        if path.is_absolute() {
+                            continue;
+                        }
+
+                        let destination_path = path.as_ref();
+                        let header = entry.header();
+
+                        match header.entry_type() {
+                            tar::EntryType::Directory => {
+                                server.filesystem.create_dir_all(destination_path)?;
+                                if let Ok(permissions) = header.mode().map(Permissions::from_mode) {
+                                    server
+                                        .filesystem
+                                        .set_permissions(destination_path, permissions)?;
+                                }
+                            }
+                            tar::EntryType::Regular => {
+                                runtime.block_on(
+                                    server.log_daemon(format!("(restoring): {}", path.display())),
+                                );
+
+                                if let Some(parent) = destination_path.parent() {
+                                    server.filesystem.create_dir_all(parent)?;
+                                }
+
+                                let mut writer =
+                                    crate::server::filesystem::writer::FileSystemWriter::new(
+                                        server.clone(),
+                                        destination_path,
+                                        header.mode().map(Permissions::from_mode).ok(),
+                                        header
+                                            .mtime()
+                                            .map(|t| {
+                                                cap_std::time::SystemTime::from_std(
+                                                    std::time::UNIX_EPOCH
+                                                        + std::time::Duration::from_secs(t),
+                                                )
+                                            })
+                                            .ok(),
+                                    )?;
+
+                                std::io::copy(&mut entry, &mut writer)?;
+                                writer.flush()?;
+                            }
+                            tar::EntryType::Symlink => {
+                                let link =
+                                    entry.link_name().unwrap_or_default().unwrap_or_default();
+
+                                if let Err(err) = server.filesystem.symlink(link, destination_path)
+                                {
+                                    tracing::debug!(
+                                        path = %destination_path.display(),
+                                        "failed to create symlink from archive: {:#?}",
+                                        err
+                                    );
+                                } else if let Ok(modified_time) = header.mtime() {
+                                    server.filesystem.set_times(
+                                        destination_path,
+                                        std::time::UNIX_EPOCH
+                                            + std::time::Duration::from_secs(modified_time),
+                                        None,
+                                    )?;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    Ok(())
+                })
+                .await??;
+            }
+            crate::config::SystemBackupsWingsArchiveFormat::Zip => {
+                let runtime = tokio::runtime::Handle::current();
+                let server = server.clone();
+
+                tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
+                    let reader = MultiReader::new(Arc::new(file))?;
                     let mut archive = zip::ZipArchive::new(reader)?;
                     let entry_index = Arc::new(AtomicUsize::new(0));
 
@@ -472,7 +450,7 @@ impl BackupExt for WingsBackup {
                     }
 
                     let pool = rayon::ThreadPoolBuilder::new()
-                        .num_threads(server.config.system.backups.wings.restore_threads)
+                        .num_threads(server.app_state.config.system.backups.wings.restore_threads)
                         .build()?;
 
                     let error = Arc::new(RwLock::new(None));
@@ -626,7 +604,7 @@ impl BackupExt for WingsBackup {
 #[async_trait::async_trait]
 impl BackupCleanExt for WingsBackup {
     async fn clean(server: &crate::server::Server, uuid: uuid::Uuid) -> Result<(), anyhow::Error> {
-        let file_name = Self::get_file_name(&server.config, uuid);
+        let file_name = Self::get_file_name(&server.app_state.config, uuid);
         if tokio::fs::metadata(&file_name).await.is_err() {
             return Ok(());
         }
@@ -884,7 +862,13 @@ impl BackupBrowseExt for BrowseWingsBackup {
         let mut archive = self.archive.clone();
 
         let (reader, writer) = tokio::io::duplex(crate::BUFFER_SIZE);
-        let compression_level = self.server.config.system.backups.compression_level;
+        let compression_level = self
+            .server
+            .app_state
+            .config
+            .system
+            .backups
+            .compression_level;
 
         match archive_format {
             StreamableArchiveFormat::Zip => {
@@ -921,13 +905,14 @@ impl BackupBrowseExt for BrowseWingsBackup {
                 });
             }
             _ => {
-                let writer = archive_format
-                    .compression_format()
-                    .writer(writer, compression_level);
+                let writer = CompressionWriter::new(
+                    tokio_util::io::SyncIoBridge::new(writer),
+                    archive_format.compression_format(),
+                    compression_level,
+                    self.server.app_state.config.api.file_compression_threads,
+                );
 
                 tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
-                    let writer = tokio_util::io::SyncIoBridge::new(writer);
-
                     let mut tar = tar::Builder::new(writer);
                     tar.mode(tar::HeaderMode::Complete);
 
@@ -991,7 +976,13 @@ impl BackupBrowseExt for BrowseWingsBackup {
         let mut archive = self.archive.clone();
 
         let (reader, writer) = tokio::io::duplex(crate::BUFFER_SIZE);
-        let compression_level = self.server.config.system.backups.compression_level;
+        let compression_level = self
+            .server
+            .app_state
+            .config
+            .system
+            .backups
+            .compression_level;
 
         match archive_format {
             StreamableArchiveFormat::Zip => {
@@ -1032,13 +1023,14 @@ impl BackupBrowseExt for BrowseWingsBackup {
                 });
             }
             _ => {
-                let writer = archive_format
-                    .compression_format()
-                    .writer(writer, compression_level);
+                let writer = CompressionWriter::new(
+                    tokio_util::io::SyncIoBridge::new(writer),
+                    archive_format.compression_format(),
+                    compression_level,
+                    self.server.app_state.config.api.file_compression_threads,
+                );
 
                 tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
-                    let writer = tokio_util::io::SyncIoBridge::new(writer);
-
                     let mut tar = tar::Builder::new(writer);
                     tar.mode(tar::HeaderMode::Complete);
 

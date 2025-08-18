@@ -9,7 +9,10 @@ mod _server_;
 
 mod post {
     use crate::{
-        io::limited_reader::AsyncLimitedReader,
+        io::{
+            compression::{CompressionType, reader::CompressionReader},
+            limited_reader::LimitedReader,
+        },
         response::{ApiResponse, ApiResponseResult},
         routes::{ApiError, GetState},
         server::transfer::TransferArchiveFormat,
@@ -19,10 +22,9 @@ mod post {
         http::{HeaderMap, StatusCode},
     };
     use cap_std::fs::{Permissions, PermissionsExt};
-    use futures::{StreamExt, TryStreamExt};
+    use futures::TryStreamExt;
     use serde::Serialize;
-    use std::{path::Path, str::FromStr};
-    use tokio::io::AsyncWriteExt;
+    use std::{io::Write, path::Path, str::FromStr};
     use utoipa::ToSchema;
 
     #[derive(ToSchema, Serialize)]
@@ -103,19 +105,23 @@ mod post {
         }
 
         let server_data = state.config.client.server(subject).await?;
-        let server = state.server_manager.create_server(server_data, false).await;
+        let server = state
+            .server_manager
+            .create_server(&state, server_data, false)
+            .await;
 
         server
             .transferring
             .store(true, std::sync::atomic::Ordering::SeqCst);
 
-        let handle: tokio::task::JoinHandle<Result<(), anyhow::Error>> = tokio::spawn({
+        let handle = tokio::task::spawn_blocking({
+            let runtime = tokio::runtime::Handle::current();
             let server = server.clone();
 
-            async move {
+            move || -> Result<(), anyhow::Error> {
                 let mut backups = Vec::new();
 
-                while let Ok(Some(field)) = multipart.next_field().await {
+                while let Ok(Some(field)) = runtime.block_on(multipart.next_field()) {
                     if let Some("archive") = field.name() {
                         let file_name = field.file_name().unwrap_or("archive.tar.gz").to_string();
                         let reader =
@@ -124,37 +130,29 @@ mod post {
                                     "failed to read multipart field: {err}"
                                 ))
                             }));
-                        let reader = AsyncLimitedReader::new_with_bytes_per_second(
+                        let reader = tokio_util::io::SyncIoBridge::new(reader);
+                        let reader = LimitedReader::new_with_bytes_per_second(
                             reader,
                             state.config.system.transfers.download_limit * 1024 * 1024,
                         );
-                        let reader = tokio::io::BufReader::new(reader);
-                        let reader: Box<dyn tokio::io::AsyncRead + Unpin + Send> =
+                        let reader = CompressionReader::new(
+                            reader,
                             match TransferArchiveFormat::from_str(&file_name)
                                 .unwrap_or(TransferArchiveFormat::TarGz)
                             {
-                                TransferArchiveFormat::Tar => Box::new(reader),
-                                TransferArchiveFormat::TarGz => Box::new(
-                                    async_compression::tokio::bufread::GzipDecoder::new(reader),
-                                ),
-                                TransferArchiveFormat::TarXz => Box::new(
-                                    async_compression::tokio::bufread::XzDecoder::new(reader),
-                                ),
-                                TransferArchiveFormat::TarBz2 => Box::new(
-                                    async_compression::tokio::bufread::BzDecoder::new(reader),
-                                ),
-                                TransferArchiveFormat::TarLz4 => Box::new(
-                                    async_compression::tokio::bufread::Lz4Decoder::new(reader),
-                                ),
-                                TransferArchiveFormat::TarZstd => Box::new(
-                                    async_compression::tokio::bufread::ZstdDecoder::new(reader),
-                                ),
-                            };
+                                TransferArchiveFormat::Tar => CompressionType::None,
+                                TransferArchiveFormat::TarGz => CompressionType::Gz,
+                                TransferArchiveFormat::TarXz => CompressionType::Xz,
+                                TransferArchiveFormat::TarBz2 => CompressionType::Bz2,
+                                TransferArchiveFormat::TarLz4 => CompressionType::Lz4,
+                                TransferArchiveFormat::TarZstd => CompressionType::Zstd,
+                            },
+                        );
 
-                        let mut archive = tokio_tar::Archive::new(reader);
+                        let mut archive = tar::Archive::new(reader);
                         let mut entries = archive.entries()?;
 
-                        while let Some(Ok(mut entry)) = entries.next().await {
+                        while let Some(Ok(mut entry)) = entries.next() {
                             let path = entry.path()?;
 
                             if path.is_absolute() {
@@ -165,27 +163,23 @@ mod post {
                             let header = entry.header();
 
                             match header.entry_type() {
-                                tokio_tar::EntryType::Directory => {
-                                    server
-                                        .filesystem
-                                        .async_create_dir_all(&destination_path)
-                                        .await?;
+                                tar::EntryType::Directory => {
+                                    server.filesystem.create_dir_all(destination_path)?;
                                     if let Ok(permissions) =
                                         header.mode().map(Permissions::from_mode)
                                     {
                                         server
                                             .filesystem
-                                            .async_set_permissions(&destination_path, permissions)
-                                            .await?;
+                                            .set_permissions(destination_path, permissions)?;
                                     }
                                 }
-                                tokio_tar::EntryType::Regular => {
+                                tar::EntryType::Regular => {
                                     if let Some(parent) = destination_path.parent() {
-                                        server.filesystem.async_create_dir_all(parent).await?;
+                                        server.filesystem.create_dir_all(parent)?;
                                     }
 
                                     let mut writer =
-                                        crate::server::filesystem::writer::AsyncFileSystemWriter::new(
+                                        crate::server::filesystem::writer::FileSystemWriter::new(
                                             server.clone(),
                                             destination_path,
                                             header.mode().map(Permissions::from_mode).ok(),
@@ -194,30 +188,35 @@ mod post {
                                                 .map(|t| {
                                                     cap_std::time::SystemTime::from_std(
                                                         std::time::UNIX_EPOCH
-                                                            + std::time::Duration::from_secs(t)
+                                                            + std::time::Duration::from_secs(t),
                                                     )
                                                 })
                                                 .ok(),
-                                        )
-                                        .await?;
+                                        )?;
 
-                                    tokio::io::copy(&mut entry, &mut writer).await?;
-                                    writer.flush().await?;
+                                    std::io::copy(&mut entry, &mut writer)?;
+                                    writer.flush()?;
                                 }
-                                tokio_tar::EntryType::Symlink => {
+                                tar::EntryType::Symlink => {
                                     let link =
                                         entry.link_name().unwrap_or_default().unwrap_or_default();
 
-                                    server
-                                        .filesystem
-                                        .async_symlink(link.as_ref(), destination_path)
-                                        .await
-                                        .unwrap_or_else(|err| {
-                                            tracing::debug!(
-                                                "failed to create symlink from archive: {:#?}",
-                                                err
-                                            );
-                                        });
+                                    if let Err(err) =
+                                        server.filesystem.symlink(link, destination_path)
+                                    {
+                                        tracing::debug!(
+                                            path = %destination_path.display(),
+                                            "failed to create symlink from archive: {:#?}",
+                                            err
+                                        );
+                                    } else if let Ok(permissions) =
+                                        header.mode().map(Permissions::from_mode)
+                                    {
+                                        server.filesystem.set_symlink_permissions(
+                                            destination_path,
+                                            permissions,
+                                        )?;
+                                    }
                                 }
                                 _ => {}
                             }
@@ -264,12 +263,13 @@ mod post {
                                         ))
                                     }),
                                 );
-                                let mut reader = AsyncLimitedReader::new_with_bytes_per_second(
+                                let reader = tokio_util::io::SyncIoBridge::new(reader);
+                                let mut reader = LimitedReader::new_with_bytes_per_second(
                                     reader,
                                     state.config.system.transfers.download_limit * 1024 * 1024,
                                 );
 
-                                let mut file = match tokio::fs::File::create(&file_name).await {
+                                let mut file = match std::fs::File::create(&file_name) {
                                     Ok(file) => file,
                                     Err(err) => {
                                         tracing::error!(
@@ -281,7 +281,7 @@ mod post {
                                     }
                                 };
 
-                                if let Err(err) = tokio::io::copy(&mut reader, &mut file).await {
+                                if let Err(err) = std::io::copy(&mut reader, &mut file) {
                                     tracing::error!(
                                         "failed to copy backup file {}: {:#?}",
                                         file_name.display(),
@@ -290,7 +290,7 @@ mod post {
                                     continue;
                                 }
 
-                                if let Err(err) = file.flush().await {
+                                if let Err(err) = file.flush() {
                                     tracing::error!(
                                         "failed to flush backup file {}: {:#?}",
                                         file_name.display(),
@@ -317,11 +317,12 @@ mod post {
                     }
                 }
 
-                state
-                    .config
-                    .client
-                    .set_server_transfer(subject, true, backups)
-                    .await?;
+                runtime.block_on(
+                    state
+                        .config
+                        .client
+                        .set_server_transfer(subject, true, backups),
+                )?;
                 server
                     .transferring
                     .store(false, std::sync::atomic::Ordering::SeqCst);

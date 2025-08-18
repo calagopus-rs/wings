@@ -333,17 +333,12 @@ async fn main() {
     }
 
     tracing::info!("creating server manager");
-    let server_manager = wings_rs::server::manager::Manager::new(
-        Arc::clone(&config),
-        Arc::clone(&docker),
-        config
-            .client
-            .servers()
-            .await
-            .context("failed to fetch servers from remote")
-            .unwrap(),
-    )
-    .await;
+    let servers = config
+        .client
+        .servers()
+        .await
+        .context("failed to fetch servers from remote")
+        .unwrap();
 
     let state = Arc::new(wings_rs::routes::AppState {
         config: Arc::clone(&config),
@@ -351,12 +346,14 @@ async fn main() {
         version: format!("{}:{}", wings_rs::VERSION, wings_rs::GIT_COMMIT),
 
         docker: Arc::clone(&docker),
-        server_manager: Arc::clone(&server_manager),
+        server_manager: Arc::new(wings_rs::server::manager::Manager::new(&servers)),
         backup_manager: Arc::new(wings_rs::server::backup::manager::BackupManager::new(
             Arc::clone(&config),
         )),
         extension_manager: Arc::clone(&extension_manager),
     });
+
+    state.server_manager.boot(&state, servers).await;
 
     let mut extension_router = OpenApiRouter::new();
 

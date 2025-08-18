@@ -15,6 +15,7 @@ mod files;
 mod logs;
 mod power;
 mod reinstall;
+mod schedule;
 mod script;
 mod sync;
 mod transfer;
@@ -126,6 +127,7 @@ pub fn router(state: &State) -> OpenApiRouter<State> {
         .nest("/ws", ws::router(state))
         .nest("/files", files::router(state))
         .nest("/backup", backup::router(state))
+        .nest("/schedule", schedule::router(state))
         .routes(routes!(get::route))
         .routes(routes!(delete::route))
         .route_layer(axum::middleware::from_fn_with_state(state.clone(), auth))

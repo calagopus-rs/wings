@@ -45,6 +45,9 @@ fn api_file_search_threads() -> usize {
 fn api_file_decompression_threads() -> usize {
     2
 }
+fn api_file_compression_threads() -> usize {
+    2
+}
 fn api_upload_limit() -> usize {
     100
 }
@@ -149,6 +152,9 @@ fn system_backup_mounting_path() -> String {
     ".backups".to_string()
 }
 
+fn system_backup_wings_create_threads() -> usize {
+    4
+}
 fn system_backup_wings_restore_threads() -> usize {
     4
 }
@@ -318,6 +324,8 @@ nestify::nest! {
             pub file_search_threads: usize,
             #[serde(default = "api_file_decompression_threads")]
             pub file_decompression_threads: usize,
+            #[serde(default = "api_file_compression_threads")]
+            pub file_compression_threads: usize,
             #[serde(default = "api_upload_limit")]
             /// MB
             pub upload_limit: usize,
@@ -443,7 +451,7 @@ nestify::nest! {
                 /// MiB/s
                 pub read_limit: u64,
                 #[serde(default)]
-                pub compression_level: crate::server::filesystem::archive::CompressionLevel,
+                pub compression_level: crate::io::compression::CompressionLevel,
 
                 #[serde(default)]
                 pub mounting: #[derive(Deserialize, Serialize, DefaultFromSerde)] #[serde(default)] pub struct SystemBackupsMounting {
@@ -455,6 +463,8 @@ nestify::nest! {
 
                 #[serde(default)]
                 pub wings: #[derive(Deserialize, Serialize, DefaultFromSerde)] #[serde(default)] pub struct SystemBackupsWings {
+                    #[serde(default = "system_backup_wings_create_threads")]
+                    pub create_threads: usize,
                     #[serde(default = "system_backup_wings_restore_threads")]
                     pub restore_threads: usize,
 

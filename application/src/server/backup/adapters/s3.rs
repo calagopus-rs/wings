@@ -1,7 +1,9 @@
 use crate::{
     io::{
-        counting_reader::AsyncCountingReader, limited_reader::AsyncLimitedReader,
-        limited_writer::AsyncLimitedWriter,
+        compression::{CompressionType, reader::CompressionReader},
+        counting_reader::CountingReader,
+        limited_reader::{AsyncLimitedReader, LimitedReader},
+        limited_writer::LimitedWriter,
     },
     remote::backups::RawServerBackup,
     server::{
@@ -10,9 +12,10 @@ use crate::{
     },
 };
 use cap_std::fs::{Permissions, PermissionsExt};
-use futures::{StreamExt, TryStreamExt};
+use futures::TryStreamExt;
 use sha1::Digest;
 use std::{
+    io::Write,
     path::{Path, PathBuf},
     pin::Pin,
     sync::{
@@ -22,7 +25,7 @@ use std::{
     task::{Context, Poll},
 };
 use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader, ReadBuf},
+    io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, ReadBuf},
     sync::RwLock,
 };
 
@@ -37,7 +40,7 @@ async fn get_client(server: &crate::server::Server) -> Arc<reqwest::Client> {
     let client = Arc::new(
         reqwest::ClientBuilder::new()
             .timeout(std::time::Duration::from_secs(2 * 60 * 60))
-            .danger_accept_invalid_certs(server.config.ignore_certificate_errors)
+            .danger_accept_invalid_certs(server.app_state.config.ignore_certificate_errors)
             .build()
             .unwrap(),
     );
@@ -146,7 +149,7 @@ impl BackupCreateExt for S3Backup {
         ignore: ignore::gitignore::Gitignore,
         _ignore_raw: String,
     ) -> Result<RawServerBackup, anyhow::Error> {
-        let file_name = Self::get_file_name(&server.config, uuid);
+        let file_name = Self::get_file_name(&server.app_state.config, uuid);
         let mut file = tokio::fs::File::create(&file_name).await?;
 
         let (mut checksum_reader, checksum_writer) = tokio::io::duplex(crate::BUFFER_SIZE);
@@ -199,9 +202,10 @@ impl BackupCreateExt for S3Backup {
 
         let archive_task = async {
             let sources = server.filesystem.async_read_dir_all(Path::new("")).await?;
-            let writer = AsyncLimitedWriter::new_with_bytes_per_second(
-                checksum_writer,
-                server.config.system.backups.write_limit * 1024 * 1024,
+            let writer = tokio_util::io::SyncIoBridge::new(checksum_writer);
+            let writer = LimitedWriter::new_with_bytes_per_second(
+                writer,
+                server.app_state.config.system.backups.write_limit * 1024 * 1024,
             );
 
             crate::server::filesystem::archive::Archive::create_tar(
@@ -209,10 +213,11 @@ impl BackupCreateExt for S3Backup {
                 writer,
                 Path::new(""),
                 sources.into_iter().map(PathBuf::from).collect(),
-                crate::server::filesystem::archive::CompressionType::Gz,
-                server.config.system.backups.compression_level,
+                CompressionType::Gz,
+                server.app_state.config.system.backups.compression_level,
                 Some(Arc::clone(&progress)),
-                &[ignore],
+                vec![ignore],
+                server.app_state.config.system.backups.wings.create_threads,
             )
             .await
         };
@@ -220,7 +225,12 @@ impl BackupCreateExt for S3Backup {
         let (checksum, total_files, _) = tokio::try_join!(checksum_task, total_task, archive_task)?;
 
         let size = file.metadata().await?.len();
-        let (part_size, part_urls) = server.config.client.backup_upload_urls(uuid, size).await?;
+        let (part_size, part_urls) = server
+            .app_state
+            .config
+            .client
+            .backup_upload_urls(uuid, size)
+            .await?;
 
         let mut remaining_size = size;
         let mut parts = Vec::with_capacity(part_urls.len());
@@ -259,7 +269,7 @@ impl BackupCreateExt for S3Backup {
                                     Arc::clone(&progress),
                                 )
                                 .await?,
-                                server.config.system.backups.write_limit * 1024 * 1024,
+                                server.app_state.config.system.backups.write_limit * 1024 * 1024,
                             ),
                             crate::BUFFER_SIZE,
                         ),
@@ -361,107 +371,102 @@ impl BackupExt for S3Backup {
         let reader = tokio_util::io::StreamReader::new(Box::pin(
             response.bytes_stream().map_err(std::io::Error::other),
         ));
-        let reader = AsyncLimitedReader::new_with_bytes_per_second(
-            reader,
-            server.config.system.backups.read_limit * 1024 * 1024,
-        );
-        let reader = AsyncCountingReader::new_with_bytes_read(reader, progress);
-        let reader = BufReader::with_capacity(1024 * 1024, reader);
 
-        let mut archive =
-            tokio_tar::Archive::new(async_compression::tokio::bufread::GzipDecoder::new(reader));
+        let runtime = tokio::runtime::Handle::current();
+        let server = server.clone();
 
-        let mut entries = archive.entries()?;
-        while let Some(entry) = entries.next().await {
-            let mut entry = entry?;
-            let path = entry.path()?;
+        tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
+            let reader = tokio_util::io::SyncIoBridge::new(reader);
+            let reader = LimitedReader::new_with_bytes_per_second(
+                reader,
+                server.app_state.config.system.backups.read_limit * 1024 * 1024,
+            );
+            let reader = CountingReader::new_with_bytes_read(reader, progress);
 
-            if path.is_absolute() {
-                continue;
-            }
+            let reader = CompressionReader::new(reader, CompressionType::Gz);
+            let mut archive = tar::Archive::new(reader);
 
-            let header = entry.header();
-            match header.entry_type() {
-                tokio_tar::EntryType::Directory => {
-                    server
-                        .filesystem
-                        .async_create_dir_all(path.as_ref())
-                        .await?;
-                    server
-                        .filesystem
-                        .async_set_permissions(
-                            path.as_ref(),
-                            Permissions::from_mode(header.mode().unwrap_or(0o755)),
-                        )
-                        .await?;
-                    if let Ok(modified_time) = header.mtime() {
+            let entries = archive.entries()?;
+            for entry in entries {
+                let mut entry = entry?;
+                let path = entry.path()?;
+
+                if path.is_absolute() {
+                    continue;
+                }
+
+                let header = entry.header();
+                match header.entry_type() {
+                    tar::EntryType::Directory => {
+                        server.filesystem.create_dir_all(path.as_ref())?;
                         server
                             .filesystem
-                            .async_set_times(
-                                path.as_ref(),
-                                std::time::UNIX_EPOCH
-                                    + std::time::Duration::from_secs(modified_time),
-                                None,
-                            )
-                            .await?;
-                    }
-                }
-                tokio_tar::EntryType::Regular => {
-                    server
-                        .log_daemon(format!("(restoring): {}", path.display()))
-                        .await;
-
-                    if let Some(parent) = path.parent() {
-                        server.filesystem.async_create_dir_all(parent).await?;
-                    }
-
-                    let mut writer = crate::server::filesystem::writer::AsyncFileSystemWriter::new(
-                        server.clone(),
-                        &path,
-                        Some(Permissions::from_mode(header.mode().unwrap_or(0o644))),
-                        header
-                            .mtime()
-                            .map(|t| {
-                                cap_std::time::SystemTime::from_std(
-                                    std::time::UNIX_EPOCH + std::time::Duration::from_secs(t),
-                                )
-                            })
-                            .ok(),
-                    )
-                    .await?;
-
-                    tokio::io::copy(&mut entry, &mut writer).await?;
-                    writer.flush().await?;
-                }
-                tokio_tar::EntryType::Symlink => {
-                    let link = entry.link_name().unwrap_or_default().unwrap_or_default();
-
-                    if let Err(err) = server.filesystem.async_symlink(link, path.as_ref()).await {
-                        tracing::debug!(path = %path.display(), "failed to create symlink from backup: {:#?}", err);
-                    } else {
-                        server
-                            .filesystem
-                            .async_set_symlink_permissions(
+                            .set_permissions(
                                 path.as_ref(),
                                 Permissions::from_mode(header.mode().unwrap_or(0o755)),
                             )
-                            .await?;
+                            ?;
                         if let Ok(modified_time) = header.mtime() {
                             server
                                 .filesystem
-                                .async_set_times(
+                                .set_times(
                                     path.as_ref(),
                                     std::time::UNIX_EPOCH
                                         + std::time::Duration::from_secs(modified_time),
                                     None,
-                                )
-                                .await?;
+                                )?;
                         }
                     }
+                    tar::EntryType::Regular => {
+                        runtime.block_on(
+                            server
+                                .log_daemon(format!("(restoring): {}", path.display()))
+                        );
+
+                        if let Some(parent) = path.parent() {
+                            server.filesystem.create_dir_all(parent)?;
+                        }
+
+                        let mut writer = crate::server::filesystem::writer::FileSystemWriter::new(
+                            server.clone(),
+                            &path,
+                            Some(Permissions::from_mode(header.mode().unwrap_or(0o644))),
+                            header
+                                .mtime()
+                                .map(|t| {
+                                    cap_std::time::SystemTime::from_std(
+                                        std::time::UNIX_EPOCH + std::time::Duration::from_secs(t),
+                                    )
+                                })
+                                .ok(),
+                        )?;
+
+                        std::io::copy(&mut entry, &mut writer)?;
+                        writer.flush()?;
+                    }
+                    tar::EntryType::Symlink => {
+                        let link = entry.link_name().unwrap_or_default().unwrap_or_default();
+
+                        if let Err(err) = server.filesystem.symlink(link, path.as_ref()) {
+                            tracing::debug!(path = %path.display(), "failed to create symlink from backup: {:#?}", err);
+                        } else if let Ok(modified_time) = header.mtime() {
+                            server
+                                .filesystem
+                                .set_times(
+                                    path.as_ref(),
+                                    std::time::UNIX_EPOCH
+                                        + std::time::Duration::from_secs(modified_time),
+                                    None,
+                                )?;
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
-        }
+
+            Ok(())
+        })
+        .await??;
 
         Ok(())
     }
@@ -485,7 +490,7 @@ impl BackupExt for S3Backup {
 #[async_trait::async_trait]
 impl BackupCleanExt for S3Backup {
     async fn clean(server: &crate::server::Server, uuid: uuid::Uuid) -> Result<(), anyhow::Error> {
-        let file_name = Self::get_file_name(&server.config, uuid);
+        let file_name = Self::get_file_name(&server.app_state.config, uuid);
         if tokio::fs::metadata(&file_name).await.is_ok() {
             tokio::fs::remove_file(&file_name).await?;
         }
