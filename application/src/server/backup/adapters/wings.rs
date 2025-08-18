@@ -539,12 +539,6 @@ impl BackupExt for WingsBackup {
                                                 err
                                             );
                                         } else {
-                                            server.filesystem.set_symlink_permissions(
-                                                &path,
-                                                Permissions::from_mode(
-                                                    entry.unix_mode().unwrap_or(0o644),
-                                                ),
-                                            )?;
                                             if let Some(modified_time) = zip_entry_get_modified_time(&entry) {
                                                 server.filesystem.set_times(
                                                     &path,
