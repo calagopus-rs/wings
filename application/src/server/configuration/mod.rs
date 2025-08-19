@@ -35,7 +35,7 @@ pub struct ScheduleAction {
 #[derive(ToSchema, Clone, Deserialize, Serialize)]
 pub struct Schedule {
     pub uuid: uuid::Uuid,
-    #[schema(value_type = Vec<serde_json::Value>)]
+    #[schema(value_type = serde_json::Value)]
     pub triggers: Vec<super::schedule::ScheduleTrigger>,
     #[schema(value_type = serde_json::Value)]
     pub condition: super::schedule::ScheduleCondition,

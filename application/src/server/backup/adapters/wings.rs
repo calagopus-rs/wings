@@ -538,14 +538,12 @@ impl BackupExt for WingsBackup {
                                                 "failed to create symlink from backup: {:#?}",
                                                 err
                                             );
-                                        } else {
-                                            if let Some(modified_time) = zip_entry_get_modified_time(&entry) {
-                                                server.filesystem.set_times(
-                                                    &path,
-                                                    modified_time.into_std(),
-                                                    None,
-                                                )?;
-                                            }
+                                        } else if let Some(modified_time) = zip_entry_get_modified_time(&entry) {
+                                            server.filesystem.set_times(
+                                                &path,
+                                                modified_time.into_std(),
+                                                None,
+                                            )?;
                                         }
                                     }
                                 }

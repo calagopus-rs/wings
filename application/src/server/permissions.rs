@@ -33,6 +33,8 @@ pub enum Permission {
     AdminWebsocketTransfer,
     #[serde(rename = "backup.read", alias = "backups.read")]
     BackupRead,
+    #[serde(rename = "schedule.read", alias = "schedules.read")]
+    ScheduleRead,
 
     #[serde(rename = "file.read", alias = "files.read")]
     FileRead,
