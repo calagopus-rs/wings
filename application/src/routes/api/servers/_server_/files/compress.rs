@@ -8,9 +8,16 @@ mod post {
         routes::{ApiError, GetState, api::servers::_server_::GetServer},
     };
     use axum::http::StatusCode;
-    use serde::Deserialize;
-    use std::path::PathBuf;
+    use serde::{Deserialize, Serialize};
+    use std::{
+        path::{Path, PathBuf},
+        sync::{Arc, atomic::AtomicU64},
+    };
     use utoipa::ToSchema;
+
+    fn foreground() -> bool {
+        true
+    }
 
     #[derive(ToSchema, Deserialize, Default, Clone, Copy)]
     #[serde(rename_all = "snake_case")]
@@ -30,16 +37,25 @@ mod post {
     #[derive(ToSchema, Deserialize)]
     pub struct Payload {
         #[serde(default)]
-        pub format: ArchiveFormat,
-        pub name: Option<String>,
+        format: ArchiveFormat,
+        name: Option<String>,
 
         #[serde(default)]
-        pub root: String,
-        pub files: Vec<String>,
+        root: String,
+        files: Vec<String>,
+
+        #[serde(default = "foreground")]
+        foreground: bool,
+    }
+
+    #[derive(ToSchema, Serialize)]
+    pub struct Response {
+        identifier: uuid::Uuid,
     }
 
     #[utoipa::path(post, path = "/", responses(
         (status = OK, body = crate::models::DirectoryEntry),
+        (status = ACCEPTED, body = inline(Response)),
         (status = NOT_FOUND, body = ApiError),
         (status = EXPECTATION_FAILED, body = ApiError),
     ), params(
@@ -94,110 +110,154 @@ mod post {
                 .ok();
         }
 
-        match tokio::spawn({
-            let root = root.clone();
-            let server = server.0.clone();
-            let file_name = file_name.clone();
+        let progress = Arc::new(AtomicU64::new(0));
+        let total = Arc::new(AtomicU64::new(0));
 
-            async move {
-                let ignored = server.filesystem.get_ignored().await;
-                let writer = tokio::task::spawn_blocking({
-                    let server = server.clone();
+        let (identifier, task) = server
+            .filesystem
+            .operations
+            .add_operation(
+                crate::server::filesystem::operations::FilesystemOperation::Compress {
+                    path: file_name.clone(),
+                    progress: progress.clone(),
+                    total: total.clone(),
+                },
+                {
+                    let root = root.clone();
+                    let server = server.0.clone();
+                    let file_name = file_name.clone();
 
-                    move || {
-                        crate::server::filesystem::writer::FileSystemWriter::new(
-                            server, &file_name, None, None,
-                        )
-                    }
-                })
-                .await??;
+                    async move {
+                        let ignored = server.filesystem.get_ignored().await;
+                        let writer = tokio::task::spawn_blocking({
+                            let server = server.clone();
 
-                match data.format {
-                    ArchiveFormat::Tar
-                    | ArchiveFormat::TarGz
-                    | ArchiveFormat::TarXz
-                    | ArchiveFormat::TarBz2
-                    | ArchiveFormat::TarLz4
-                    | ArchiveFormat::TarZstd => {
-                        crate::server::filesystem::archive::Archive::create_tar(
-                            server.filesystem.clone(),
-                            writer,
-                            &root,
-                            data.files.into_iter().map(PathBuf::from).collect(),
-                            match data.format {
-                                ArchiveFormat::Tar => CompressionType::None,
-                                ArchiveFormat::TarGz => CompressionType::Gz,
-                                ArchiveFormat::TarXz => CompressionType::Xz,
-                                ArchiveFormat::TarBz2 => CompressionType::Bz2,
-                                ArchiveFormat::TarLz4 => CompressionType::Lz4,
-                                ArchiveFormat::TarZstd => CompressionType::Zstd,
-                                _ => unreachable!(),
-                            },
-                            state.config.system.backups.compression_level,
-                            None,
-                            vec![ignored],
-                            state.config.api.file_compression_threads,
-                        )
-                        .await
+                            move || {
+                                crate::server::filesystem::writer::FileSystemWriter::new(
+                                    server, &file_name, None, None,
+                                )
+                            }
+                        })
+                        .await??;
+
+                        let mut total_size = 0;
+                        for file in &data.files {
+                            if let Ok(metadata) = server.filesystem.async_metadata(file).await {
+                                if metadata.is_dir() {
+                                    total_size += server
+                                        .filesystem
+                                        .disk_usage
+                                        .read()
+                                        .await
+                                        .get_size(Path::new(file))
+                                        .unwrap_or(0);
+                                } else {
+                                    total_size += metadata.len();
+                                }
+                            }
+                        }
+
+                        total.store(total_size, std::sync::atomic::Ordering::Relaxed);
+
+                        match data.format {
+                            ArchiveFormat::Tar
+                            | ArchiveFormat::TarGz
+                            | ArchiveFormat::TarXz
+                            | ArchiveFormat::TarBz2
+                            | ArchiveFormat::TarLz4
+                            | ArchiveFormat::TarZstd => {
+                                crate::server::filesystem::archive::Archive::create_tar(
+                                    server.filesystem.clone(),
+                                    writer,
+                                    &root,
+                                    data.files.into_iter().map(PathBuf::from).collect(),
+                                    match data.format {
+                                        ArchiveFormat::Tar => CompressionType::None,
+                                        ArchiveFormat::TarGz => CompressionType::Gz,
+                                        ArchiveFormat::TarXz => CompressionType::Xz,
+                                        ArchiveFormat::TarBz2 => CompressionType::Bz2,
+                                        ArchiveFormat::TarLz4 => CompressionType::Lz4,
+                                        ArchiveFormat::TarZstd => CompressionType::Zstd,
+                                        _ => unreachable!(),
+                                    },
+                                    state.config.system.backups.compression_level,
+                                    Some(progress),
+                                    vec![ignored],
+                                    state.config.api.file_compression_threads,
+                                )
+                                .await
+                            }
+                            ArchiveFormat::Zip => {
+                                crate::server::filesystem::archive::Archive::create_zip(
+                                    server.filesystem.clone(),
+                                    writer,
+                                    &root,
+                                    data.files.into_iter().map(PathBuf::from).collect(),
+                                    state.config.system.backups.compression_level,
+                                    Some(progress),
+                                    vec![ignored],
+                                )
+                                .await
+                            }
+                            ArchiveFormat::SevenZip => {
+                                crate::server::filesystem::archive::Archive::create_7z(
+                                    server.filesystem.clone(),
+                                    writer,
+                                    &root,
+                                    data.files.into_iter().map(PathBuf::from).collect(),
+                                    Some(progress),
+                                    vec![ignored],
+                                )
+                                .await
+                            }
+                        }
                     }
-                    ArchiveFormat::Zip => {
-                        crate::server::filesystem::archive::Archive::create_zip(
-                            server.filesystem.clone(),
-                            writer,
-                            &root,
-                            data.files.into_iter().map(PathBuf::from).collect(),
-                            state.config.system.backups.compression_level,
-                            None,
-                            vec![ignored],
-                        )
-                        .await
-                    }
-                    ArchiveFormat::SevenZip => {
-                        crate::server::filesystem::archive::Archive::create_7z(
-                            server.filesystem.clone(),
-                            writer,
-                            &root,
-                            data.files.into_iter().map(PathBuf::from).collect(),
-                            None,
-                            vec![ignored],
-                        )
-                        .await
-                    }
+                },
+            )
+            .await;
+
+        if data.foreground {
+            match task.await {
+                Ok(Some(Ok(()))) => {}
+                Ok(None) => {
+                    return ApiResponse::error("archive compression aborted by another source")
+                        .with_status(StatusCode::EXPECTATION_FAILED)
+                        .ok();
+                }
+                Ok(Some(Err(err))) => {
+                    tracing::error!(
+                        server = %server.uuid,
+                        root = %root.display(),
+                        "failed to compress files: {:#?}",
+                        err,
+                    );
+
+                    return ApiResponse::error(&format!("failed to compress files: {err}"))
+                        .with_status(StatusCode::EXPECTATION_FAILED)
+                        .ok();
+                }
+                Err(err) => {
+                    tracing::error!(
+                        server = %server.uuid,
+                        root = %root.display(),
+                        "failed to compress files: {:#?}",
+                        err,
+                    );
+
+                    return ApiResponse::error("failed to compress files")
+                        .with_status(StatusCode::EXPECTATION_FAILED)
+                        .ok();
                 }
             }
-        })
-        .await
-        {
-            Ok(Ok(())) => {}
-            Ok(Err(err)) => {
-                tracing::error!(
-                    server = %server.uuid,
-                    root = %root.display(),
-                    "failed to compress files: {:#?}",
-                    err,
-                );
 
-                return ApiResponse::error(&format!("failed to compress files: {err}"))
-                    .with_status(StatusCode::EXPECTATION_FAILED)
-                    .ok();
-            }
-            Err(err) => {
-                tracing::error!(
-                    server = %server.uuid,
-                    root = %root.display(),
-                    "failed to compress files: {:#?}",
-                    err,
-                );
+            let metadata = server.filesystem.async_symlink_metadata(&file_name).await?;
 
-                return ApiResponse::error("failed to compress files")
-                    .with_status(StatusCode::EXPECTATION_FAILED)
-                    .ok();
-            }
+            ApiResponse::json(server.filesystem.to_api_entry(file_name, metadata).await).ok()
+        } else {
+            ApiResponse::json(Response { identifier })
+                .with_status(StatusCode::ACCEPTED)
+                .ok()
         }
-
-        let metadata = server.filesystem.async_symlink_metadata(&file_name).await?;
-
-        ApiResponse::json(server.filesystem.to_api_entry(file_name, metadata).await).ok()
     }
 }
 

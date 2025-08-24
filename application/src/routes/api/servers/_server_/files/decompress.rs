@@ -8,21 +8,34 @@ mod post {
     };
     use axum::http::StatusCode;
     use serde::{Deserialize, Serialize};
+    use std::sync::{Arc, atomic::AtomicU64};
     use utoipa::ToSchema;
+
+    fn foreground() -> bool {
+        true
+    }
 
     #[derive(ToSchema, Deserialize)]
     pub struct Payload {
         #[serde(default)]
-        pub root: String,
+        root: String,
+        file: String,
 
-        pub file: String,
+        #[serde(default = "foreground")]
+        foreground: bool,
     }
 
     #[derive(ToSchema, Serialize)]
     struct Response {}
 
+    #[derive(ToSchema, Serialize)]
+    struct ResponseAccepted {
+        identifier: uuid::Uuid,
+    }
+
     #[utoipa::path(post, path = "/", responses(
         (status = OK, body = inline(Response)),
+        (status = ACCEPTED, body = inline(ResponseAccepted)),
         (status = NOT_FOUND, body = ApiError),
         (status = EXPECTATION_FAILED, body = ApiError),
     ), params(
@@ -71,48 +84,83 @@ mod post {
                 .ok();
         }
 
-        let archive =
-            match crate::server::filesystem::archive::Archive::open(server.0.clone(), source).await
-            {
-                Some(archive) => archive,
-                None => {
-                    return ApiResponse::error("failed to open archive")
+        let archive = match crate::server::filesystem::archive::Archive::open(
+            server.0.clone(),
+            source.clone(),
+        )
+        .await
+        {
+            Some(archive) => archive,
+            None => {
+                return ApiResponse::error("failed to open archive")
+                    .with_status(StatusCode::EXPECTATION_FAILED)
+                    .ok();
+            }
+        };
+
+        let progress = Arc::new(AtomicU64::new(0));
+        let total = Arc::new(AtomicU64::new(0));
+
+        let (identifier, task) = server
+            .filesystem
+            .operations
+            .add_operation(
+                crate::server::filesystem::operations::FilesystemOperation::Decompress {
+                    path: source,
+                    destination: root.clone(),
+                    progress: progress.clone(),
+                    total: total.clone(),
+                },
+                {
+                    let root = root.clone();
+
+                    async move { archive.extract(root, Some(progress), Some(total)).await }
+                },
+            )
+            .await;
+
+        if data.foreground {
+            match task.await {
+                Ok(Some(Ok(()))) => {}
+                Ok(None) => {
+                    return ApiResponse::error("archive decompression aborted by another source")
                         .with_status(StatusCode::EXPECTATION_FAILED)
                         .ok();
                 }
-            };
+                Ok(Some(Err(err))) => {
+                    tracing::error!(
+                        server = %server.uuid,
+                        root = %root.display(),
+                        "failed to decompress archive: {:#?}",
+                        err,
+                    );
 
-        match tokio::spawn(archive.extract(root.clone())).await {
-            Ok(Ok(())) => {}
-            Ok(Err(err)) => {
-                tracing::error!(
-                    server = %server.uuid,
-                    root = %root.display(),
-                    "failed to decompress archive: {:#?}",
-                    err,
-                );
+                    return ApiResponse::error(&format!("failed to decompress archive: {err}"))
+                        .with_status(StatusCode::EXPECTATION_FAILED)
+                        .ok();
+                }
+                Err(err) => {
+                    tracing::error!(
+                        server = %server.uuid,
+                        root = %root.display(),
+                        "failed to decompress archive: {:#?}",
+                        err,
+                    );
 
-                return ApiResponse::error(&format!("failed to decompress archive: {err}"))
-                    .with_status(StatusCode::EXPECTATION_FAILED)
-                    .ok();
+                    return ApiResponse::error("failed to decompress archive")
+                        .with_status(StatusCode::EXPECTATION_FAILED)
+                        .ok();
+                }
             }
-            Err(err) => {
-                tracing::error!(
-                    server = %server.uuid,
-                    root = %root.display(),
-                    "failed to decompress archive: {:#?}",
-                    err,
-                );
 
-                return ApiResponse::error("failed to decompress archive")
-                    .with_status(StatusCode::EXPECTATION_FAILED)
-                    .ok();
-            }
+            server.filesystem.chown_path(&root).await?;
+
+            ApiResponse::json(Response {}).ok()
+        } else {
+            ApiResponse::json(ResponseAccepted { identifier })
+                .with_status(StatusCode::ACCEPTED)
+                .ok()
         }
-
-        server.filesystem.chown_path(&root).await?;
-
-        ApiResponse::json(Response {}).ok()
     }
 }
 

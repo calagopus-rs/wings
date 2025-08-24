@@ -451,16 +451,7 @@ impl BackupCreateExt for ResticBackup {
                         .arg("--repo")
                         .arg(&configuration.repository)
                         .arg("--retry-lock")
-                        .arg(format!(
-                            "{}s",
-                            server
-                                .app_state
-                                .config
-                                .system
-                                .backups
-                                .restic
-                                .retry_lock_seconds
-                        ))
+                        .arg(format!("{}s", configuration.retry_lock_seconds))
                         .arg("backup")
                         .arg(&server.filesystem.base_path)
                         .args(&excluded_paths)

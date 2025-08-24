@@ -78,14 +78,15 @@ impl Server {
             "creating server instance"
         );
 
+        let (rx, tx) = tokio::sync::broadcast::channel(128);
+
         let filesystem = filesystem::Filesystem::new(
             configuration.uuid,
             configuration.build.disk_space * 1024 * 1024,
+            rx.clone(),
             Arc::clone(&app_state.config),
             &configuration.egg.file_denylist,
         );
-
-        let (rx, tx) = tokio::sync::broadcast::channel(128);
 
         let activity = activity::ActivityManager::new(configuration.uuid, &app_state.config);
         let schedules = Arc::new(schedule::manager::ScheduleManager::new(Arc::clone(

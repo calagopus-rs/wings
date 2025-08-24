@@ -18,8 +18,9 @@ use tokio::{
 pub mod archive;
 pub mod cap;
 pub mod limiter;
+pub mod operations;
 pub mod pull;
-mod usage;
+pub mod usage;
 pub mod writer;
 
 pub struct Filesystem {
@@ -32,16 +33,18 @@ pub struct Filesystem {
 
     disk_limit: AtomicI64,
     disk_usage_cached: Arc<AtomicU64>,
-    disk_usage: Arc<RwLock<usage::DiskUsage>>,
+    pub disk_usage: Arc<RwLock<usage::DiskUsage>>,
     disk_ignored: Arc<RwLock<ignore::gitignore::Gitignore>>,
 
     pub pulls: RwLock<HashMap<uuid::Uuid, Arc<RwLock<pull::Download>>>>,
+    pub operations: operations::OperationManager,
 }
 
 impl Filesystem {
     pub fn new(
         uuid: uuid::Uuid,
         disk_limit: u64,
+        sender: tokio::sync::broadcast::Sender<crate::server::websocket::WebsocketMessage>,
         config: Arc<crate::config::Config>,
         deny_list: &[String],
     ) -> Self {
@@ -177,6 +180,7 @@ impl Filesystem {
             disk_ignored: Arc::new(RwLock::new(disk_ignored.build().unwrap())),
 
             pulls: RwLock::new(HashMap::new()),
+            operations: operations::OperationManager::new(sender),
         }
     }
 
@@ -212,16 +216,10 @@ impl Filesystem {
         &self,
     ) -> RwLockReadGuard<'_, HashMap<uuid::Uuid, Arc<RwLock<pull::Download>>>> {
         if let Ok(mut pulls) = self.pulls.try_write() {
-            for key in pulls.keys().cloned().collect::<Vec<_>>() {
-                if let Some(download) = pulls.get(&key)
-                    && download
-                        .read()
-                        .await
-                        .task
-                        .as_ref()
-                        .map(|t| t.is_finished())
-                        .unwrap_or(true)
-                {
+            let operations = self.operations.operations().await;
+
+            for key in pulls.keys().copied().collect::<Vec<_>>() {
+                if !operations.contains_key(&key) {
                     pulls.remove(&key);
                 }
             }

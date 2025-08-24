@@ -25,6 +25,9 @@ mod get {
             example = "123e4567-e89b-12d3-a456-426614174000",
         ),
     ))]
+    #[deprecated(
+        note = "This endpoint is purely for pterodactyl compatibility. Use the operations system instead."
+    )]
     pub async fn route(server: GetServer) -> ApiResponseResult {
         let values = server.filesystem.pulls().await;
         let mut downloads = Vec::new();
@@ -64,12 +67,16 @@ mod post {
     }
 
     #[derive(ToSchema, Serialize)]
-    struct Response {
+    struct Response {}
+
+    #[derive(ToSchema, Serialize)]
+    struct ResponsePending {
         identifier: uuid::Uuid,
     }
 
     #[utoipa::path(post, path = "/", responses(
         (status = OK, body = inline(Response)),
+        (status = ACCEPTED, body = inline(ResponsePending)),
         (status = EXPECTATION_FAILED, body = ApiError),
     ), params(
         (
@@ -142,8 +149,7 @@ mod post {
             },
         ));
 
-        let identifier = download.read().await.identifier;
-
+        let (identifier, task) = download.write().await.start().await;
         server
             .filesystem
             .pulls
@@ -151,24 +157,37 @@ mod post {
             .await
             .insert(identifier, Arc::clone(&download));
 
-        download.write().await.start();
-
         if data.foreground {
-            while download
-                .read()
-                .await
-                .task
-                .as_ref()
-                .is_some_and(|t| !t.is_finished())
-            {
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            }
-        }
+            match task.await {
+                Ok(Some(())) => {}
+                Ok(None) => {
+                    return ApiResponse::error("pull aborted by another source")
+                        .with_status(StatusCode::EXPECTATION_FAILED)
+                        .ok();
+                }
+                Err(err) => {
+                    tracing::error!(
+                        server = %server.uuid,
+                        "failed to pull file: {:#?}",
+                        err,
+                    );
 
-        ApiResponse::json(Response { identifier }).ok()
+                    return ApiResponse::error("failed to pull file")
+                        .with_status(StatusCode::EXPECTATION_FAILED)
+                        .ok();
+                }
+            }
+
+            ApiResponse::json(Response {}).ok()
+        } else {
+            ApiResponse::json(ResponsePending { identifier })
+                .with_status(StatusCode::ACCEPTED)
+                .ok()
+        }
     }
 }
 
+#[allow(deprecated)]
 pub fn router(state: &State) -> OpenApiRouter<State> {
     OpenApiRouter::new()
         .nest("/{pull}", _pull_::router(state))

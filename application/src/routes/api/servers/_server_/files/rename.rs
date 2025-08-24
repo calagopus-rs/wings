@@ -13,17 +13,17 @@ mod put {
 
     #[derive(ToSchema, Deserialize)]
     pub struct RenameFile {
-        pub from: String,
-        pub to: String,
+        from: String,
+        to: String,
     }
 
     #[derive(ToSchema, Deserialize)]
     pub struct Payload {
         #[serde(default)]
-        pub root: String,
+        root: String,
 
         #[schema(inline)]
-        pub files: Vec<RenameFile>,
+        files: Vec<RenameFile>,
     }
 
     #[derive(ToSchema, Serialize)]

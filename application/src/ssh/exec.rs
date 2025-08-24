@@ -93,7 +93,9 @@ impl ExecSession {
                                 })
                                 .await;
 
-                            archive.extract(PathBuf::from(destination.trim())).await?;
+                            archive
+                                .extract(PathBuf::from(destination.trim()), None, None)
+                                .await?;
 
                             channel.exit_status(0).await?;
                             channel.close().await?;

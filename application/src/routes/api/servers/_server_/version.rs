@@ -50,39 +50,41 @@ mod get {
     pub async fn route(server: GetServer, Query(data): Query<Params>) -> ApiResponseResult {
         match data.game {
             Game::MinecraftJava => {
-                let mut jar = PathBuf::from("server.jar");
+                let mut jar: Option<PathBuf> = None;
                 for (key, value) in &server.configuration.read().await.environment {
                     if let Some(value_str) = value.as_str()
                         && key.contains("JAR")
                         && value_str.contains(".jar")
                     {
-                        jar = value_str.into();
-
+                        jar = Some(value_str.into());
                         break;
                     }
                 }
 
-                'forge: {
-                    let path = Path::new("libraries/net/minecraftforge/forge");
+                if jar.is_none() {
+                    'forge: {
+                        let path = Path::new("libraries/net/minecraftforge/forge");
 
-                    if server
-                        .filesystem
-                        .async_metadata(path)
-                        .await
-                        .is_ok_and(|m| m.is_dir())
-                    {
-                        let mut entries = server.filesystem.async_read_dir(path).await?;
+                        if server
+                            .filesystem
+                            .async_metadata(path)
+                            .await
+                            .is_ok_and(|m| m.is_dir())
+                        {
+                            let mut entries = server.filesystem.async_read_dir(path).await?;
 
-                        while let Some(Ok((_, entry))) = entries.next_entry().await {
-                            if let Ok(mut entries) =
-                                server.filesystem.async_read_dir(path.join(&entry)).await
-                            {
-                                while let Some(Ok((_, sub_entry))) = entries.next_entry().await {
-                                    if sub_entry.ends_with("-server.jar")
-                                        || sub_entry.ends_with("-universal.jar")
+                            while let Some(Ok((_, entry))) = entries.next_entry().await {
+                                if let Ok(mut entries) =
+                                    server.filesystem.async_read_dir(path.join(&entry)).await
+                                {
+                                    while let Some(Ok((_, sub_entry))) = entries.next_entry().await
                                     {
-                                        jar = path.join(entry).join(sub_entry);
-                                        break 'forge;
+                                        if sub_entry.ends_with("-server.jar")
+                                            || sub_entry.ends_with("-universal.jar")
+                                        {
+                                            jar = Some(path.join(entry).join(sub_entry));
+                                            break 'forge;
+                                        }
                                     }
                                 }
                             }
@@ -90,27 +92,30 @@ mod get {
                     }
                 }
 
-                'neoforge: {
-                    let path = Path::new("libraries/net/neoforged/neoforge");
+                if jar.is_none() {
+                    'neoforge: {
+                        let path = Path::new("libraries/net/neoforged/neoforge");
 
-                    if server
-                        .filesystem
-                        .async_metadata(path)
-                        .await
-                        .is_ok_and(|m| m.is_dir())
-                    {
-                        let mut entries = server.filesystem.async_read_dir(path).await?;
+                        if server
+                            .filesystem
+                            .async_metadata(path)
+                            .await
+                            .is_ok_and(|m| m.is_dir())
+                        {
+                            let mut entries = server.filesystem.async_read_dir(path).await?;
 
-                        while let Some(Ok((_, entry))) = entries.next_entry().await {
-                            if let Ok(mut entries) =
-                                server.filesystem.async_read_dir(path.join(&entry)).await
-                            {
-                                while let Some(Ok((_, sub_entry))) = entries.next_entry().await {
-                                    if sub_entry.ends_with("-server.jar")
-                                        || sub_entry.ends_with("-universal.jar")
+                            while let Some(Ok((_, entry))) = entries.next_entry().await {
+                                if let Ok(mut entries) =
+                                    server.filesystem.async_read_dir(path.join(&entry)).await
+                                {
+                                    while let Some(Ok((_, sub_entry))) = entries.next_entry().await
                                     {
-                                        jar = path.join(entry).join(sub_entry);
-                                        break 'neoforge;
+                                        if sub_entry.ends_with("-server.jar")
+                                            || sub_entry.ends_with("-universal.jar")
+                                        {
+                                            jar = Some(path.join(entry).join(sub_entry));
+                                            break 'neoforge;
+                                        }
                                     }
                                 }
                             }
@@ -118,7 +123,11 @@ mod get {
                     }
                 }
 
-                let mut file = match server.filesystem.async_open(&jar).await {
+                let mut file = match server
+                    .filesystem
+                    .async_open(jar.unwrap_or_else(|| PathBuf::from("server.jar")))
+                    .await
+                {
                     Ok(file) => file,
                     Err(_) => {
                         return ApiResponse::error("version not found")

@@ -45,8 +45,6 @@ pub struct Download {
     pub destination: PathBuf,
     pub server: crate::server::Server,
     pub response: Option<reqwest::Response>,
-
-    pub task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl Download {
@@ -130,67 +128,85 @@ impl Download {
         Ok(Self {
             identifier: uuid::Uuid::new_v4(),
             progress: Arc::new(AtomicU64::new(0)),
-            total: response.content_length().unwrap_or(0),
+            total: response.content_length().unwrap_or_else(|| {
+                response
+                    .headers()
+                    .get("Content-Length")
+                    .and_then(|h| h.to_str().ok())
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0)
+            }),
             destination: real_destination,
             server,
             response: Some(response),
-            task: None,
         })
     }
 
-    pub fn start(&mut self) {
+    pub async fn start(&mut self) -> (uuid::Uuid, tokio::task::JoinHandle<Option<()>>) {
         let progress = Arc::clone(&self.progress);
         let destination = self.destination.clone();
         let server = self.server.clone();
         let mut response = self.response.take().unwrap();
 
-        let task = tokio::task::spawn(async move {
-            let mut run_inner = async || -> Result<(), anyhow::Error> {
-                let mut writer = super::writer::AsyncFileSystemWriter::new(
-                    server.clone(),
-                    &destination,
-                    None,
-                    None,
-                )
-                .await?;
+        let (identifier, task) = self
+            .server
+            .filesystem
+            .operations
+            .add_operation(
+                super::operations::FilesystemOperation::Pull {
+                    path: self.destination.clone(),
+                    progress: self.progress.clone(),
+                    total: Arc::new(AtomicU64::new(self.total)),
+                },
+                async move {
+                    let mut run_inner = async || -> Result<(), anyhow::Error> {
+                        let mut writer = super::writer::AsyncFileSystemWriter::new(
+                            server.clone(),
+                            &destination,
+                            None,
+                            None,
+                        )
+                        .await?;
 
-                while let Some(chunk) = response.chunk().await? {
-                    writer.write_all(&chunk).await?;
-                    progress.fetch_add(chunk.len() as u64, Ordering::Relaxed);
-                }
+                        while let Some(chunk) = response.chunk().await? {
+                            writer.write_all(&chunk).await?;
+                            progress.fetch_add(chunk.len() as u64, Ordering::Relaxed);
+                        }
 
-                writer.flush().await?;
-                Ok(())
-            };
+                        writer.flush().await?;
+                        Ok(())
+                    };
 
-            match run_inner().await {
-                Ok(_) => {
-                    tracing::info!(
-                        server = %server.uuid,
-                        "pull completed: {}",
-                        destination.to_string_lossy()
-                    );
-                }
-                Err(err) => {
-                    tracing::error!(
-                        server = %server.uuid,
-                        "failed to pull file: {:#?}",
-                        err
-                    );
-                }
-            }
-        });
+                    match run_inner().await {
+                        Ok(_) => {
+                            tracing::info!(
+                                server = %server.uuid,
+                                "pull completed: {}",
+                                destination.to_string_lossy()
+                            );
+                        }
+                        Err(err) => {
+                            tracing::error!(
+                                server = %server.uuid,
+                                "failed to pull file: {:#?}",
+                                err
+                            );
+                        }
+                    }
+                },
+            )
+            .await;
 
-        self.task = Some(task);
+        self.identifier = identifier;
+
+        (identifier, task)
     }
 
     pub fn to_api_response(&self) -> crate::models::Download {
-        let progress = self.progress.load(Ordering::Relaxed);
-
         crate::models::Download {
             identifier: self.identifier,
             destination: self.destination.to_string_lossy().to_string(),
-            progress,
+            progress: self.progress.load(Ordering::Relaxed),
             total: self.total,
         }
     }

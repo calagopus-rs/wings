@@ -15,13 +15,13 @@ mod post {
     #[derive(ToSchema, Deserialize)]
     pub struct Payload {
         #[serde(default)]
-        pub root: String,
-        pub query: String,
+        root: String,
+        query: String,
         #[serde(default)]
-        pub include_content: bool,
+        include_content: bool,
 
-        pub limit: Option<usize>,
-        pub max_size: Option<u64>,
+        limit: Option<usize>,
+        max_size: Option<u64>,
     }
 
     #[derive(ToSchema, Serialize)]

@@ -890,7 +890,7 @@ impl ScheduleAction {
                     }
                 };
 
-                let thread = tokio::spawn(archive.extract(root.clone()));
+                let thread = tokio::spawn(archive.extract(root.clone(), None, None));
 
                 server
                     .activity

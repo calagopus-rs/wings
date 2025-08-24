@@ -6,6 +6,7 @@ use crate::io::{
         writer::CompressionWriter,
     },
     counting_reader::CountingReader,
+    counting_writer::CountingWriter,
     fixed_reader::FixedReader,
 };
 use cap_std::fs::{Permissions, PermissionsExt as _};
@@ -277,7 +278,12 @@ impl Archive {
         ))
     }
 
-    pub async fn extract(mut self, destination: PathBuf) -> Result<(), anyhow::Error> {
+    pub async fn extract(
+        mut self,
+        destination: PathBuf,
+        progress: Option<Arc<AtomicU64>>,
+        total: Option<Arc<AtomicU64>>,
+    ) -> Result<(), anyhow::Error> {
         self.file.seek(SeekFrom::Start(0)).await?;
 
         match self.archive {
@@ -294,7 +300,13 @@ impl Archive {
 
                 tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
                     let reader = CompressionReader::new(file, self.compression);
-                    let mut reader = AbortReader::new(reader, listener);
+                    let reader = AbortReader::new(reader, listener);
+                    let mut reader: Box<dyn Read> = match progress {
+                        Some(progress) => {
+                            Box::new(CountingReader::new_with_bytes_read(reader, progress))
+                        }
+                        None => Box::new(reader),
+                    };
 
                     let mut writer = super::writer::FileSystemWriter::new(
                         self.server.clone(),
@@ -317,8 +329,20 @@ impl Archive {
                 let (guard, listener) = AbortGuard::new();
 
                 tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
-                    let reader = CompressionReader::new(file, self.compression);
+                    let reader: Box<dyn Read> = match progress {
+                        Some(progress) => {
+                            Box::new(CountingReader::new_with_bytes_read(file, progress))
+                        }
+                        None => Box::new(file),
+                    };
+                    let reader = CompressionReader::new(reader, self.compression);
                     let reader = AbortReader::new(reader, listener);
+
+                    if let Some(total) = total
+                        && let Ok(metadata) = self.server.filesystem.metadata(&self.path)
+                    {
+                        total.store(metadata.len(), Ordering::Relaxed);
+                    }
 
                     let mut archive = tar::Archive::new(reader);
                     let mut entries = archive.entries()?;
@@ -419,8 +443,18 @@ impl Archive {
                 tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
                     let reader = multi_reader::MultiReader::new(file)?;
                     let reader = AbortReader::new(reader, listener);
-                    let archive = zip::ZipArchive::new(reader)?;
+                    let mut archive = zip::ZipArchive::new(reader)?;
                     let entry_index = Arc::new(AtomicUsize::new(0));
+
+                    if let Some(total) = total {
+                        let mut entry_total = 0;
+                        for i in 0..archive.len() {
+                            let entry = archive.by_index(i)?;
+                            entry_total += entry.size();
+                        }
+
+                        total.store(entry_total, Ordering::Relaxed);
+                    }
 
                     let pool = rayon::ThreadPoolBuilder::new()
                         .num_threads(self.server.app_state.config.api.file_decompression_threads)
@@ -434,6 +468,7 @@ impl Archive {
 
                         scope.spawn_broadcast(move |_, _| {
                             let mut archive = archive.clone();
+                            let progress = progress.clone();
                             let entry_index = Arc::clone(&entry_index);
                             let error_clone2 = Arc::clone(&error_clone);
                             let destination = destination.clone();
@@ -445,8 +480,7 @@ impl Archive {
                                         return Ok(());
                                     }
 
-                                    let i = entry_index
-                                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                                    let i = entry_index.fetch_add(1, Ordering::SeqCst);
                                     if i >= archive.len() {
                                         return Ok(());
                                     }
@@ -499,7 +533,17 @@ impl Archive {
                                             zip_entry_get_modified_time(&entry),
                                         )?;
 
-                                        std::io::copy(&mut entry, &mut writer)?;
+                                        let mut reader: Box<dyn Read> = match &progress {
+                                            Some(progress) => {
+                                                Box::new(CountingReader::new_with_bytes_read(
+                                                    entry,
+                                                    Arc::clone(progress),
+                                                ))
+                                            }
+                                            None => Box::new(entry),
+                                        };
+
+                                        std::io::copy(&mut reader, &mut writer)?;
                                         writer.flush()?;
                                     } else if entry.is_symlink()
                                         && (1..=2048).contains(&entry.size())
@@ -523,6 +567,10 @@ impl Archive {
                                                 modified_time.into_std(),
                                                 None,
                                             )?;
+                                        }
+
+                                        if let Some(progress) = &progress {
+                                            progress.fetch_add(entry.size(), Ordering::Relaxed);
                                         }
                                     }
                                 }
@@ -598,9 +646,16 @@ impl Archive {
                                 None,
                             )?;
                             let writer = AbortWriter::new(writer, listener.clone());
+                            let writer: Box<dyn Write + Send + Sync> = match &progress {
+                                Some(progress) => Box::new(CountingWriter::new_with_bytes_written(
+                                    writer,
+                                    Arc::clone(progress),
+                                )),
+                                None => Box::new(writer),
+                            };
 
                             let (unrar::Stream(writer, err), processed_archive) =
-                                entry.read_to_stream(Box::new(writer))?;
+                                entry.read_to_stream(writer)?;
                             if let Some(mut writer) = writer {
                                 writer.flush()?;
                             }
@@ -629,6 +684,13 @@ impl Archive {
                     let password = sevenz_rust2::Password::empty();
                     let archive = sevenz_rust2::Archive::read(&mut reader.clone(), &password)?;
 
+                    if let Some(total) = total {
+                        total.store(
+                            archive.files.iter().map(|f| f.size).sum(),
+                            Ordering::Relaxed,
+                        );
+                    }
+
                     let pool = rayon::ThreadPoolBuilder::new()
                         .num_threads(self.server.app_state.config.api.file_decompression_threads)
                         .build()
@@ -639,6 +701,7 @@ impl Archive {
                     pool.in_place_scope(|scope| {
                         for block_index in 0..archive.blocks.len() {
                             let archive = archive.clone();
+                            let progress = progress.clone();
                             let mut reader = reader.clone();
                             let destination = destination.clone();
                             let server = self.server.clone();
@@ -717,7 +780,17 @@ impl Archive {
                                         )
                                         .map_err(|e| std::io::Error::other(e.to_string()))?;
 
-                                        std::io::copy(reader, &mut writer)?;
+                                        let mut reader: Box<dyn Read> = match &progress {
+                                            Some(progress) => {
+                                                Box::new(CountingReader::new_with_bytes_read(
+                                                    reader,
+                                                    Arc::clone(progress),
+                                                ))
+                                            }
+                                            None => Box::new(reader),
+                                        };
+
+                                        std::io::copy(&mut reader, &mut writer)?;
                                         writer.flush()?;
                                     }
 
@@ -747,6 +820,23 @@ impl Archive {
                     file.seek(SeekFrom::Start(0))?;
                     let archive = ddup_bak::archive::Archive::open_file(file)?;
 
+                    if let Some(total) = total {
+                        fn recursive_size(entry: &ddup_bak::archive::entries::Entry) -> u64 {
+                            match entry {
+                                ddup_bak::archive::entries::Entry::File(file) => file.size,
+                                ddup_bak::archive::entries::Entry::Directory(dir) => {
+                                    dir.entries.iter().map(recursive_size).sum()
+                                }
+                                _ => 0,
+                            }
+                        }
+
+                        total.store(
+                            archive.entries().iter().map(recursive_size).sum(),
+                            Ordering::Relaxed,
+                        );
+                    }
+
                     let pool = rayon::ThreadPoolBuilder::new()
                         .num_threads(self.server.app_state.config.api.file_decompression_threads)
                         .build()
@@ -755,6 +845,7 @@ impl Archive {
                     fn recursive_traverse(
                         scope: &rayon::Scope,
                         listener: &AbortListener,
+                        progress: &Option<Arc<AtomicU64>>,
                         server: &crate::server::Server,
                         destination: &Path,
                         entry: ddup_bak::archive::entries::Entry,
@@ -783,6 +874,7 @@ impl Archive {
                                     recursive_traverse(
                                         scope,
                                         listener,
+                                        progress,
                                         server,
                                         &destination_path,
                                         entry,
@@ -793,7 +885,7 @@ impl Archive {
                                     .filesystem
                                     .set_times(&destination_path, dir.mtime, None)?;
                             }
-                            ddup_bak::archive::entries::Entry::File(mut file) => {
+                            ddup_bak::archive::entries::Entry::File(file) => {
                                 let writer = super::writer::FileSystemWriter::new(
                                     server.clone(),
                                     &destination_path,
@@ -802,8 +894,19 @@ impl Archive {
                                 )?;
                                 let mut writer = AbortWriter::new(writer, listener.clone());
 
+                                let reader = AbortReader::new(file, listener.clone());
+                                let mut reader: Box<dyn Read + Send> = match progress {
+                                    Some(progress) => {
+                                        Box::new(CountingReader::new_with_bytes_read(
+                                            reader,
+                                            Arc::clone(progress),
+                                        ))
+                                    }
+                                    None => Box::new(reader),
+                                };
+
                                 scope.spawn(move |_| {
-                                    std::io::copy(&mut file, &mut writer).unwrap();
+                                    std::io::copy(&mut reader, &mut writer).unwrap();
                                     writer.flush().unwrap();
                                 });
                             }
@@ -834,6 +937,7 @@ impl Archive {
                             recursive_traverse(
                                 scope,
                                 &listener,
+                                &progress,
                                 &self.server,
                                 &destination,
                                 entry,

@@ -23,31 +23,30 @@ mod delete {
             example = "123e4567-e89b-12d3-a456-426614174000",
         ),
         (
-            "pull" = uuid::Uuid,
-            description = "The pull uuid",
+            "operation" = uuid::Uuid,
+            description = "The operation uuid",
             example = "123e4567-e89b-12d3-a456-426614174000",
         ),
     ))]
-    #[deprecated(
-        note = "This endpoint is purely for pterodactyl compatibility. Use the operations system instead."
-    )]
     pub async fn route(
         server: GetServer,
-        Path((_server, pull_id)): Path<(uuid::Uuid, uuid::Uuid)>,
+        Path((_server, operation_id)): Path<(uuid::Uuid, uuid::Uuid)>,
     ) -> ApiResponseResult {
-        if !server.filesystem.operations.abort_operation(pull_id).await {
-            return ApiResponse::error("pull not found")
+        if !server
+            .filesystem
+            .operations
+            .abort_operation(operation_id)
+            .await
+        {
+            return ApiResponse::error("operation not found")
                 .with_status(StatusCode::NOT_FOUND)
                 .ok();
         }
-
-        server.filesystem.pulls.write().await.remove(&pull_id);
 
         ApiResponse::json(Response {}).ok()
     }
 }
 
-#[allow(deprecated)]
 pub fn router(state: &State) -> OpenApiRouter<State> {
     OpenApiRouter::new()
         .routes(routes!(delete::route))

@@ -13,17 +13,17 @@ mod post {
 
     #[derive(ToSchema, Deserialize)]
     pub struct ChmodFile {
-        pub file: String,
-        pub mode: String,
+        file: String,
+        mode: String,
     }
 
     #[derive(ToSchema, Deserialize)]
     pub struct Payload {
         #[serde(default)]
-        pub root: String,
+        root: String,
 
         #[schema(inline)]
-        pub files: Vec<ChmodFile>,
+        files: Vec<ChmodFile>,
     }
 
     #[derive(ToSchema, Serialize)]
