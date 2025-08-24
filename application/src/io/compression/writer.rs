@@ -63,8 +63,8 @@ impl<'a, W: Write + Send + 'static> CompressionWriter<'a, W> {
             CompressionType::Lz4 => {
                 CompressionWriter::Lz4(lz4::EncoderBuilder::new().build(writer).unwrap())
             }
-            CompressionType::Zstd => CompressionWriter::Zstd(
-                zstd::Encoder::new(
+            CompressionType::Zstd => CompressionWriter::Zstd({
+                let mut encoder = zstd::Encoder::new(
                     writer,
                     match compression_level {
                         CompressionLevel::BestSpeed => 1,
@@ -73,8 +73,11 @@ impl<'a, W: Write + Send + 'static> CompressionWriter<'a, W> {
                         CompressionLevel::BestCompression => 22,
                     },
                 )
-                .unwrap(),
-            ),
+                .unwrap();
+                encoder.multithread(threads as u32).ok();
+
+                encoder
+            }),
         }
     }
 

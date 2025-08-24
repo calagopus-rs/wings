@@ -13,7 +13,7 @@ COPY .docker/helpers/gather.sh /usr/local/bin/gather
 RUN chmod +x /usr/local/bin/gather && /usr/local/bin/gather
 
 # Run Stage
-FROM gcr.io/distroless/cc-debian12
+FROM alpine:latest
 
 # Copy gathered binaries and libs
 COPY --from=builder /build/gathered/ /
@@ -22,5 +22,4 @@ COPY --from=builder /build/gathered/ /
 ARG TARGETPLATFORM
 COPY .docker/${TARGETPLATFORM#linux/}/wings-rs /usr/bin/wings-rs
 
-ENV LD_LIBRARY_PATH=/lib:/usr/lib
 ENTRYPOINT ["/usr/bin/wings-rs"]
