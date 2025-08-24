@@ -35,12 +35,18 @@ impl<'a, W: Write + Send + 'static> CompressionWriter<'a, W> {
             CompressionType::Xz => CompressionWriter::Xz(Box::new(
                 lzma_rust2::XZWriterMT::new(
                     writer,
-                    lzma_rust2::XZOptions::with_preset(match compression_level {
-                        CompressionLevel::BestSpeed => 1,
-                        CompressionLevel::GoodSpeed => 4,
-                        CompressionLevel::GoodCompression => 6,
-                        CompressionLevel::BestCompression => 9,
-                    }),
+                    {
+                        let mut options =
+                            lzma_rust2::XZOptions::with_preset(match compression_level {
+                                CompressionLevel::BestSpeed => 1,
+                                CompressionLevel::GoodSpeed => 4,
+                                CompressionLevel::GoodCompression => 6,
+                                CompressionLevel::BestCompression => 9,
+                            });
+                        options.set_block_size(Some(std::num::NonZeroU64::new(1 << 20).unwrap()));
+
+                        options
+                    },
                     threads as u32,
                 )
                 .unwrap(),
