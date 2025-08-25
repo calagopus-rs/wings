@@ -195,9 +195,11 @@ pub struct Schedule {
     pub status: Arc<RwLock<ScheduleStatus>>,
     pub completion_status: Arc<Mutex<Option<ApiScheduleCompletionStatus>>>,
 
-    notifier: Arc<tokio::sync::Notify>,
-    tasks: Vec<tokio::task::JoinHandle<()>>,
-    task: tokio::task::JoinHandle<()>,
+    trigger_tasks: Vec<tokio::task::JoinHandle<()>>,
+
+    executor_task: tokio::task::JoinHandle<()>,
+    executor_notifier: Arc<tokio::sync::Notify>,
+    executor_skip_notifier: Arc<tokio::sync::Notify>,
 }
 
 impl Schedule {
@@ -205,7 +207,8 @@ impl Schedule {
         server: crate::server::Server,
         raw_schedule: super::configuration::Schedule,
     ) -> Self {
-        let notifier = Arc::new(tokio::sync::Notify::new());
+        let executor_notifier = Arc::new(tokio::sync::Notify::new());
+        let executor_skip_notifier = Arc::new(tokio::sync::Notify::new());
 
         let condition = Arc::new(RwLock::new(raw_schedule.condition));
         let raw_actions = Arc::new(RwLock::new(Arc::new(raw_schedule.actions)));
@@ -215,11 +218,10 @@ impl Schedule {
         }));
         let completion_status = Arc::new(Mutex::new(None));
 
-        let (triggers, tasks) = Self::create_trigger_tasks(
+        let (triggers, trigger_tasks) = Self::create_trigger_tasks(
             server.clone(),
-            raw_schedule.uuid,
             raw_schedule.triggers,
-            Arc::clone(&notifier),
+            Arc::clone(&executor_notifier),
         );
 
         Self {
@@ -227,25 +229,31 @@ impl Schedule {
             triggers,
             condition: Arc::clone(&condition),
             raw_actions: Arc::clone(&raw_actions),
-            notifier: Arc::clone(&notifier),
             status: Arc::clone(&status),
             completion_status: Arc::clone(&completion_status),
-            tasks,
-            task: Self::create_executor_task(
+            trigger_tasks,
+            executor_task: Self::create_executor_task(
                 server,
                 raw_schedule.uuid,
                 condition,
                 raw_actions,
-                notifier,
+                Arc::clone(&executor_notifier),
+                Arc::clone(&executor_skip_notifier),
                 status,
                 completion_status,
             ),
+            executor_notifier,
+            executor_skip_notifier,
         }
     }
 
     #[inline]
-    pub fn trigger(&self) {
-        self.notifier.notify_one();
+    pub fn trigger(&self, skip_condition: bool) {
+        if skip_condition {
+            self.executor_skip_notifier.notify_one();
+        } else {
+            self.executor_notifier.notify_one();
+        }
     }
 
     pub async fn update(&self, raw_schedule: &super::configuration::Schedule) {
@@ -260,44 +268,41 @@ impl Schedule {
     ) {
         tracing::debug!(schedule = %self.uuid, "recreating triggers");
 
-        for task in self.tasks.drain(..) {
+        for task in self.trigger_tasks.drain(..) {
             task.abort();
         }
 
         let (triggers, tasks) =
-            Self::create_trigger_tasks(server, self.uuid, triggers, Arc::clone(&self.notifier));
+            Self::create_trigger_tasks(server, triggers, Arc::clone(&self.executor_notifier));
 
         self.triggers = triggers;
-        self.tasks = tasks;
+        self.trigger_tasks = tasks;
     }
 
     pub async fn recreate_executor(&mut self, server: crate::server::Server) {
         tracing::debug!(server = %server.uuid, schedule = %self.uuid, "recreating executor task");
 
-        let condition = Arc::clone(&self.condition);
-        let raw_actions = Arc::clone(&self.raw_actions);
-        let notifier = Arc::clone(&self.notifier);
-        let status = Arc::clone(&self.status);
-        let completion_status = Arc::clone(&self.completion_status);
-
-        self.task.abort();
-        self.task = Self::create_executor_task(
+        self.executor_task.abort();
+        self.executor_task = Self::create_executor_task(
             server,
             self.uuid,
-            condition,
-            raw_actions,
-            notifier,
-            status,
-            completion_status,
+            Arc::clone(&self.condition),
+            Arc::clone(&self.raw_actions),
+            Arc::clone(&self.executor_notifier),
+            Arc::clone(&self.executor_skip_notifier),
+            Arc::clone(&self.status),
+            Arc::clone(&self.completion_status),
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn create_executor_task(
         server: crate::server::Server,
         uuid: uuid::Uuid,
         condition: Arc<RwLock<ScheduleCondition>>,
         raw_actions: Arc<RwLock<Arc<Vec<super::configuration::ScheduleAction>>>>,
-        notifier: Arc<tokio::sync::Notify>,
+        executor_notifier: Arc<tokio::sync::Notify>,
+        executor_skip_notifier: Arc<tokio::sync::Notify>,
         status: Arc<RwLock<ScheduleStatus>>,
         completion_status: Arc<Mutex<Option<ApiScheduleCompletionStatus>>>,
     ) -> tokio::task::JoinHandle<()> {
@@ -305,15 +310,16 @@ impl Schedule {
 
         tokio::task::spawn(async move {
             loop {
-                notifier.notified().await;
+                let skip_condition = tokio::select! {
+                    _ = executor_skip_notifier.notified() => true,
+                    _ = executor_notifier.notified() => false,
+                };
 
-                tracing::debug!(server = %server.uuid, schedule = %uuid, "schedule triggered, checking condition");
-
-                if !condition.read().await.evaluate(&server).await {
+                if !skip_condition && !condition.read().await.evaluate(&server).await {
                     continue;
                 }
 
-                tracing::debug!(server = %server.uuid, schedule = %uuid, "schedule condition met, executing actions");
+                tracing::debug!(server = %server.uuid, schedule = %uuid, skip_condition, "schedule condition met, executing actions");
 
                 let raw_actions_lock = raw_actions.read().await;
                 let raw_actions = Arc::clone(&*raw_actions_lock);
@@ -345,8 +351,8 @@ impl Schedule {
                             server
                                 .websocket
                                 .send(WebsocketMessage::new(
-                                    WebsocketEvent::ServerScheduleError,
-                                    &[uuid.to_string(), err],
+                                    WebsocketEvent::ServerScheduleStepError,
+                                    &[raw_action.uuid.to_string(), err],
                                 ))
                                 .ok();
 
@@ -387,9 +393,8 @@ impl Schedule {
 
     fn create_trigger_tasks(
         server: crate::server::Server,
-        uuid: uuid::Uuid,
         raw_triggers: Vec<ScheduleTrigger>,
-        notifier: Arc<tokio::sync::Notify>,
+        executor_notifier: Arc<tokio::sync::Notify>,
     ) -> (Vec<ScheduleTrigger>, Vec<tokio::task::JoinHandle<()>>) {
         let cron_count = raw_triggers
             .iter()
@@ -404,7 +409,7 @@ impl Schedule {
             match trigger {
                 ScheduleTrigger::Cron { schedule } => {
                     tasks.push(tokio::task::spawn({
-                        let notifier = Arc::clone(&notifier);
+                        let executor_notifier = Arc::clone(&executor_notifier);
                         let server = server.clone();
 
                         async move {
@@ -425,12 +430,6 @@ impl Schedule {
                                     None => break,
                                 };
 
-                                tracing::debug!(
-                                    schedule = %uuid,
-                                    "waiting for cron schedule trigger at {}",
-                                    target_datetime
-                                );
-
                                 let target_timestamp = target_datetime.timestamp();
                                 let now_timestamp = now_datetime.timestamp();
                                 let sleep_duration = target_timestamp - now_timestamp;
@@ -443,7 +442,7 @@ impl Schedule {
                                     sleep_duration as u64,
                                 ))
                                 .await;
-                                notifier.notify_one();
+                                executor_notifier.notify_one();
                             }
                         }
                     }));
@@ -458,9 +457,9 @@ impl Schedule {
 
 impl Drop for Schedule {
     fn drop(&mut self) {
-        for task in self.tasks.drain(..) {
+        for task in self.trigger_tasks.drain(..) {
             task.abort();
         }
-        self.task.abort();
+        self.executor_task.abort();
     }
 }

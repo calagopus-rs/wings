@@ -88,7 +88,7 @@ impl ScheduleManager {
                 } = trigger
                     && *trigger_state == state
                 {
-                    schedule.trigger();
+                    schedule.trigger(false);
                 }
             }
         }
@@ -107,7 +107,7 @@ impl ScheduleManager {
                 } = trigger
                     && *trigger_action == action
                 {
-                    schedule.trigger();
+                    schedule.trigger(false);
                 }
             }
         }
@@ -122,7 +122,7 @@ impl ScheduleManager {
         for schedule in schedules.iter() {
             for trigger in schedule.triggers.iter() {
                 if let ScheduleTrigger::Crash = trigger {
-                    schedule.trigger();
+                    schedule.trigger(false);
                 }
             }
         }

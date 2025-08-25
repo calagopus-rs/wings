@@ -74,8 +74,8 @@ pub enum WebsocketEvent {
     ServerTransferStatus,
     #[serde(rename = "schedule status")]
     ServerScheduleStatus,
-    #[serde(rename = "schedule error")]
-    ServerScheduleError,
+    #[serde(rename = "schedule step error")]
+    ServerScheduleStepError,
     #[serde(rename = "operation progress")]
     ServerOperationProgress,
     #[serde(rename = "operation completed")]

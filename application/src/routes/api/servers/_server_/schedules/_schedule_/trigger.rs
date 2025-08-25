@@ -7,8 +7,14 @@ mod post {
         routes::{ApiError, api::servers::_server_::GetServer},
     };
     use axum::{extract::Path, http::StatusCode};
-    use serde::Serialize;
+    use serde::{Deserialize, Serialize};
     use utoipa::ToSchema;
+
+    #[derive(ToSchema, Deserialize)]
+    pub struct Payload {
+        #[serde(default)]
+        skip_condition: bool,
+    }
 
     #[derive(ToSchema, Serialize)]
     struct Response {}
@@ -27,10 +33,11 @@ mod post {
             description = "The schedule uuid",
             example = "123e4567-e89b-12d3-a456-426614174000",
         ),
-    ))]
+    ), request_body = inline(Payload))]
     pub async fn route(
         server: GetServer,
         Path((_server, schedule_id)): Path<(uuid::Uuid, uuid::Uuid)>,
+        axum::Json(data): axum::Json<Payload>,
     ) -> ApiResponseResult {
         let schedules = server.schedules.get_schedules().await;
 
@@ -43,7 +50,7 @@ mod post {
             }
         };
 
-        schedule.trigger();
+        schedule.trigger(data.skip_condition);
 
         ApiResponse::json(Response {})
             .with_status(StatusCode::OK)

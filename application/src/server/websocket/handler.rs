@@ -163,6 +163,13 @@ pub async fn handle_ws(
                                         continue;
                                     }
                                 }
+                                websocket::WebsocketEvent::ServerOperationProgress
+                                | websocket::WebsocketEvent::ServerOperationCompleted => {
+                                    if !socket_jwt.permissions.has_permission(Permission::FileRead)
+                                    {
+                                        continue;
+                                    }
+                                }
                                 websocket::WebsocketEvent::ServerBackupProgress
                                 | websocket::WebsocketEvent::ServerBackupCompleted => {
                                     if !socket_jwt
@@ -173,7 +180,7 @@ pub async fn handle_ws(
                                     }
                                 }
                                 websocket::WebsocketEvent::ServerScheduleStatus
-                                | websocket::WebsocketEvent::ServerScheduleError => {
+                                | websocket::WebsocketEvent::ServerScheduleStepError => {
                                     if !socket_jwt
                                         .permissions
                                         .has_permission(Permission::ScheduleRead)
