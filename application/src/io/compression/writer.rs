@@ -180,7 +180,7 @@ impl AsyncWrite for AsyncCompressionWriter {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
-        if !self.inner_error_receiver.is_empty()
+        if !self.inner_error_receiver.is_terminated()
             && let Poll::Ready(result) = Pin::new(&mut self.inner_error_receiver).poll(cx)
             && let Ok(err) = result
         {
@@ -191,7 +191,7 @@ impl AsyncWrite for AsyncCompressionWriter {
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        if !self.inner_error_receiver.is_empty()
+        if !self.inner_error_receiver.is_terminated()
             && let Poll::Ready(result) = Pin::new(&mut self.inner_error_receiver).poll(cx)
             && let Ok(err) = result
         {
@@ -202,7 +202,7 @@ impl AsyncWrite for AsyncCompressionWriter {
     }
 
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        if !self.inner_error_receiver.is_empty()
+        if !self.inner_error_receiver.is_terminated()
             && let Poll::Ready(result) = Pin::new(&mut self.inner_error_receiver).poll(cx)
             && let Ok(err) = result
         {

@@ -80,7 +80,7 @@ impl AsyncRead for AsyncCompressionReader {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
-        if !self.inner_error_receiver.is_empty()
+        if !self.inner_error_receiver.is_terminated()
             && let Poll::Ready(result) = Pin::new(&mut self.inner_error_receiver).poll(cx)
             && let Ok(err) = result
         {
