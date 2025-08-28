@@ -1196,6 +1196,11 @@ impl Server {
                 server.start(aquire_timeout, true).await?;
             }
 
+            server
+                .schedules
+                .execute_power_action_trigger(crate::models::ServerPowerAction::Restart)
+                .await;
+
             Ok(())
         })
         .await?

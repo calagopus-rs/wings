@@ -3,11 +3,13 @@ use crate::{
     routes::State,
     server::activity::{Activity, ActivityEvent},
 };
+use cap_std::fs::OpenOptions;
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use tokio::io::AsyncWriteExt;
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct RenameFile {
@@ -59,6 +61,7 @@ pub enum ScheduleAction {
     },
     WriteFile {
         ignore_failure: bool,
+        append: bool,
 
         file: String,
         content: String,
@@ -441,10 +444,15 @@ impl ScheduleAction {
                     return Err("failed to change ownership".into());
                 }
             }
-            ScheduleAction::WriteFile { file, content, .. } => {
-                let path = match server.filesystem.async_canonicalize(file).await {
+            ScheduleAction::WriteFile {
+                file: file_path,
+                content,
+                append,
+                ..
+            } => {
+                let path = match server.filesystem.async_canonicalize(file_path).await {
                     Ok(path) => path,
-                    Err(_) => PathBuf::from(file),
+                    Err(_) => PathBuf::from(file_path),
                 };
 
                 let metadata = server.filesystem.async_metadata(&path).await;
@@ -487,22 +495,45 @@ impl ScheduleAction {
                     return Err("failed to create parent directory".into());
                 }
 
+                let added_content_size = if *append {
+                    content.len() as i64
+                } else {
+                    content.len() as i64 - old_content_size
+                };
                 if !server
                     .filesystem
-                    .async_allocate_in_path(parent, content.len() as i64 - old_content_size, false)
+                    .async_allocate_in_path(parent, added_content_size, false)
                     .await
                 {
                     return Err("failed to allocate space".into());
                 }
 
-                if let Err(err) = server
-                    .filesystem
-                    .async_write(&path, content.as_bytes().to_vec())
-                    .await
-                {
-                    tracing::error!(path = %path.display(), "failed to write file: {:#?}", err);
+                let mut options = OpenOptions::new();
+                options
+                    .write(true)
+                    .create(true)
+                    .truncate(!*append)
+                    .append(*append);
 
+                let mut file = match server.filesystem.async_open_with(&path, options).await {
+                    Ok(file) => file,
+                    Err(err) => {
+                        tracing::error!(path = %path.display(), "failed to open file: {:#?}", err);
+                        return Err("failed to open file".into());
+                    }
+                };
+
+                if let Err(err) = file.write_all(content.as_bytes()).await {
+                    tracing::error!(path = %path.display(), "failed to write file: {:#?}", err);
                     return Err("failed to write file".into());
+                }
+                if let Err(err) = file.flush().await {
+                    tracing::error!(path = %path.display(), "failed to flush file: {:#?}", err);
+                    return Err("failed to flush file".into());
+                }
+                if let Err(err) = file.sync_all().await {
+                    tracing::error!(path = %path.display(), "failed to sync file: {:#?}", err);
+                    return Err("failed to sync file".into());
                 }
 
                 server
@@ -512,7 +543,7 @@ impl ScheduleAction {
                         user: None,
                         ip: None,
                         metadata: Some(serde_json::json!({
-                            "file": file,
+                            "file": file_path,
                         })),
                         timestamp: chrono::Utc::now(),
                     })

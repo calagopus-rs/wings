@@ -81,6 +81,9 @@ pub enum ScheduleCondition {
         comparator: ScheduleComparator,
         value: u64,
     },
+    FileExists {
+        file: String,
+    },
 }
 
 impl ScheduleCondition {
@@ -167,6 +170,9 @@ impl ScheduleCondition {
                             resource_usage.disk_bytes >= *value
                         }
                     }
+                }
+                ScheduleCondition::FileExists { file } => {
+                    server.filesystem.async_symlink_metadata(file).await.is_ok()
                 }
             }
         })

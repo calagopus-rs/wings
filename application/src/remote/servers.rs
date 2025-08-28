@@ -117,7 +117,7 @@ pub async fn set_server_startup_variable(
 ) -> Result<(), anyhow::Error> {
     client
         .client
-        .post(format!("{}/servers/{}/startup/variables", client.url, uuid))
+        .put(format!("{}/servers/{}/startup/variables", client.url, uuid))
         .json(&json!({
             "env_variable": env_variable,
             "value": value,
@@ -135,7 +135,7 @@ pub async fn set_server_startup_command(
 ) -> Result<(), anyhow::Error> {
     client
         .client
-        .post(format!("{}/servers/{}/startup/command", client.url, uuid))
+        .put(format!("{}/servers/{}/startup/command", client.url, uuid))
         .json(&json!({
             "command": command,
         }))
@@ -152,7 +152,7 @@ pub async fn set_server_startup_docker_image(
 ) -> Result<(), anyhow::Error> {
     client
         .client
-        .post(format!(
+        .put(format!(
             "{}/servers/{}/startup/docker-image",
             client.url, uuid
         ))
