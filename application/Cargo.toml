@@ -58,7 +58,6 @@ rustix = "1.0.7"
 cidr = { version = "0.3.1", features = ["serde"] }
 hickory-resolver = "0.25.2"
 constant_time_eq = "0.4.2"
-tikv-jemallocator = "0.6.0"
 new_mime_guess = "4.0.4"
 async-trait = "0.1.88"
 content_disposition = "0.4.0"
@@ -69,6 +68,9 @@ lzma-rust2 = { version = "0.11.0", features = ["optimization"] }
 bzip2 = "0.6.0"
 lz4 = "1.28.1"
 zstd = { version = "0.13.3", features = ["zstdmt"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+tikv-jemallocator = "0.6.0"
 
 [build-dependencies]
 serde_json = { workspace = true }
