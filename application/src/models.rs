@@ -44,6 +44,20 @@ pub struct Download {
 }
 
 #[derive(ToSchema, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PullProgressStatus {
+    Pulling,
+    Extracting,
+}
+
+#[derive(ToSchema, Serialize)]
+pub struct PullProgress {
+    pub status: PullProgressStatus,
+    pub progress: i64,
+    pub total: i64,
+}
+
+#[derive(ToSchema, Serialize)]
 pub struct Progress {
     pub progress: u64,
     pub total: u64,

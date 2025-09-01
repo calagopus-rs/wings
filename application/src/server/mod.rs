@@ -144,235 +144,242 @@ impl Server {
 
         Box::pin(async move {
             let old_sender = server.clone().websocket_sender.write().await.replace(tokio::spawn(async move {
-            let mut prev_usage = resources::ResourceUsage::default();
+                let mut prev_usage = resources::ResourceUsage::default();
 
-            let mut container_channel = match container.update_reciever.lock().await.take() {
-                Some(channel) => channel,
-                None => {
-                    tracing::error!(
-                        server = %server.uuid,
-                        "failed to get container channel"
-                    );
-                    return;
-                }
-            };
-
-            loop {
-                let (container_state, usage) = match container_channel.recv().await {
-                    Some((container_state, usage)) => (container_state, usage),
-                    None => break,
-                };
-
-                if usage != prev_usage {
-                    let message = websocket::WebsocketMessage::new(
-                        websocket::WebsocketEvent::ServerStats,
-                        &[serde_json::to_string(&usage).unwrap()],
-                    );
-
-                    if let Err(err) = server.websocket.send(message) {
+                let mut container_channel = match container.update_reciever.lock().await.take() {
+                    Some(channel) => channel,
+                    None => {
                         tracing::error!(
                             server = %server.uuid,
-                            "failed to send websocket message: {}",
-                            err
+                            "failed to get container channel"
                         );
+                        return;
                     }
+                };
 
-                    prev_usage = usage;
-                }
+                loop {
+                    let (container_state, usage) = match container_channel.recv().await {
+                        Some((container_state, usage)) => (container_state, usage),
+                        None => break,
+                    };
 
-                if server.filesystem.is_full().await
-                    && server.state.get_state() != state::ServerState::Offline
-                    && !server.stopping.load(Ordering::SeqCst)
-                {
-                    server
-                    .log_daemon_with_prelude("Server is exceeding the assigned disk space limit, stopping process now.")
-                    .await;
+                    if usage != prev_usage {
+                        let message = websocket::WebsocketMessage::new(
+                            websocket::WebsocketEvent::ServerStats,
+                            &[serde_json::to_string(&usage).unwrap()],
+                        );
 
-                    let server_clone = server.clone();
-                    tokio::spawn(async move {
-                        if let Err(err) = server_clone
-                            .stop_with_kill_timeout(
-                                std::time::Duration::from_secs(30),
-                                false,
-                            )
-                            .await
-                        {
+                        if let Err(err) = server.websocket.send(message) {
                             tracing::error!(
-                                server = %server_clone.uuid,
-                                "failed to stop server: {:#?}",
+                                server = %server.uuid,
+                                "failed to send websocket message: {}",
                                 err
                             );
                         }
-                    });
-                }
 
-                match container_state.status {
-                    Some(ContainerStateStatusEnum::RUNNING) => {
-                        if !matches!(
-                            server.state.get_state(),
-                            state::ServerState::Running
-                                | state::ServerState::Starting
-                                | state::ServerState::Stopping,
-                        ) {
-                            server.state.set_state(state::ServerState::Running).await;
-                        }
+                        prev_usage = usage;
                     }
-                    Some(ContainerStateStatusEnum::EMPTY)
-                    | Some(ContainerStateStatusEnum::DEAD)
-                    | Some(ContainerStateStatusEnum::EXITED)
-                    | None => {
-                        server.state.set_state(state::ServerState::Offline).await;
 
-                        tracing::debug!(
-                            server = %server.uuid,
-                            restarting = %server.restarting.load(Ordering::SeqCst),
-                            stopping = %server.stopping.load(Ordering::SeqCst),
-                            crash_handled = %server.crash_handled.load(Ordering::SeqCst),
-                            "container state changed to {:?}, handling crash",
-                            container_state.status
-                        );
+                    if server.filesystem.is_full().await
+                        && server.state.get_state() != state::ServerState::Offline
+                        && !server.stopping.load(Ordering::SeqCst)
+                    {
+                        server
+                        .log_daemon_with_prelude("Server is exceeding the assigned disk space limit, stopping process now.")
+                        .await;
 
-                        if server.restarting.load(Ordering::SeqCst) {
-                            server
-                                .crash_handled
-                                .store(true, Ordering::SeqCst);
-                            server
-                                .restarting
-                                .store(false, Ordering::SeqCst);
-                            server
-                                .stopping
-                                .store(false, Ordering::SeqCst);
-
-                            let server = server.clone();
-                            tokio::spawn(async move {
-                                if let Err(err) = server.start(Some(std::time::Duration::from_secs(5)), false).await {
-                                    tracing::error!(
-                                        server = %server.uuid,
-                                        "failed to start server after stopping to restart: {}",
-                                        err
-                                    );
-                                }
-                            });
-                        } else if server.stopping.load(Ordering::SeqCst)
-                        {
-                            server
-                                .crash_handled
-                                .store(true, Ordering::SeqCst);
-                            server
-                                .stopping
-                                .store(false, Ordering::SeqCst);
-                            if server.app_state.config.docker.delete_container_on_stop {
-                                server.destroy_container().await;
-                            }
-                        } else if server.app_state.config.system.crash_detection.enabled
-                            && !server
-                                .crash_handled
-                                .load(Ordering::SeqCst)
-                        {
-                            server
-                                .crash_handled
-                                .store(true, Ordering::SeqCst);
-
-                            if container_state.exit_code.is_some_and(|code| code == 0)
-                                && !container_state.oom_killed.unwrap_or(false)
-                                && !server.app_state
-                                    .config
-                                    .system
-                                    .crash_detection
-                                    .detect_clean_exit_as_crash
+                        let server_clone = server.clone();
+                        tokio::spawn(async move {
+                            if let Err(err) = server_clone
+                                .stop_with_kill_timeout(
+                                    std::time::Duration::from_secs(30),
+                                    false,
+                                )
+                                .await
                             {
-                                tracing::debug!(
-                                    server = %server.uuid,
-                                    "container exited cleanly, not restarting due to crash detection settings"
+                                tracing::error!(
+                                    server = %server_clone.uuid,
+                                    "failed to stop server: {:#?}",
+                                    err
                                 );
+                            }
+                        });
+                    }
+
+                    match container_state.status {
+                        Some(ContainerStateStatusEnum::RUNNING) => {
+                            if !matches!(
+                                server.state.get_state(),
+                                state::ServerState::Running
+                                    | state::ServerState::Starting
+                                    | state::ServerState::Stopping,
+                            ) {
+                                server.state.set_state(state::ServerState::Running).await;
+                            }
+                        }
+                        Some(ContainerStateStatusEnum::EMPTY)
+                        | Some(ContainerStateStatusEnum::DEAD)
+                        | Some(ContainerStateStatusEnum::EXITED)
+                        | None => {
+                            server.state.set_state(state::ServerState::Offline).await;
+
+                            tracing::info!(
+                                server = %server.uuid,
+                                restarting = %server.restarting.load(Ordering::SeqCst),
+                                stopping = %server.stopping.load(Ordering::SeqCst),
+                                crash_handled = %server.crash_handled.load(Ordering::SeqCst),
+                                "container state changed to {:?}, handling crash",
+                                container_state.status
+                            );
+
+                            if server.restarting.load(Ordering::SeqCst) {
+                                server
+                                    .crash_handled
+                                    .store(true, Ordering::SeqCst);
+                                server
+                                    .restarting
+                                    .store(false, Ordering::SeqCst);
+                                server
+                                    .stopping
+                                    .store(false, Ordering::SeqCst);
+
+                                let server = server.clone();
+                                tokio::spawn(async move {
+                                    if let Err(err) = server.start(Some(std::time::Duration::from_secs(5)), false).await {
+                                        tracing::error!(
+                                            server = %server.uuid,
+                                            "failed to start server after stopping to restart: {}",
+                                            err
+                                        );
+                                    }
+                                });
+                            } else if server.stopping.load(Ordering::SeqCst)
+                            {
+                                server
+                                    .crash_handled
+                                    .store(true, Ordering::SeqCst);
+                                server
+                                    .stopping
+                                    .store(false, Ordering::SeqCst);
                                 if server.app_state.config.docker.delete_container_on_stop {
                                     server.destroy_container().await;
                                 }
+                            } else if server.app_state.config.system.crash_detection.enabled
+                                && !server
+                                    .crash_handled
+                                    .load(Ordering::SeqCst)
+                            {
+                                server
+                                    .crash_handled
+                                    .store(true, Ordering::SeqCst);
 
-                                return;
-                            }
-
-                            server.schedules.execute_crash_trigger().await;
-
-                            server.log_daemon_with_prelude("---------- Detected server process in a crashed state! ----------").await;
-                            server
-                                .log_daemon_with_prelude(&format!(
-                                    "Exit code: {}",
-                                    container_state.exit_code.unwrap_or_default()
-                                ))
-                                .await;
-                            server
-                                .log_daemon_with_prelude(&format!(
-                                    "Out of memory: {}",
-                                    container_state.oom_killed.unwrap_or(false)
-                                ))
-                                .await;
-
-                            let mut last_crash_lock = server.last_crash.lock().await;
-                            if let Some(last_crash) = *last_crash_lock {
-                                if last_crash.elapsed().as_secs()
-                                    < server.app_state.config.system.crash_detection.timeout
+                                if container_state.exit_code.is_some_and(|code| code == 0)
+                                    && !container_state.oom_killed.unwrap_or(false)
+                                    && !server.app_state
+                                        .config
+                                        .system
+                                        .crash_detection
+                                        .detect_clean_exit_as_crash
                                 {
                                     tracing::debug!(
                                         server = %server.uuid,
-                                        "last crash was less than {} seconds ago, aborting automatic restart",
-                                        server.app_state.config.system.crash_detection.timeout
+                                        "container exited cleanly, not restarting due to crash detection settings"
                                     );
-
-                                    server.log_daemon_with_prelude(
-                                        &format!(
-                                            "Aborting automatic restart, last crash occurred less than {} seconds ago.",
-                                            server.app_state.config.system.crash_detection.timeout
-                                        ),
-                                    ).await;
                                     if server.app_state.config.docker.delete_container_on_stop {
                                         server.destroy_container().await;
                                     }
 
                                     return;
+                                }
+
+                                server.schedules.execute_crash_trigger().await;
+
+                                server.log_daemon_with_prelude("---------- Detected server process in a crashed state! ----------").await;
+                                server
+                                    .log_daemon_with_prelude(&format!(
+                                        "Exit code: {}",
+                                        container_state.exit_code.unwrap_or_default()
+                                    ))
+                                    .await;
+                                server
+                                    .log_daemon_with_prelude(&format!(
+                                        "Out of memory: {}",
+                                        container_state.oom_killed.unwrap_or(false)
+                                    ))
+                                    .await;
+
+                                if container_state.oom_killed == Some(true) {
+                                    tracing::info!(
+                                        server = %server.uuid,
+                                        "container has been oom killed"
+                                    );
+                                }
+
+                                let mut last_crash_lock = server.last_crash.lock().await;
+                                if let Some(last_crash) = *last_crash_lock {
+                                    if last_crash.elapsed().as_secs()
+                                        < server.app_state.config.system.crash_detection.timeout
+                                    {
+                                        tracing::debug!(
+                                            server = %server.uuid,
+                                            "last crash was less than {} seconds ago, aborting automatic restart",
+                                            server.app_state.config.system.crash_detection.timeout
+                                        );
+
+                                        server.log_daemon_with_prelude(
+                                            &format!(
+                                                "Aborting automatic restart, last crash occurred less than {} seconds ago.",
+                                                server.app_state.config.system.crash_detection.timeout
+                                            ),
+                                        ).await;
+                                        if server.app_state.config.docker.delete_container_on_stop {
+                                            server.destroy_container().await;
+                                        }
+
+                                        return;
+                                    } else {
+                                        tracing::debug!(
+                                            server = %server.uuid,
+                                            "last crash was more than {} seconds ago, restarting server",
+                                            server.app_state.config.system.crash_detection.timeout
+                                        );
+
+                                        last_crash_lock.replace(std::time::Instant::now());
+                                    }
                                 } else {
                                     tracing::debug!(
                                         server = %server.uuid,
-                                        "last crash was more than {} seconds ago, restarting server",
-                                        server.app_state.config.system.crash_detection.timeout
+                                        "no previous crash recorded, restarting server"
                                     );
 
                                     last_crash_lock.replace(std::time::Instant::now());
                                 }
-                            } else {
-                                tracing::debug!(
+
+                                drop(last_crash_lock);
+
+                                tracing::info!(
                                     server = %server.uuid,
-                                    "no previous crash recorded, restarting server"
+                                    "restarting server due to crash"
                                 );
 
-                                last_crash_lock.replace(std::time::Instant::now());
+                                let server = server.clone();
+                                tokio::spawn(async move {
+                                    if let Err(err) = server.start(Some(std::time::Duration::from_secs(5)), false).await {
+                                        tracing::error!(
+                                            server = %server.uuid,
+                                            "failed to start server after crash: {}",
+                                            err
+                                        );
+                                    }
+                                });
                             }
 
-                            drop(last_crash_lock);
-
-                            tracing::info!(
-                                server = %server.uuid,
-                                "restarting server due to crash"
-                            );
-
-                            let server = server.clone();
-                            tokio::spawn(async move {
-                                if let Err(err) = server.start(Some(std::time::Duration::from_secs(5)), false).await {
-                                    tracing::error!(
-                                        server = %server.uuid,
-                                        "failed to start server after crash: {}",
-                                        err
-                                    );
-                                }
-                            });
+                            break;
                         }
-
-                        break;
+                        _ => {}
                     }
-                    _ => {}
                 }
-            }
-        }));
+            }));
 
             if let Some(old_sender) = old_sender {
                 old_sender.abort();
@@ -639,9 +646,7 @@ impl Server {
     ) -> Result<String, bollard::errors::Error> {
         let container = match &*self.container.read().await {
             Some(container) => container.docker_id.clone(),
-            None => {
-                return Ok("".to_string());
-            }
+            None => return Ok("".to_string()),
         };
 
         let mut logs_stream = client.logs(
@@ -763,6 +768,56 @@ impl Server {
             while let Some(status) = stream.next().await {
                 match status {
                     Ok(status) => {
+                        if let Some(id) = status.id {
+                            match status.status.as_ref().map(|s| s.to_lowercase()).as_deref() {
+                                Some("downloading") => {
+                                    if let Some(progress_detail) = status.progress_detail {
+                                        self.websocket
+                                            .send(websocket::WebsocketMessage::new(
+                                                websocket::WebsocketEvent::ServerImagePullProgress,
+                                                &[
+                                                    id,
+                                                    serde_json::to_string(&crate::models::PullProgress {
+                                                        status: crate::models::PullProgressStatus::Pulling,
+                                                        progress: progress_detail.current.unwrap_or_default(),
+                                                        total: progress_detail.total.unwrap_or_default()
+                                                    })
+                                                    .unwrap()
+                                                ],
+                                            ))
+                                            .ok();
+                                    }
+                                }
+                                Some("extracting") => {
+                                    if let Some(progress_detail) = status.progress_detail {
+                                        self.websocket
+                                            .send(websocket::WebsocketMessage::new(
+                                                websocket::WebsocketEvent::ServerImagePullProgress,
+                                                &[
+                                                    id,
+                                                    serde_json::to_string(&crate::models::PullProgress {
+                                                        status: crate::models::PullProgressStatus::Extracting,
+                                                        progress: progress_detail.current.unwrap_or_default(),
+                                                        total: progress_detail.total.unwrap_or_default()
+                                                    })
+                                                    .unwrap()
+                                                ],
+                                            ))
+                                            .ok();
+                                    }
+                                }
+                                Some("pull complete") => {
+                                    self.websocket
+                                        .send(websocket::WebsocketMessage::new(
+                                            websocket::WebsocketEvent::ServerImagePullCompleted,
+                                            &[id],
+                                        ))
+                                        .ok();
+                                }
+                                _ => {}
+                            }
+                        }
+
                         if let Some(status_str) = status.status {
                             if let Some(progress) = status.progress {
                                 self.log_daemon_install(format!("{status_str} {progress}"))

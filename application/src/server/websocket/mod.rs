@@ -54,6 +54,10 @@ pub enum WebsocketEvent {
     ServerConsoleOutput,
     #[serde(rename = "install output")]
     ServerInstallOutput,
+    #[serde(rename = "image pull progress")]
+    ServerImagePullProgress,
+    #[serde(rename = "image pull completed")]
+    ServerImagePullCompleted,
     #[serde(rename = "install started")]
     ServerInstallStarted,
     #[serde(rename = "install completed")]
