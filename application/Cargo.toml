@@ -68,6 +68,7 @@ lzma-rust2 = { version = "0.11.0", features = ["optimization"] }
 bzip2 = "0.6.0"
 lz4 = "1.28.1"
 zstd = { version = "0.13.3", features = ["zstdmt"] }
+base64 = "0.22.1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 tikv-jemallocator = "0.6.0"

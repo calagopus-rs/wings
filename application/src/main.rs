@@ -122,6 +122,14 @@ fn cli() -> Command {
                         .required(false),
                 )
                 .arg(
+                    Arg::new("join_data")
+                        .help("the join data from this daemon's panel")
+                        .num_args(1)
+                        .short('j')
+                        .long("join-data")
+                        .required(false),
+                )
+                .arg(
                     Arg::new("token")
                         .help("the API key to use for fetching node information")
                         .num_args(1)

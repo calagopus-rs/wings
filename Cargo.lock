@@ -5256,6 +5256,7 @@ dependencies = [
  "axum",
  "axum-extra",
  "axum-server",
+ "base64 0.22.1",
  "bollard",
  "bzip2",
  "cap-std",
