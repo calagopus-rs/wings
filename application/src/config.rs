@@ -275,6 +275,9 @@ fn remote_query_timeout() -> u64 {
 fn remote_query_boot_servers_per_page() -> u64 {
     50
 }
+fn remote_query_retry_limit() -> u64 {
+    10
+}
 
 nestify::nest! {
     #[derive(Deserialize, Serialize, DefaultFromSerde)]
@@ -644,6 +647,8 @@ nestify::nest! {
             pub timeout: u64,
             #[serde(default = "remote_query_boot_servers_per_page")]
             pub boot_servers_per_page: u64,
+            #[serde(default = "remote_query_retry_limit")]
+            pub retry_limit: u64,
         },
 
         #[serde(default)]

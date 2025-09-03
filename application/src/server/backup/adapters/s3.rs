@@ -208,16 +208,18 @@ impl BackupCreateExt for S3Backup {
                 server.app_state.config.system.backups.write_limit * 1024 * 1024,
             );
 
-            crate::server::filesystem::archive::Archive::create_tar(
+            crate::server::filesystem::archive::create::create_tar(
                 server.filesystem.clone(),
                 writer,
                 Path::new(""),
                 sources.into_iter().map(PathBuf::from).collect(),
-                CompressionType::Gz,
-                server.app_state.config.system.backups.compression_level,
                 Some(Arc::clone(&progress)),
                 vec![ignore],
-                server.app_state.config.system.backups.wings.create_threads,
+                crate::server::filesystem::archive::create::CreateTarOptions {
+                    compression_type: CompressionType::Gz,
+                    compression_level: server.app_state.config.system.backups.compression_level,
+                    threads: server.app_state.config.system.backups.wings.create_threads,
+                },
             )
             .await
         };

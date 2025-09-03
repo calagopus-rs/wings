@@ -241,35 +241,46 @@ impl BackupExt for ZfsBackup {
 
                 match archive_format {
                     StreamableArchiveFormat::Zip => {
-                        if let Err(err) = crate::server::filesystem::archive::Archive::create_zip(
-                            filesystem,
-                            writer,
-                            Path::new(""),
-                            names.into_iter().map(PathBuf::from).collect(),
-                            config.system.backups.compression_level,
-                            None,
-                            vec![ignore],
-                        )
-                        .await
+                        if let Err(err) =
+                            crate::server::filesystem::archive::create::create_zip_streaming(
+                                filesystem,
+                                writer,
+                                Path::new(""),
+                                names.into_iter().map(PathBuf::from).collect(),
+                                None,
+                                vec![ignore],
+                                crate::server::filesystem::archive::create::CreateZipOptions {
+                                    compression_level: config.system.backups.compression_level,
+                                },
+                            )
+                            .await
                         {
-                            tracing::error!("failed to create tar archive for zfs backup: {}", err);
+                            tracing::error!(
+                                "failed to create zip archive for btrfs backup: {}",
+                                err
+                            );
                         }
                     }
                     _ => {
-                        if let Err(err) = crate::server::filesystem::archive::Archive::create_tar(
+                        if let Err(err) = crate::server::filesystem::archive::create::create_tar(
                             filesystem,
                             writer,
                             Path::new(""),
                             names.into_iter().map(PathBuf::from).collect(),
-                            archive_format.compression_format(),
-                            config.system.backups.compression_level,
                             None,
                             vec![ignore],
-                            config.api.file_compression_threads,
+                            crate::server::filesystem::archive::create::CreateTarOptions {
+                                compression_type: archive_format.compression_format(),
+                                compression_level: config.system.backups.compression_level,
+                                threads: config.api.file_compression_threads,
+                            },
                         )
                         .await
                         {
-                            tracing::error!("failed to create tar archive for zfs backup: {}", err);
+                            tracing::error!(
+                                "failed to create tar archive for btrfs backup: {}",
+                                err
+                            );
                         }
                     }
                 }
@@ -643,35 +654,46 @@ impl BackupBrowseExt for BrowseZfsBackup {
 
                 match archive_format {
                     StreamableArchiveFormat::Zip => {
-                        if let Err(err) = crate::server::filesystem::archive::Archive::create_zip(
-                            filesystem,
-                            writer,
-                            &path,
-                            names.into_iter().map(PathBuf::from).collect(),
-                            compression_level,
-                            None,
-                            vec![ignore],
-                        )
-                        .await
+                        if let Err(err) =
+                            crate::server::filesystem::archive::create::create_zip_streaming(
+                                filesystem,
+                                writer,
+                                &path,
+                                names.into_iter().map(PathBuf::from).collect(),
+                                None,
+                                vec![ignore],
+                                crate::server::filesystem::archive::create::CreateZipOptions {
+                                    compression_level,
+                                },
+                            )
+                            .await
                         {
-                            tracing::error!("failed to create zip archive for zfs backup: {}", err);
+                            tracing::error!(
+                                "failed to create zip archive for btrfs backup: {}",
+                                err
+                            );
                         }
                     }
                     _ => {
-                        if let Err(err) = crate::server::filesystem::archive::Archive::create_tar(
+                        if let Err(err) = crate::server::filesystem::archive::create::create_tar(
                             filesystem,
                             writer,
                             &path,
                             names.into_iter().map(PathBuf::from).collect(),
-                            archive_format.compression_format(),
-                            compression_level,
                             None,
                             vec![ignore],
-                            file_compression_threads,
+                            crate::server::filesystem::archive::create::CreateTarOptions {
+                                compression_type: archive_format.compression_format(),
+                                compression_level,
+                                threads: file_compression_threads,
+                            },
                         )
                         .await
                         {
-                            tracing::error!("failed to create tar archive for zfs backup: {}", err);
+                            tracing::error!(
+                                "failed to create tar archive for btrfs backup: {}",
+                                err
+                            );
                         }
                     }
                 }
@@ -712,35 +734,46 @@ impl BackupBrowseExt for BrowseZfsBackup {
 
                 match archive_format {
                     StreamableArchiveFormat::Zip => {
-                        if let Err(err) = crate::server::filesystem::archive::Archive::create_zip(
-                            filesystem,
-                            writer,
-                            &path,
-                            file_paths,
-                            compression_level,
-                            None,
-                            vec![ignore],
-                        )
-                        .await
+                        if let Err(err) =
+                            crate::server::filesystem::archive::create::create_zip_streaming(
+                                filesystem,
+                                writer,
+                                &path,
+                                file_paths,
+                                None,
+                                vec![ignore],
+                                crate::server::filesystem::archive::create::CreateZipOptions {
+                                    compression_level,
+                                },
+                            )
+                            .await
                         {
-                            tracing::error!("failed to create zip archive for zfs backup: {}", err);
+                            tracing::error!(
+                                "failed to create zip archive for btrfs backup: {}",
+                                err
+                            );
                         }
                     }
                     _ => {
-                        if let Err(err) = crate::server::filesystem::archive::Archive::create_tar(
+                        if let Err(err) = crate::server::filesystem::archive::create::create_tar(
                             filesystem,
                             writer,
                             &path,
                             file_paths,
-                            archive_format.compression_format(),
-                            compression_level,
                             None,
                             vec![ignore],
-                            file_compression_threads,
+                            crate::server::filesystem::archive::create::CreateTarOptions {
+                                compression_type: archive_format.compression_format(),
+                                compression_level,
+                                threads: file_compression_threads,
+                            },
                         )
                         .await
                         {
-                            tracing::error!("failed to create tar archive for zfs backup: {}", err);
+                            tracing::error!(
+                                "failed to create tar archive for btrfs backup: {}",
+                                err
+                            );
                         }
                     }
                 }

@@ -176,23 +176,25 @@ impl OutgoingServerTransfer {
                 async move {
                     let sources = server.filesystem.async_read_dir_all("").await?;
 
-                    crate::server::filesystem::archive::Archive::create_tar(
+                    crate::server::filesystem::archive::create::create_tar(
                         server.filesystem.clone(),
                         tokio_util::io::SyncIoBridge::new(checksummed_writer),
                         Path::new(""),
                         sources.into_iter().map(PathBuf::from).collect(),
-                        match archive_format {
-                            TransferArchiveFormat::Tar => CompressionType::None,
-                            TransferArchiveFormat::TarGz => CompressionType::Gz,
-                            TransferArchiveFormat::TarXz => CompressionType::Xz,
-                            TransferArchiveFormat::TarBz2 => CompressionType::Bz2,
-                            TransferArchiveFormat::TarLz4 => CompressionType::Lz4,
-                            TransferArchiveFormat::TarZstd => CompressionType::Zstd,
-                        },
-                        compression_level,
                         Some(Arc::clone(&bytes_archived)),
                         vec![],
-                        server.app_state.config.api.file_compression_threads,
+                        crate::server::filesystem::archive::create::CreateTarOptions {
+                            compression_type: match archive_format {
+                                TransferArchiveFormat::Tar => CompressionType::None,
+                                TransferArchiveFormat::TarGz => CompressionType::Gz,
+                                TransferArchiveFormat::TarXz => CompressionType::Xz,
+                                TransferArchiveFormat::TarBz2 => CompressionType::Bz2,
+                                TransferArchiveFormat::TarLz4 => CompressionType::Lz4,
+                                TransferArchiveFormat::TarZstd => CompressionType::Zstd,
+                            },
+                            compression_level,
+                            threads: server.app_state.config.api.file_compression_threads,
+                        }
                     )
                     .await
                 }

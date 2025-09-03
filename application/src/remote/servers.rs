@@ -90,7 +90,7 @@ pub async fn set_server_transfer(
     client: &Client,
     uuid: uuid::Uuid,
     successful: bool,
-    backups: Vec<uuid::Uuid>,
+    backups: &[uuid::Uuid],
 ) -> Result<(), anyhow::Error> {
     client
         .client

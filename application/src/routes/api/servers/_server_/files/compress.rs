@@ -166,47 +166,60 @@ mod post {
                             | ArchiveFormat::TarBz2
                             | ArchiveFormat::TarLz4
                             | ArchiveFormat::TarZstd => {
-                                crate::server::filesystem::archive::Archive::create_tar(
+                                crate::server::filesystem::archive::create::create_tar(
                                     server.filesystem.clone(),
                                     writer,
                                     &root,
                                     data.files.into_iter().map(PathBuf::from).collect(),
-                                    match data.format {
-                                        ArchiveFormat::Tar => CompressionType::None,
-                                        ArchiveFormat::TarGz => CompressionType::Gz,
-                                        ArchiveFormat::TarXz => CompressionType::Xz,
-                                        ArchiveFormat::TarBz2 => CompressionType::Bz2,
-                                        ArchiveFormat::TarLz4 => CompressionType::Lz4,
-                                        ArchiveFormat::TarZstd => CompressionType::Zstd,
-                                        _ => unreachable!(),
-                                    },
-                                    state.config.system.backups.compression_level,
                                     Some(progress),
                                     vec![ignored],
-                                    state.config.api.file_compression_threads,
+                                    crate::server::filesystem::archive::create::CreateTarOptions {
+                                        compression_type: match data.format {
+                                            ArchiveFormat::Tar => CompressionType::None,
+                                            ArchiveFormat::TarGz => CompressionType::Gz,
+                                            ArchiveFormat::TarXz => CompressionType::Xz,
+                                            ArchiveFormat::TarBz2 => CompressionType::Bz2,
+                                            ArchiveFormat::TarLz4 => CompressionType::Lz4,
+                                            ArchiveFormat::TarZstd => CompressionType::Zstd,
+                                            _ => unreachable!(),
+                                        },
+                                        compression_level: state
+                                            .config
+                                            .system
+                                            .backups
+                                            .compression_level,
+                                        threads: state.config.api.file_compression_threads,
+                                    },
                                 )
                                 .await
                             }
                             ArchiveFormat::Zip => {
-                                crate::server::filesystem::archive::Archive::create_zip(
+                                crate::server::filesystem::archive::create::create_zip(
                                     server.filesystem.clone(),
                                     writer,
                                     &root,
                                     data.files.into_iter().map(PathBuf::from).collect(),
-                                    state.config.system.backups.compression_level,
                                     Some(progress),
                                     vec![ignored],
+                                    crate::server::filesystem::archive::create::CreateZipOptions {
+                                        compression_level: state
+                                            .config
+                                            .system
+                                            .backups
+                                            .compression_level,
+                                    },
                                 )
                                 .await
                             }
                             ArchiveFormat::SevenZip => {
-                                crate::server::filesystem::archive::Archive::create_7z(
+                                crate::server::filesystem::archive::create::create_7z(
                                     server.filesystem.clone(),
                                     writer,
                                     &root,
                                     data.files.into_iter().map(PathBuf::from).collect(),
                                     Some(progress),
                                     vec![ignored],
+                                    crate::server::filesystem::archive::create::Create7zOptions {},
                                 )
                                 .await
                             }

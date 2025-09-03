@@ -174,26 +174,38 @@ impl ExecSession {
                                 }
                             })
                             .await??;
-                            crate::server::filesystem::archive::Archive::create_tar(
+                            crate::server::filesystem::archive::create::create_tar(
                                 self.server.filesystem.clone(),
                                 writer,
                                 base,
                                 paths,
-                                match destination.extension().and_then(|s| s.to_str()) {
-                                    Some("tar") => CompressionType::None,
-                                    Some("gz") => CompressionType::Gz,
-                                    Some("xz") => CompressionType::Xz,
-                                    Some("bz2") => CompressionType::Bz2,
-                                    Some("lz4") => CompressionType::Lz4,
-                                    Some("zst") => CompressionType::Zstd,
-                                    _ => {
-                                        return Err(anyhow::anyhow!("Unsupported archive format."));
-                                    }
-                                },
-                                self.state.config.system.backups.compression_level,
                                 None,
                                 vec![self.server.filesystem.get_ignored().await],
-                                self.state.config.api.file_compression_threads,
+                                crate::server::filesystem::archive::create::CreateTarOptions {
+                                    compression_type: match destination
+                                        .extension()
+                                        .and_then(|s| s.to_str())
+                                    {
+                                        Some("tar") => CompressionType::None,
+                                        Some("gz") => CompressionType::Gz,
+                                        Some("xz") => CompressionType::Xz,
+                                        Some("bz2") => CompressionType::Bz2,
+                                        Some("lz4") => CompressionType::Lz4,
+                                        Some("zst") => CompressionType::Zstd,
+                                        _ => {
+                                            return Err(anyhow::anyhow!(
+                                                "Unsupported archive format."
+                                            ));
+                                        }
+                                    },
+                                    compression_level: self
+                                        .state
+                                        .config
+                                        .system
+                                        .backups
+                                        .compression_level,
+                                    threads: self.state.config.api.file_compression_threads,
+                                },
                             )
                             .await?;
 

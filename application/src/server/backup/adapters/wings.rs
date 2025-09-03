@@ -150,26 +150,7 @@ impl BackupCreateExt for WingsBackup {
         _ignore_raw: String,
     ) -> Result<RawServerBackup, anyhow::Error> {
         let file_name = Self::get_file_name(&server.app_state.config, uuid);
-        let mut file = tokio::fs::File::create(&file_name).await?;
-
-        let (mut checksum_reader, checksum_writer) = tokio::io::duplex(crate::BUFFER_SIZE);
-
-        let checksum_task = async {
-            let mut sha1 = sha1::Sha1::new();
-
-            let mut buffer = vec![0; crate::BUFFER_SIZE];
-            loop {
-                let bytes_read = checksum_reader.read(&mut buffer).await?;
-                if bytes_read == 0 {
-                    break;
-                }
-
-                sha1.update(&buffer[..bytes_read]);
-                file.write_all(&buffer[..bytes_read]).await?;
-            }
-
-            Ok::<_, anyhow::Error>(format!("{:x}", sha1.finalize()))
-        };
+        let file = tokio::fs::File::create(&file_name).await?.into_std().await;
 
         let total_task = {
             let server = server.clone();
@@ -202,9 +183,8 @@ impl BackupCreateExt for WingsBackup {
 
         let archive_task = async move {
             let sources = server.filesystem.async_read_dir_all(Path::new("")).await?;
-            let writer = tokio_util::io::SyncIoBridge::new(checksum_writer);
             let writer = LimitedWriter::new_with_bytes_per_second(
-                writer,
+                file,
                 server.app_state.config.system.backups.write_limit * 1024 * 1024,
             );
 
@@ -212,51 +192,83 @@ impl BackupCreateExt for WingsBackup {
                 crate::config::SystemBackupsWingsArchiveFormat::Tar
                 | crate::config::SystemBackupsWingsArchiveFormat::TarGz
                 | crate::config::SystemBackupsWingsArchiveFormat::TarZstd => {
-                    crate::server::filesystem::archive::Archive::create_tar(
+                    crate::server::filesystem::archive::create::create_tar(
                         server.filesystem.clone(),
                         writer,
                         Path::new(""),
                         sources.into_iter().map(PathBuf::from).collect(),
-                        match server.app_state.config.system.backups.wings.archive_format {
-                            crate::config::SystemBackupsWingsArchiveFormat::Tar => {
-                                CompressionType::None
-                            }
-                            crate::config::SystemBackupsWingsArchiveFormat::TarGz => {
-                                CompressionType::Gz
-                            }
-                            crate::config::SystemBackupsWingsArchiveFormat::TarZstd => {
-                                CompressionType::Zstd
-                            }
-                            _ => unreachable!(),
-                        },
-                        server.app_state.config.system.backups.compression_level,
                         Some(progress),
                         vec![ignore],
-                        server.app_state.config.system.backups.wings.create_threads,
+                        crate::server::filesystem::archive::create::CreateTarOptions {
+                            compression_type: match server
+                                .app_state
+                                .config
+                                .system
+                                .backups
+                                .wings
+                                .archive_format
+                            {
+                                crate::config::SystemBackupsWingsArchiveFormat::Tar => {
+                                    CompressionType::None
+                                }
+                                crate::config::SystemBackupsWingsArchiveFormat::TarGz => {
+                                    CompressionType::Gz
+                                }
+                                crate::config::SystemBackupsWingsArchiveFormat::TarZstd => {
+                                    CompressionType::Zstd
+                                }
+                                _ => unreachable!(),
+                            },
+                            compression_level: server
+                                .app_state
+                                .config
+                                .system
+                                .backups
+                                .compression_level,
+                            threads: server.app_state.config.system.backups.wings.create_threads,
+                        },
                     )
                     .await
                 }
                 crate::config::SystemBackupsWingsArchiveFormat::Zip => {
-                    crate::server::filesystem::archive::Archive::create_zip(
+                    crate::server::filesystem::archive::create::create_zip(
                         server.filesystem.clone(),
                         writer,
                         Path::new(""),
                         sources.into_iter().map(PathBuf::from).collect(),
-                        server.app_state.config.system.backups.compression_level,
                         Some(progress),
                         vec![ignore],
+                        crate::server::filesystem::archive::create::CreateZipOptions {
+                            compression_level: server
+                                .app_state
+                                .config
+                                .system
+                                .backups
+                                .compression_level,
+                        },
                     )
                     .await
                 }
             }
         };
 
-        let (checksum, total_files, _) = tokio::try_join!(checksum_task, total_task, archive_task)?;
+        let (total_files, _) = tokio::try_join!(total_task, archive_task)?;
+
+        let mut checksum_writer = sha1::Sha1::new();
+        let mut file = tokio::fs::File::open(&file_name).await?;
+        let mut buffer = vec![0; crate::BUFFER_SIZE];
+
+        loop {
+            match file.read(&mut buffer).await? {
+                0 => break,
+                bytes_read => checksum_writer.write_all(&buffer[bytes_read..])?,
+            }
+        }
 
         Ok(RawServerBackup {
-            checksum,
+            checksum: format!("{:x}", checksum_writer.finalize()),
             checksum_type: "sha1".to_string(),
-            size: file.metadata().await?.len(),
+            size: tokio::fs::metadata(file_name).await?.len(),
             files: total_files,
             successful: true,
             parts: vec![],

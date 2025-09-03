@@ -172,16 +172,19 @@ mod get {
 
             match data.archive_format {
                 StreamableArchiveFormat::Zip => {
-                    if let Err(err) = crate::server::filesystem::archive::Archive::create_zip(
-                        server.filesystem.clone(),
-                        writer,
-                        &path,
-                        sources.into_iter().map(PathBuf::from).collect(),
-                        state.config.system.backups.compression_level,
-                        None,
-                        vec![ignored],
-                    )
-                    .await
+                    if let Err(err) =
+                        crate::server::filesystem::archive::create::create_zip_streaming(
+                            server.filesystem.clone(),
+                            writer,
+                            &path,
+                            sources.into_iter().map(PathBuf::from).collect(),
+                            None,
+                            vec![ignored],
+                            crate::server::filesystem::archive::create::CreateZipOptions {
+                                compression_level: state.config.system.backups.compression_level,
+                            },
+                        )
+                        .await
                     {
                         tracing::error!(
                             server = %server.uuid,
@@ -191,16 +194,18 @@ mod get {
                     }
                 }
                 _ => {
-                    if let Err(err) = crate::server::filesystem::archive::Archive::create_tar(
+                    if let Err(err) = crate::server::filesystem::archive::create::create_tar(
                         server.filesystem.clone(),
                         writer,
                         &path,
                         sources.into_iter().map(PathBuf::from).collect(),
-                        data.archive_format.compression_format(),
-                        state.config.system.backups.compression_level,
                         None,
                         vec![ignored],
-                        state.config.api.file_compression_threads,
+                        crate::server::filesystem::archive::create::CreateTarOptions {
+                            compression_type: data.archive_format.compression_format(),
+                            compression_level: state.config.system.backups.compression_level,
+                            threads: state.config.api.file_compression_threads,
+                        },
                     )
                     .await
                     {
