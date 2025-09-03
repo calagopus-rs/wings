@@ -137,6 +137,10 @@ docker:
   installer_limits:
     # how long in seconds to wait until an install container is considered failed, 0 means no limit
     timeout_seconds: 1800
+
+remote_query:
+  # how often to attempt retrying some important api requests (exponential backoff)
+  retry_limit: 10
 ```
 
 ## added features
