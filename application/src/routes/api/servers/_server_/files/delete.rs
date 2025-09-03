@@ -13,9 +13,9 @@ mod post {
     #[derive(ToSchema, Deserialize)]
     pub struct Payload {
         #[serde(default)]
-        pub root: String,
+        root: String,
 
-        pub files: Vec<String>,
+        files: Vec<String>,
     }
 
     #[derive(ToSchema, Serialize)]

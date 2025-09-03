@@ -261,7 +261,7 @@ impl BackupCreateExt for WingsBackup {
         loop {
             match file.read(&mut buffer).await? {
                 0 => break,
-                bytes_read => checksum_writer.write_all(&buffer[bytes_read..])?,
+                bytes_read => checksum_writer.write_all(&buffer[..bytes_read])?,
             }
         }
 
