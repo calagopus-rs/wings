@@ -39,7 +39,15 @@ async fn get_client(server: &crate::server::Server) -> Arc<reqwest::Client> {
 
     let client = Arc::new(
         reqwest::ClientBuilder::new()
-            .timeout(std::time::Duration::from_secs(2 * 60 * 60))
+            .timeout(std::time::Duration::from_secs(
+                server
+                    .app_state
+                    .config
+                    .system
+                    .backups
+                    .s3
+                    .part_upload_timeout,
+            ))
             .danger_accept_invalid_certs(server.app_state.config.ignore_certificate_errors)
             .build()
             .unwrap(),
@@ -218,7 +226,7 @@ impl BackupCreateExt for S3Backup {
                 crate::server::filesystem::archive::create::CreateTarOptions {
                     compression_type: CompressionType::Gz,
                     compression_level: server.app_state.config.system.backups.compression_level,
-                    threads: server.app_state.config.system.backups.wings.create_threads,
+                    threads: server.app_state.config.system.backups.s3.create_threads,
                 },
             )
             .await
@@ -244,8 +252,11 @@ impl BackupCreateExt for S3Backup {
             let mut attempts = 0;
             loop {
                 attempts += 1;
-                if attempts > 50 {
-                    return Err(anyhow::anyhow!("Failed to upload part after 50 attempts"));
+                if attempts > server.app_state.config.system.backups.s3.retry_limit {
+                    return Err(anyhow::anyhow!(
+                        "failed to upload s3 part after {} attempts",
+                        server.app_state.config.system.backups.s3.retry_limit
+                    ));
                 }
 
                 tracing::debug!(
@@ -308,7 +319,7 @@ impl BackupCreateExt for S3Backup {
                             err
                         );
 
-                        tokio::time::sleep(std::time::Duration::from_secs(attempts * 2)).await;
+                        tokio::time::sleep(std::time::Duration::from_secs(attempts.pow(2))).await;
                     }
                 }
             }

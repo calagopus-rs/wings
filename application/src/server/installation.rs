@@ -382,22 +382,8 @@ pub async fn install_server(
     *container_id.lock().await = Some(container.id.clone());
 
     match tokio::time::timeout(
-        if server
-            .app_state
-            .config
-            .docker
-            .installer_limits
-            .timeout_seconds
-            > 0
-        {
-            std::time::Duration::from_secs(
-                server
-                    .app_state
-                    .config
-                    .docker
-                    .installer_limits
-                    .timeout_seconds,
-            )
+        if server.app_state.config.docker.installer_limits.timeout > 0 {
+            std::time::Duration::from_secs(server.app_state.config.docker.installer_limits.timeout)
         } else {
             std::time::Duration::MAX
         },
@@ -682,22 +668,8 @@ pub async fn attach_install_container(
     };
 
     if let Err(err) = tokio::time::timeout(
-        if server
-            .app_state
-            .config
-            .docker
-            .installer_limits
-            .timeout_seconds
-            > 0
-        {
-            std::time::Duration::from_secs(
-                server
-                    .app_state
-                    .config
-                    .docker
-                    .installer_limits
-                    .timeout_seconds,
-            )
+        if server.app_state.config.docker.installer_limits.timeout > 0 {
+            std::time::Duration::from_secs(server.app_state.config.docker.installer_limits.timeout)
         } else {
             std::time::Duration::MAX
         },

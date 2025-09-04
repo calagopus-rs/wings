@@ -838,7 +838,7 @@ impl BackupBrowseExt for BrowseWingsBackup {
             let runtime = tokio::runtime::Handle::current();
             let mut entry = archive.by_name(&path.to_string_lossy()).unwrap();
 
-            let mut buffer = [0; 8192];
+            let mut buffer = vec![0; crate::BUFFER_SIZE];
             loop {
                 match entry.read(&mut buffer) {
                     Ok(0) => break,

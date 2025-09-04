@@ -1,6 +1,6 @@
 [package]
 name = "wings-rs"
-version = "0.19.6"
+version = "0.19.7"
 edition = "2024"
 
 [dependencies]
@@ -64,7 +64,7 @@ content_disposition = "0.4.0"
 cron = { version = "0.15.0", features = ["serde"] }
 chrono-tz = "0.10.4"
 gzp = "1.0.1"
-lzma-rust2 = { version = "0.11.0", features = ["optimization"] }
+lzma-rust2 = { version = "0.13.0", features = ["optimization"] }
 bzip2 = "0.6.0"
 lz4 = "1.28.1"
 zstd = { version = "0.13.3", features = ["zstdmt"] }

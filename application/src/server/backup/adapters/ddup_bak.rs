@@ -365,7 +365,7 @@ impl BackupCreateExt for DdupBakBackup {
         let mut sha1 = sha1::Sha1::new();
         let mut file = tokio::fs::File::open(path).await?;
 
-        let mut buffer = [0; 8192];
+        let mut buffer = vec![0; crate::BUFFER_SIZE];
         loop {
             let bytes_read = file.read(&mut buffer).await?;
             if bytes_read == 0 {
@@ -893,7 +893,7 @@ impl BackupBrowseExt for BrowseDdupBakBackup {
         tokio::task::spawn_blocking(move || {
             let runtime = tokio::runtime::Handle::current();
 
-            let mut buffer = [0; 8192];
+            let mut buffer = vec![0; crate::BUFFER_SIZE];
             loop {
                 match entry_reader.read(&mut buffer) {
                     Ok(0) => break,

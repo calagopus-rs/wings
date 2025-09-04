@@ -1156,11 +1156,12 @@ impl russh_sftp::server::Handler for SftpSession {
                         }
                     }
 
+                    let mut buffer = vec![0; crate::BUFFER_SIZE];
+
                     let hash: Vec<u8> = match hash_algorithm {
                         "md5" => {
                             let mut hasher = md5::Context::new();
 
-                            let mut buffer = [0; 8192];
                             loop {
                                 let bytes_read = file
                                     .read(&mut buffer)
@@ -1182,7 +1183,6 @@ impl russh_sftp::server::Handler for SftpSession {
                         "crc32" => {
                             let mut hasher = crc32fast::Hasher::new();
 
-                            let mut buffer = [0; 8192];
                             loop {
                                 let bytes_read = file
                                     .read(&mut buffer)
@@ -1204,7 +1204,6 @@ impl russh_sftp::server::Handler for SftpSession {
                         "sha1" => {
                             let mut hasher = sha1::Sha1::new();
 
-                            let mut buffer = [0; 8192];
                             loop {
                                 let bytes_read = file
                                     .read(&mut buffer)
@@ -1226,7 +1225,6 @@ impl russh_sftp::server::Handler for SftpSession {
                         "sha224" => {
                             let mut hasher = sha2::Sha224::new();
 
-                            let mut buffer = [0; 8192];
                             loop {
                                 let bytes_read = file
                                     .read(&mut buffer)
@@ -1248,7 +1246,6 @@ impl russh_sftp::server::Handler for SftpSession {
                         "sha256" => {
                             let mut hasher = sha2::Sha256::new();
 
-                            let mut buffer = [0; 8192];
                             loop {
                                 let bytes_read = file
                                     .read(&mut buffer)
@@ -1270,7 +1267,6 @@ impl russh_sftp::server::Handler for SftpSession {
                         "sha384" => {
                             let mut hasher = sha2::Sha384::new();
 
-                            let mut buffer = [0; 8192];
                             loop {
                                 let bytes_read = file
                                     .read(&mut buffer)
@@ -1292,7 +1288,6 @@ impl russh_sftp::server::Handler for SftpSession {
                         "sha512" => {
                             let mut hasher = sha2::Sha512::new();
 
-                            let mut buffer = [0; 8192];
                             loop {
                                 let bytes_read = file
                                     .read(&mut buffer)

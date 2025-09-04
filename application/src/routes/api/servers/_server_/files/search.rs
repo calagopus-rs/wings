@@ -90,6 +90,7 @@ mod post {
                         let results = Arc::clone(&results);
                         let query = Arc::clone(&query);
                         let root = Arc::clone(&root);
+                        let mut buffer = vec![0; crate::BUFFER_SIZE];
 
                         async move {
                             if is_dir || results.read().await.len() >= limit {
@@ -121,7 +122,6 @@ mod post {
                             }
 
                             if data.include_content && metadata.len() <= max_size {
-                                let mut buffer = [0; 8192];
                                 let mut file = match server.filesystem.async_open(&path).await {
                                     Ok(file) => file,
                                     Err(_) => return Ok(()),

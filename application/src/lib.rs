@@ -12,7 +12,7 @@ pub mod ssh;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const GIT_COMMIT: &str = env!("CARGO_GIT_COMMIT");
-pub const BUFFER_SIZE: usize = 16 * 1024;
+pub const BUFFER_SIZE: usize = 32 * 1024;
 
 #[inline]
 pub fn is_valid_utf8_slice(s: &[u8]) -> bool {

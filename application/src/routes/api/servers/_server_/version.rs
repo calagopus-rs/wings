@@ -137,14 +137,13 @@ mod get {
                 };
 
                 let mut hasher = sha2::Sha256::new();
-                let mut buffer = [0; 8192];
-                loop {
-                    let bytes_read = file.read(&mut buffer).await?;
-                    if bytes_read == 0 {
-                        break;
-                    }
+                let mut buffer = vec![0; crate::BUFFER_SIZE];
 
-                    hasher.update(&buffer[..bytes_read]);
+                loop {
+                    match file.read(&mut buffer).await? {
+                        0 => break,
+                        bytes_read => hasher.update(&buffer[..bytes_read]),
+                    }
                 }
 
                 ApiResponse::json(Response {

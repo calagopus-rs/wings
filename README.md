@@ -89,6 +89,15 @@ system:
       # tar, tar_gz, tar_zstd, zip
       archive_format: tar_gz
 
+    # settings for the s3 backup driver
+    s3:
+      # how many threads to use when creating a .gz s3 backup
+      create_threads: 4
+      # how long in seconds to wait until a backup part is uploaded to s3
+      part_upload_timeout: 7200
+      # how often to attempt retrying each failed backup part
+      retry_limit: 10
+
     # settings for the ddup-bak backup driver
     ddup_bak:
       # how many threads to use when creating a ddup-bak backup
@@ -136,7 +145,7 @@ docker:
 
   installer_limits:
     # how long in seconds to wait until an install container is considered failed, 0 means no limit
-    timeout_seconds: 1800
+    timeout: 1800
 
 remote_query:
   # how often to attempt retrying some important api requests (exponential backoff)

@@ -76,13 +76,15 @@ mod get {
                 Err(_) => continue,
             };
 
+            let mut buffer = vec![0; crate::BUFFER_SIZE];
+
             fingerprint_handles.push(async move {
                 Ok::<_, std::io::Error>((
                     path_raw,
                     match data.algorithm {
                         Algorithm::Md5 => {
                             let mut hasher = md5::Context::new();
-                            let mut buffer = [0; 8192];
+
                             loop {
                                 let bytes_read = file.read(&mut buffer).await?;
                                 if bytes_read == 0 {
@@ -96,7 +98,7 @@ mod get {
                         }
                         Algorithm::Crc32 => {
                             let mut hasher = crc32fast::Hasher::new();
-                            let mut buffer = [0; 8192];
+
                             loop {
                                 let bytes_read = file.read(&mut buffer).await?;
                                 if bytes_read == 0 {
@@ -110,7 +112,7 @@ mod get {
                         }
                         Algorithm::Sha1 => {
                             let mut hasher = sha1::Sha1::new();
-                            let mut buffer = [0; 8192];
+
                             loop {
                                 let bytes_read = file.read(&mut buffer).await?;
                                 if bytes_read == 0 {
@@ -124,7 +126,7 @@ mod get {
                         }
                         Algorithm::Sha224 => {
                             let mut hasher = sha2::Sha224::new();
-                            let mut buffer = [0; 8192];
+
                             loop {
                                 let bytes_read = file.read(&mut buffer).await?;
                                 if bytes_read == 0 {
@@ -138,7 +140,7 @@ mod get {
                         }
                         Algorithm::Sha256 => {
                             let mut hasher = sha2::Sha256::new();
-                            let mut buffer = [0; 8192];
+
                             loop {
                                 let bytes_read = file.read(&mut buffer).await?;
                                 if bytes_read == 0 {
@@ -152,7 +154,7 @@ mod get {
                         }
                         Algorithm::Sha384 => {
                             let mut hasher = sha2::Sha384::new();
-                            let mut buffer = [0; 8192];
+
                             loop {
                                 let bytes_read = file.read(&mut buffer).await?;
                                 if bytes_read == 0 {
@@ -166,7 +168,7 @@ mod get {
                         }
                         Algorithm::Sha512 => {
                             let mut hasher = sha2::Sha512::new();
-                            let mut buffer = [0; 8192];
+
                             loop {
                                 let bytes_read = file.read(&mut buffer).await?;
                                 if bytes_read == 0 {
@@ -186,7 +188,6 @@ mod get {
 
                             const MULTIPLEX: u32 = 1540483477;
 
-                            let mut buffer = [0; 8192];
                             let mut normalized_length: u32 = 0;
 
                             loop {

@@ -10,7 +10,7 @@ use tokio::io::AsyncWrite;
 pub enum CompressionWriter<'a, W: Write + Send + 'static> {
     None(W),
     Gz(gzp::par::compress::ParCompress<gzp::deflate::Gzip>),
-    Xz(Box<lzma_rust2::XZWriterMT<W>>),
+    Xz(Box<lzma_rust2::XzWriterMt<W>>),
     Bz2(bzip2::write::BzEncoder<W>),
     Lz4(lz4::Encoder<W>),
     Zstd(zstd::Encoder<'a, W>),
@@ -33,11 +33,11 @@ impl<'a, W: Write + Send + 'static> CompressionWriter<'a, W> {
                     .from_writer(writer),
             ),
             CompressionType::Xz => CompressionWriter::Xz(Box::new(
-                lzma_rust2::XZWriterMT::new(
+                lzma_rust2::XzWriterMt::new(
                     writer,
                     {
                         let mut options =
-                            lzma_rust2::XZOptions::with_preset(match compression_level {
+                            lzma_rust2::XzOptions::with_preset(match compression_level {
                                 CompressionLevel::BestSpeed => 1,
                                 CompressionLevel::GoodSpeed => 4,
                                 CompressionLevel::GoodCompression => 6,

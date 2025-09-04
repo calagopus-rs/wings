@@ -9,7 +9,7 @@ use tokio::io::{AsyncRead, ReadBuf};
 pub enum CompressionReader<'a, R: Read> {
     None(R),
     Gz(flate2::read::MultiGzDecoder<R>),
-    Xz(Box<lzma_rust2::XZReader<R>>),
+    Xz(Box<lzma_rust2::XzReader<R>>),
     Bz2(bzip2::read::MultiBzDecoder<R>),
     Lz4(lz4::Decoder<R>),
     Zstd(zstd::Decoder<'a, std::io::BufReader<R>>),
@@ -21,7 +21,7 @@ impl<'a, R: Read> CompressionReader<'a, R> {
             CompressionType::None => CompressionReader::None(reader),
             CompressionType::Gz => CompressionReader::Gz(flate2::read::MultiGzDecoder::new(reader)),
             CompressionType::Xz => {
-                CompressionReader::Xz(Box::new(lzma_rust2::XZReader::new(reader, true)))
+                CompressionReader::Xz(Box::new(lzma_rust2::XzReader::new(reader, true)))
             }
             CompressionType::Bz2 => {
                 CompressionReader::Bz2(bzip2::read::MultiBzDecoder::new(reader))

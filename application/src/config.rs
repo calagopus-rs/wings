@@ -159,6 +159,16 @@ fn system_backup_wings_restore_threads() -> usize {
     4
 }
 
+fn system_backup_s3_create_threads() -> usize {
+    4
+}
+fn system_backup_s3_part_upload_timeout() -> u64 {
+    2 * 60 * 60
+}
+fn system_backup_s3_retry_limit() -> u64 {
+    10
+}
+
 fn system_backup_ddup_bak_create_threads() -> usize {
     4
 }
@@ -233,7 +243,7 @@ fn docker_container_pid_limit() -> u64 {
     512
 }
 
-fn docker_installer_limits_timeout_seconds() -> u64 {
+fn docker_installer_limits_timeout() -> u64 {
     30 * 60
 }
 fn docker_installer_limits_memory() -> u64 {
@@ -481,6 +491,15 @@ nestify::nest! {
                     },
                 },
                 #[serde(default)]
+                pub s3: #[derive(Deserialize, Serialize, DefaultFromSerde)] #[serde(default)] pub struct SystemBackupsS3 {
+                    #[serde(default = "system_backup_s3_create_threads")]
+                    pub create_threads: usize,
+                    #[serde(default = "system_backup_s3_part_upload_timeout")]
+                    pub part_upload_timeout: u64,
+                    #[serde(default = "system_backup_s3_retry_limit")]
+                    pub retry_limit: u64,
+                },
+                #[serde(default)]
                 pub ddup_bak: #[derive(Deserialize, Serialize, DefaultFromSerde)] #[serde(default)] pub struct SystemBackupsDdupBak {
                     #[serde(default = "system_backup_ddup_bak_create_threads")]
                     pub create_threads: usize,
@@ -595,8 +614,8 @@ nestify::nest! {
 
             #[serde(default)]
             pub installer_limits: #[derive(Deserialize, Serialize, DefaultFromSerde)] #[serde(default)] pub struct DockerInstallerLimits {
-                #[serde(default = "docker_installer_limits_timeout_seconds")]
-                pub timeout_seconds: u64,
+                #[serde(default = "docker_installer_limits_timeout")]
+                pub timeout: u64,
 
                 #[serde(default = "docker_installer_limits_memory")]
                 /// MiB
