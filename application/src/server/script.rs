@@ -28,6 +28,7 @@ async fn container_config(
         resources.memory = None;
         resources.memory_reservation =
             Some(server.app_state.config.docker.installer_limits.memory as i64 * 1024 * 1024);
+        resources.memory_swap = None;
     }
 
     if resources.cpu_quota.is_some_and(|c| {
