@@ -29,7 +29,7 @@ pub async fn create_7z(
         let writer = AbortWriter::new(destination, listener);
         let mut archive = sevenz_rust2::ArchiveWriter::new(writer)?;
 
-        'sources: for source in sources {
+        for source in sources {
             let relative = source;
             let source = base.join(&relative);
 
@@ -38,13 +38,11 @@ pub async fn create_7z(
                 Err(_) => continue,
             };
 
-            for ignored in &ignored {
-                if ignored
-                    .matched(&source, source_metadata.is_dir())
-                    .is_ignore()
-                {
-                    continue 'sources;
-                }
+            if ignored
+                .iter()
+                .any(|i| i.matched(&source, source_metadata.is_dir()).is_ignore())
+            {
+                continue;
             }
 
             let mut entry = sevenz_rust2::ArchiveEntry::new();

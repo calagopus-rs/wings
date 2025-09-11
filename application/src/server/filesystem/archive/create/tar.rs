@@ -42,7 +42,7 @@ pub async fn create_tar(
         let writer = AbortWriter::new(writer, listener);
         let mut archive = tar::Builder::new(writer);
 
-        'sources: for source in sources {
+        for source in sources {
             let relative = source;
             let source = base.join(&relative);
 
@@ -51,13 +51,11 @@ pub async fn create_tar(
                 Err(_) => continue,
             };
 
-            for ignored in &ignored {
-                if ignored
-                    .matched(&source, source_metadata.is_dir())
-                    .is_ignore()
-                {
-                    continue 'sources;
-                }
+            if ignored
+                .iter()
+                .any(|i| i.matched(&source, source_metadata.is_dir()).is_ignore())
+            {
+                continue;
             }
 
             let mut header = tar::Header::new_gnu();

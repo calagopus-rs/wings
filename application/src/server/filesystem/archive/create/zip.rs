@@ -34,7 +34,7 @@ pub async fn create_zip(
         let writer = AbortWriter::new(destination, listener);
         let mut archive = zip::ZipWriter::new(writer);
 
-        'sources: for source in sources {
+        for source in sources {
             let relative = source;
             let source = base.join(&relative);
 
@@ -43,13 +43,11 @@ pub async fn create_zip(
                 Err(_) => continue,
             };
 
-            for ignored in &ignored {
-                if ignored
-                    .matched(&source, source_metadata.is_dir())
-                    .is_ignore()
-                {
-                    continue 'sources;
-                }
+            if ignored
+                .iter()
+                .any(|i| i.matched(&source, source_metadata.is_dir()).is_ignore())
+            {
+                continue;
             }
 
             let mut zip_options: zip::write::FileOptions<'_, ()> =
@@ -61,14 +59,16 @@ pub async fn create_zip(
             if let Ok(mtime) = source_metadata.modified() {
                 let mtime: chrono::DateTime<chrono::Utc> = chrono::DateTime::from(mtime.into_std());
 
-                zip_options = zip_options.last_modified_time(zip::DateTime::from_date_and_time(
+                if let Ok(mtime) = zip::DateTime::from_date_and_time(
                     mtime.year() as u16,
                     mtime.month() as u8,
                     mtime.day() as u8,
                     mtime.hour() as u8,
                     mtime.minute() as u8,
                     mtime.second() as u8,
-                )?);
+                ) {
+                    zip_options = zip_options.last_modified_time(mtime);
+                }
             }
 
             if source_metadata.is_dir() {
@@ -101,15 +101,16 @@ pub async fn create_zip(
                         let mtime: chrono::DateTime<chrono::Utc> =
                             chrono::DateTime::from(mtime.into_std());
 
-                        zip_options =
-                            zip_options.last_modified_time(zip::DateTime::from_date_and_time(
-                                mtime.year() as u16,
-                                mtime.month() as u8,
-                                mtime.day() as u8,
-                                mtime.hour() as u8,
-                                mtime.minute() as u8,
-                                mtime.second() as u8,
-                            )?);
+                        if let Ok(mtime) = zip::DateTime::from_date_and_time(
+                            mtime.year() as u16,
+                            mtime.month() as u8,
+                            mtime.day() as u8,
+                            mtime.hour() as u8,
+                            mtime.minute() as u8,
+                            mtime.second() as u8,
+                        ) {
+                            zip_options = zip_options.last_modified_time(mtime);
+                        }
                     }
 
                     if metadata.is_dir() {
@@ -190,7 +191,7 @@ pub async fn create_zip_streaming(
         let writer = AbortWriter::new(destination, listener);
         let mut archive = zip::ZipWriter::new_stream(writer);
 
-        'sources: for source in sources {
+        for source in sources {
             let relative = source;
             let source = base.join(&relative);
 
@@ -199,13 +200,11 @@ pub async fn create_zip_streaming(
                 Err(_) => continue,
             };
 
-            for ignored in &ignored {
-                if ignored
-                    .matched(&source, source_metadata.is_dir())
-                    .is_ignore()
-                {
-                    continue 'sources;
-                }
+            if ignored
+                .iter()
+                .any(|i| i.matched(&source, source_metadata.is_dir()).is_ignore())
+            {
+                continue;
             }
 
             let mut zip_options: zip::write::FileOptions<'_, ()> =
@@ -217,14 +216,16 @@ pub async fn create_zip_streaming(
             if let Ok(mtime) = source_metadata.modified() {
                 let mtime: chrono::DateTime<chrono::Utc> = chrono::DateTime::from(mtime.into_std());
 
-                zip_options = zip_options.last_modified_time(zip::DateTime::from_date_and_time(
+                if let Ok(mtime) = zip::DateTime::from_date_and_time(
                     mtime.year() as u16,
                     mtime.month() as u8,
                     mtime.day() as u8,
                     mtime.hour() as u8,
                     mtime.minute() as u8,
                     mtime.second() as u8,
-                )?);
+                ) {
+                    zip_options = zip_options.last_modified_time(mtime);
+                }
             }
 
             if source_metadata.is_dir() {
@@ -257,15 +258,16 @@ pub async fn create_zip_streaming(
                         let mtime: chrono::DateTime<chrono::Utc> =
                             chrono::DateTime::from(mtime.into_std());
 
-                        zip_options =
-                            zip_options.last_modified_time(zip::DateTime::from_date_and_time(
-                                mtime.year() as u16,
-                                mtime.month() as u8,
-                                mtime.day() as u8,
-                                mtime.hour() as u8,
-                                mtime.minute() as u8,
-                                mtime.second() as u8,
-                            )?);
+                        if let Ok(mtime) = zip::DateTime::from_date_and_time(
+                            mtime.year() as u16,
+                            mtime.month() as u8,
+                            mtime.day() as u8,
+                            mtime.hour() as u8,
+                            mtime.minute() as u8,
+                            mtime.second() as u8,
+                        ) {
+                            zip_options = zip_options.last_modified_time(mtime);
+                        }
                     }
 
                     if metadata.is_dir() {
