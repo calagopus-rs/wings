@@ -100,6 +100,8 @@ nestify::nest! {
 
         #[schema(inline)]
         pub container: #[derive(ToSchema, Deserialize, Serialize)] pub struct ServerConfigurationContainer {
+            #[serde(default)]
+            pub privileged: bool,
             pub image: String,
             pub timezone: Option<String>,
         },
@@ -405,6 +407,7 @@ impl ServerConfiguration {
                 blkio_weight: resources.blkio_weight,
                 oom_kill_disable: resources.oom_kill_disable,
 
+                privileged: Some(self.container.privileged),
                 port_bindings: Some(self.convert_allocations_docker_bindings(config)),
                 mounts: Some(self.convert_mounts(config, filesystem)),
                 network_mode: Some(network_mode),

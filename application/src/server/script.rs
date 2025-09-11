@@ -61,6 +61,7 @@ async fn container_config(
             blkio_weight: resources.blkio_weight,
             oom_kill_disable: resources.oom_kill_disable,
 
+            privileged: Some(server.configuration.read().await.container.privileged),
             mounts: Some(vec![
                 bollard::models::Mount {
                     typ: Some(bollard::secret::MountTypeEnum::BIND),
