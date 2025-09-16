@@ -169,10 +169,7 @@ nestify::nest! {
 }
 
 impl ProcessConfiguration {
-    pub async fn update_files(
-        &self,
-        server: &crate::server::Server,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn update_files(&self, server: &crate::server::Server) -> Result<(), anyhow::Error> {
         tracing::info!(
             server = %server.uuid,
             "starting configuration file updates with {} configuration files",

@@ -4,6 +4,7 @@ use std::{collections::HashMap, path::PathBuf};
 use utoipa::ToSchema;
 
 pub mod process;
+pub mod seccomp;
 
 #[inline]
 pub fn string_to_option(s: &str) -> Option<String> {
@@ -104,6 +105,13 @@ nestify::nest! {
             pub privileged: bool,
             pub image: String,
             pub timezone: Option<String>,
+
+            #[serde(default)]
+            #[schema(inline)]
+            pub seccomp: #[derive(ToSchema, Deserialize, Serialize, DefaultFromSerde)] pub struct ServerConfigurationContainerSeccomp {
+                #[serde(default)]
+                pub remove_allowed: Vec<String>,
+            },
         },
 
         #[serde(default)]
@@ -430,7 +438,13 @@ impl ServerConfiguration {
                 }),
                 security_opt: Some(vec![
                     "no-new-privileges".to_string(),
-                    concat!("seccomp=", include_str!("../../../seccomp.min.json")).to_string(),
+                    seccomp::Seccomp::default()
+                        .remove_names(
+                            &self.container.seccomp.remove_allowed,
+                            seccomp::Action::Allow,
+                        )
+                        .to_string()
+                        .unwrap(),
                 ]),
                 cap_drop: Some(vec![
                     "setpcap".to_string(),
