@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 use std::sync::LazyLock;
 
 const RAW_BASE_SECCOMP: &str = include_str!("../../../seccomp.min.json");
-
 static BASE_SECCOMP: LazyLock<Seccomp> =
     LazyLock::new(|| serde_json::from_str(RAW_BASE_SECCOMP).unwrap());
 
@@ -117,7 +116,8 @@ impl Seccomp {
     }
 
     pub fn to_string(&self) -> Result<String, serde_json::Error> {
-        let mut string = Vec::with_capacity(RAW_BASE_SECCOMP.len());
+        let mut string = Vec::new();
+        string.reserve_exact(8 + RAW_BASE_SECCOMP.len());
         string.extend_from_slice(b"seccomp=");
         serde_json::to_writer(&mut string, &self)?;
 

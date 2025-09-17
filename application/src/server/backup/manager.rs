@@ -126,6 +126,8 @@ impl BackupManager {
             }
         }
 
+        ignore_raw.shrink_to_fit();
+
         let progress = Arc::new(AtomicU64::new(0));
         let total = Arc::new(AtomicU64::new(0));
 
@@ -207,6 +209,11 @@ impl BackupManager {
                             .to_string(),
                         ],
                     ))?;
+                self.cached_backup_adapters
+                    .write()
+                    .await
+                    .insert(uuid, adapter);
+
                 if let Err(err) = adapter.clean(server, uuid).await {
                     tracing::error!(server = %server.uuid, adapter = ?adapter, "failed to clean up backup {} after error: {:#?}", uuid, err);
                 }

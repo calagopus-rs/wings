@@ -87,7 +87,7 @@ mod get {
 
         let path = PathBuf::from(payload.file_path);
 
-        let mut folder_ascii = "".to_string();
+        let mut folder_ascii = String::new();
         for (i, file_path) in payload.file_paths.iter().enumerate() {
             let file_name = PathBuf::from(file_path)
                 .file_name()

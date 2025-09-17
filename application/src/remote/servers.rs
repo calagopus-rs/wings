@@ -23,6 +23,7 @@ pub async fn get_servers_paged(
             ))
             .send()
             .await?
+            .error_for_status()?
             .text()
             .await?,
     )?;
@@ -43,6 +44,7 @@ pub async fn get_server(client: &Client, uuid: uuid::Uuid) -> Result<RawServer, 
             .get(format!("{}/servers/{}", client.url, uuid))
             .send()
             .await?
+            .error_for_status()?
             .text()
             .await?,
     )?;
@@ -60,6 +62,7 @@ pub async fn get_server_install_script(
             .get(format!("{}/servers/{}/install", client.url, uuid))
             .send()
             .await?
+            .error_for_status()?
             .text()
             .await?,
     )?;
@@ -81,7 +84,8 @@ pub async fn set_server_install(
             "reinstall": reinstalled
         }))
         .send()
-        .await?;
+        .await?
+        .error_for_status()?;
 
     Ok(())
 }
@@ -104,7 +108,8 @@ pub async fn set_server_transfer(
             "backups": backups
         }))
         .send()
-        .await?;
+        .await?
+        .error_for_status()?;
 
     Ok(())
 }
@@ -123,7 +128,8 @@ pub async fn set_server_startup_variable(
             "value": value,
         }))
         .send()
-        .await?;
+        .await?
+        .error_for_status()?;
 
     Ok(())
 }
@@ -140,7 +146,8 @@ pub async fn set_server_startup_command(
             "command": command,
         }))
         .send()
-        .await?;
+        .await?
+        .error_for_status()?;
 
     Ok(())
 }
@@ -160,7 +167,8 @@ pub async fn set_server_startup_docker_image(
             "image": image,
         }))
         .send()
-        .await?;
+        .await?
+        .error_for_status()?;
 
     Ok(())
 }

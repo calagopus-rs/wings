@@ -614,6 +614,7 @@ impl BackupCleanExt for WingsBackup {
         }
 
         tokio::fs::remove_file(&file_name).await?;
+        tokio::fs::write(file_name, &[]).await?;
 
         Ok(())
     }

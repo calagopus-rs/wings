@@ -200,13 +200,14 @@ impl ServerConfiguration {
                     host_port: Some(port.to_string()),
                 };
 
-                let tcp = format!("{port}/tcp");
-                let udp = format!("{port}/udp");
-
-                let tcp_bindings = map.entry(tcp).or_insert_with(|| Some(Vec::new()));
+                let tcp_bindings = map
+                    .entry(format!("{port}/tcp"))
+                    .or_insert_with(|| Some(Vec::new()));
                 tcp_bindings.as_mut().unwrap().push(binding.clone());
 
-                let udp_bindings = map.entry(udp).or_insert_with(|| Some(Vec::new()));
+                let udp_bindings = map
+                    .entry(format!("{port}/udp"))
+                    .or_insert_with(|| Some(Vec::new()));
                 udp_bindings.as_mut().unwrap().push(binding);
             }
         }
@@ -247,17 +248,19 @@ impl ServerConfiguration {
         map
     }
 
-    fn convert_allocations_exposed(
-        &self,
-        config: &crate::config::Config,
-    ) -> std::collections::HashMap<String, HashMap<(), ()>> {
-        let mut out = std::collections::HashMap::new();
+    fn convert_allocations_exposed(&self) -> std::collections::HashMap<String, HashMap<(), ()>> {
+        let mut map = HashMap::new();
 
-        for port in self.convert_allocations_docker_bindings(config).keys() {
-            out.insert(port.clone(), HashMap::new());
+        for ports in self.allocations.mappings.values() {
+            for port in ports {
+                map.entry(format!("{port}/tcp"))
+                    .or_insert_with(HashMap::new);
+                map.entry(format!("{port}/udp"))
+                    .or_insert_with(HashMap::new);
+            }
         }
 
-        out
+        map
     }
 
     pub fn convert_container_resources(
@@ -312,8 +315,9 @@ impl ServerConfiguration {
             serde_json::Value::String(
                 self.container
                     .timezone
-                    .clone()
-                    .unwrap_or_else(|| config.system.timezone.clone()),
+                    .as_ref()
+                    .unwrap_or(&config.system.timezone)
+                    .clone(),
             ),
         );
         environment.insert(
@@ -402,7 +406,7 @@ impl ServerConfiguration {
         let resources = self.convert_container_resources(config);
 
         bollard::container::Config {
-            exposed_ports: Some(self.convert_allocations_exposed(config)),
+            exposed_ports: Some(self.convert_allocations_exposed()),
             host_config: Some(bollard::secret::HostConfig {
                 memory: resources.memory,
                 memory_reservation: resources.memory_reservation,

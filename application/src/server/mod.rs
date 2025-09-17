@@ -488,7 +488,7 @@ impl Server {
                 Some(bollard::container::CreateContainerOptions {
                     name: if self.app_state.config.docker.server_name_in_container_name {
                         let name = &self.configuration.read().await.meta.name;
-                        let mut name_filtered = "".to_string();
+                        let mut name_filtered = String::new();
                         for c in name.chars() {
                             if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
                                 name_filtered.push(c);

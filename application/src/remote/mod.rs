@@ -52,6 +52,7 @@ pub async fn get_sftp_auth(
             }))
             .send()
             .await?
+            .error_for_status()?
             .text()
             .await?,
     )?;
@@ -85,7 +86,8 @@ pub async fn send_activity(
             "data": activity,
         }))
         .send()
-        .await?;
+        .await?
+        .error_for_status()?;
 
     Ok(())
 }
@@ -101,7 +103,8 @@ pub async fn send_schedule_status(
             "data": schedules,
         }))
         .send()
-        .await?;
+        .await?
+        .error_for_status()?;
 
     Ok(())
 }
@@ -111,7 +114,8 @@ pub async fn reset_state(client: &Client) -> Result<(), anyhow::Error> {
         .client
         .post(format!("{}/servers/reset", client.url))
         .send()
-        .await?;
+        .await?
+        .error_for_status()?;
 
     Ok(())
 }

@@ -50,7 +50,8 @@ pub async fn set_backup_status(
         .post(format!("{}/backups/{}", client.url, uuid))
         .json(data)
         .send()
-        .await?;
+        .await?
+        .error_for_status()?;
 
     Ok(())
 }
@@ -67,7 +68,8 @@ pub async fn set_backup_restore_status(
             "successful": successful,
         }))
         .send()
-        .await?;
+        .await?
+        .error_for_status()?;
 
     Ok(())
 }
@@ -83,6 +85,7 @@ pub async fn backup_upload_urls(
             .get(format!("{}/backups/{}?size={}", client.url, uuid, size))
             .send()
             .await?
+            .error_for_status()?
             .text()
             .await?,
     )?;
@@ -106,6 +109,7 @@ pub async fn backup_restic_configuration(
             .get(format!("{}/backups/{}/restic", client.url, uuid))
             .send()
             .await?
+            .error_for_status()?
             .text()
             .await?,
     )?;
@@ -129,6 +133,7 @@ pub async fn create_backup(
             }))
             .send()
             .await?
+            .error_for_status()?
             .text()
             .await?,
     )?;

@@ -5,10 +5,16 @@ mod delete {
     use crate::{
         response::{ApiResponse, ApiResponseResult},
         routes::{ApiError, GetState},
+        server::backup::adapters::BackupAdapter,
     };
     use axum::{extract::Path, http::StatusCode};
-    use serde::Serialize;
+    use serde::{Deserialize, Serialize};
     use utoipa::ToSchema;
+
+    #[derive(ToSchema, Deserialize)]
+    pub struct Payload {
+        adapter: BackupAdapter,
+    }
 
     #[derive(ToSchema, Serialize)]
     struct Response {}
@@ -22,9 +28,17 @@ mod delete {
             description = "The backup uuid",
             example = "123e4567-e89b-12d3-a456-426614174000",
         ),
-    ))]
-    pub async fn route(state: GetState, Path(backup_id): Path<uuid::Uuid>) -> ApiResponseResult {
-        let backup = match state.backup_manager.find(backup_id).await? {
+    ), request_body = inline(Payload))]
+    pub async fn route(
+        state: GetState,
+        Path(backup_id): Path<uuid::Uuid>,
+        axum::Json(data): axum::Json<Payload>,
+    ) -> ApiResponseResult {
+        let backup = match state
+            .backup_manager
+            .find_adapter(data.adapter, backup_id)
+            .await?
+        {
             Some(backup) => backup,
             None => {
                 return ApiResponse::error("backup not found")
