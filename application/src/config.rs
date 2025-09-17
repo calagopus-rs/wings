@@ -24,6 +24,9 @@ fn api_host() -> std::net::IpAddr {
 fn api_port() -> u16 {
     8080
 }
+fn api_server_remote_download_limit() -> usize {
+    3
+}
 fn api_remote_download_blocked_cidrs() -> Vec<cidr::IpCidr> {
     Vec::from([
         cidr::IpCidr::from_str("127.0.0.0/8").unwrap(),
@@ -325,6 +328,8 @@ nestify::nest! {
             pub disable_openapi_docs: bool,
             #[serde(default)]
             pub disable_remote_download: bool,
+            #[serde(default = "api_server_remote_download_limit")]
+            pub server_remote_download_limit: usize,
             #[serde(default = "api_remote_download_blocked_cidrs")]
             pub remote_download_blocked_cidrs: Vec<cidr::IpCidr>,
             #[serde(default)]

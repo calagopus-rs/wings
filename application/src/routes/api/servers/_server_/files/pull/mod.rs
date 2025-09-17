@@ -109,10 +109,6 @@ mod post {
                     .with_status(StatusCode::EXPECTATION_FAILED)
                     .ok();
             }
-        } else if !data.use_header {
-            return ApiResponse::error("file name is required when not using use_header")
-                .with_status(StatusCode::EXPECTATION_FAILED)
-                .ok();
         }
 
         if state.config.api.disable_remote_download {
@@ -121,7 +117,7 @@ mod post {
                 .ok();
         }
 
-        if server.filesystem.pulls().await.len() >= 3 {
+        if server.filesystem.pulls().await.len() >= state.config.api.server_remote_download_limit {
             return ApiResponse::error("too many concurrent pulls")
                 .with_status(StatusCode::EXPECTATION_FAILED)
                 .ok();

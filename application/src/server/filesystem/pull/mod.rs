@@ -118,6 +118,23 @@ impl Download {
                 );
             } else if let Some(file_name) = file_name {
                 real_destination.push(file_name);
+            } else {
+                real_destination.push(
+                    response
+                        .url()
+                        .path_segments()
+                        .and_then(|mut segments| segments.next_back())
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| {
+                            let random_string: String = rand::rng()
+                                .sample_iter(&rand::distr::Alphanumeric)
+                                .take(8)
+                                .map(char::from)
+                                .collect();
+
+                            format!("download_{random_string}")
+                        }),
+                );
             }
         }
 
