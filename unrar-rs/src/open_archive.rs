@@ -1,7 +1,7 @@
 use super::error::*;
 use super::*;
 use std::fmt::{self, Debug};
-use std::os::raw::{c_int, c_uint};
+use std::os::raw::{c_char, c_int, c_uint};
 use std::path::{Path, PathBuf};
 use std::ptr::NonNull;
 
@@ -626,7 +626,7 @@ pub enum FileHash {
     /// CRC32
     CRC32(u32),
     /// BLAKE2
-    BLAKE2([i8; 32]),
+    BLAKE2([c_char; 32]),
     /// Unsupported checksum type, payload is raw hash_type in HeaderDataEx
     Unsupported(u32),
 }
