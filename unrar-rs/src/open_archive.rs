@@ -632,11 +632,11 @@ pub enum FileHash {
 }
 
 impl FileHash {
-    fn hex(bytes: &[i8], upper: bool) -> String {
+    fn hex(bytes: &[c_char], upper: bool) -> String {
         use std::fmt::Write;
         let mut hex_string = String::with_capacity(bytes.len() * 2);
         for &byte in bytes {
-            let byte = u8::from_le_bytes(byte.to_le_bytes());
+            let byte = c_char::from_le_bytes(byte.to_le_bytes());
             if upper {
                 write!(&mut hex_string, "{:02X}", byte).unwrap();
             } else {
