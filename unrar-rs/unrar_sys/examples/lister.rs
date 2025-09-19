@@ -29,7 +29,8 @@ fn main() {
     let file_cstr = CString::new(file).unwrap();
     let mut data = OpenArchiveData::new(file_cstr.as_ptr(), RAR_OM_LIST_INCSPLIT);
     let handle = unsafe { RAROpenArchive(&mut data as *mut _) };
-    assert_eq!(data.open_result, 0);
+    let open_result = data.open_result;
+    assert_eq!(open_result, 0);
     assert_eq!(handle.is_null(), false);
     let mut next_path = String::with_capacity(1024);
     unsafe {

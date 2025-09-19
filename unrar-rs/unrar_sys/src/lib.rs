@@ -118,7 +118,7 @@ pub struct Handle {
 
 // ----------------- STRUCTS ----------------- //
 
-#[repr(C)]
+#[repr(C, packed)]
 pub struct HeaderData {
     pub archive_name: [c_char; 260],
     pub filename: [c_char; 260],
@@ -137,7 +137,7 @@ pub struct HeaderData {
     pub comment_state: c_uint,
 }
 
-#[repr(C)]
+#[repr(C, packed)]
 pub struct HeaderDataEx {
     pub archive_name: [c_char; 1024],
     pub archive_name_w: [wchar_t; 1024],
@@ -174,7 +174,7 @@ pub struct HeaderDataEx {
     pub reserved: [c_uint; 988],
 }
 
-#[repr(C)]
+#[repr(C, packed)]
 pub struct OpenArchiveData {
     pub archive_name: *const c_char,
     pub open_mode: c_uint,
@@ -185,7 +185,7 @@ pub struct OpenArchiveData {
     pub comment_state: c_uint,
 }
 
-#[repr(C)]
+#[repr(C, packed)]
 pub struct OpenArchiveDataEx {
     pub archive_name: *const c_char,
     pub archive_name_w: *const wchar_t,

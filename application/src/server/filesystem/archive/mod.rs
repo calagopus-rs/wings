@@ -625,12 +625,49 @@ impl Archive {
             ArchiveType::Rar => {
                 let (guard, listener) = AbortGuard::new();
 
+                fn dos_time_to_unix(dos_time: u32) -> Option<u64> {
+                    let seconds = (dos_time & 0x1F) * 2;
+                    let minutes = (dos_time >> 5) & 0x3F;
+                    let hours = (dos_time >> 11) & 0x1F;
+                    let day = (dos_time >> 16) & 0x1F;
+                    let month = (dos_time >> 21) & 0x0F;
+                    let year = ((dos_time >> 25) & 0x7F) + 1980;
+
+                    if seconds >= 60
+                        || minutes >= 60
+                        || hours >= 24
+                        || !(1..=31).contains(&day)
+                        || !(1..=12).contains(&month)
+                    {
+                        return None;
+                    }
+
+                    let date = chrono::NaiveDate::from_ymd_opt(year as i32, month, day)?;
+                    let time = chrono::NaiveTime::from_hms_opt(hours, minutes, seconds)?;
+
+                    Some(chrono::NaiveDateTime::new(date, time).and_utc().timestamp() as u64)
+                }
+
                 tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
                     drop(self.file);
+
+                    if let Some(total) = total {
+                        let mut entry_total = 0;
+                        let archive = unrar::Archive::new_owned(
+                            self.server.filesystem.base_path.join(&self.path),
+                        )
+                        .open_for_listing()?;
+                        for entry in archive.flatten() {
+                            entry_total += entry.unpacked_size;
+                        }
+
+                        total.store(entry_total, Ordering::Relaxed);
+                    }
 
                     let mut archive =
                         unrar::Archive::new_owned(self.server.filesystem.base_path.join(self.path))
                             .open_for_processing()?;
+                    let mut directory_entries = Vec::new();
 
                     loop {
                         let entry = match archive.read_header()? {
@@ -662,6 +699,10 @@ impl Archive {
                         if entry.entry().is_directory() {
                             self.server.filesystem.create_dir_all(&destination_path)?;
 
+                            if let Some(modified_time) = dos_time_to_unix(entry.entry().file_time) {
+                                directory_entries.push((destination_path, modified_time));
+                            }
+
                             archive = entry.skip()?;
                             continue;
                         } else {
@@ -673,7 +714,12 @@ impl Archive {
                                 self.server.clone(),
                                 &destination_path,
                                 None,
-                                None,
+                                dos_time_to_unix(entry.entry().file_time).map(|secs| {
+                                    cap_std::time::SystemTime::from_std(
+                                        std::time::UNIX_EPOCH
+                                            + std::time::Duration::from_secs(secs),
+                                    )
+                                }),
                             )?;
                             let writer = AbortWriter::new(writer, listener.clone());
                             let writer: Box<dyn Write + Send + Sync> = match &progress {
@@ -696,6 +742,14 @@ impl Archive {
 
                             archive = processed_archive;
                         }
+                    }
+
+                    for (destination_path, modified_time) in directory_entries {
+                        self.server.filesystem.set_times(
+                            &destination_path,
+                            std::time::UNIX_EPOCH + std::time::Duration::from_secs(modified_time),
+                            None,
+                        )?;
                     }
 
                     Ok(())
