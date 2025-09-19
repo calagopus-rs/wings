@@ -365,6 +365,7 @@ impl BackupExt for WingsBackup {
                     let reader = CompressionReader::new(reader, compression_type);
 
                     let mut archive = tar::Archive::new(reader);
+                    let mut directory_entries = Vec::new();
                     let mut entries = archive.entries()?;
 
                     while let Some(Ok(mut entry)) = entries.next() {
@@ -384,6 +385,11 @@ impl BackupExt for WingsBackup {
                                     server
                                         .filesystem
                                         .set_permissions(destination_path, permissions)?;
+                                }
+
+                                if let Ok(modified_time) = header.mtime() {
+                                    directory_entries
+                                        .push((destination_path.to_path_buf(), modified_time));
                                 }
                             }
                             tar::EntryType::Regular => {
@@ -438,6 +444,14 @@ impl BackupExt for WingsBackup {
                         }
                     }
 
+                    for (destination_path, modified_time) in directory_entries {
+                        server.filesystem.set_times(
+                            &destination_path,
+                            std::time::UNIX_EPOCH + std::time::Duration::from_secs(modified_time),
+                            None,
+                        )?;
+                    }
+
                     Ok(())
                 })
                 .await??;
@@ -468,6 +482,8 @@ impl BackupExt for WingsBackup {
                     let error = Arc::new(RwLock::new(None));
 
                     pool.in_place_scope(|scope| {
+                        let archive = archive.clone();
+                        let server = server.clone();
                         let error_clone = Arc::clone(&error);
 
                         scope.spawn_broadcast(move |_, _| {
@@ -567,6 +583,36 @@ impl BackupExt for WingsBackup {
                         });
                     });
 
+                    for i in 0..archive.len() {
+                        let entry = archive.by_index(i)?;
+
+                        if entry.is_dir() {
+                            let path = match entry.enclosed_name() {
+                                Some(path) => path,
+                                None => continue,
+                            };
+
+                            if path.is_absolute() {
+                                continue;
+                            }
+
+                            if server
+                                .filesystem
+                                .is_ignored_sync(&path, entry.is_dir())
+                            {
+                                continue;
+                            }
+
+                            if let Some(modified_time) = zip_entry_get_modified_time(&entry) {
+                                server.filesystem.set_times(
+                                    &path,
+                                    modified_time.into_std(),
+                                    None,
+                                )?;
+                            }
+                        }
+                    }
+
                     if let Some(err) = error.write().unwrap().take() {
                         Err(err)
                     } else {
@@ -614,7 +660,6 @@ impl BackupCleanExt for WingsBackup {
         }
 
         tokio::fs::remove_file(&file_name).await?;
-        tokio::fs::write(file_name, &[]).await?;
 
         Ok(())
     }

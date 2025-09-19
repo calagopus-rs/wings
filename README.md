@@ -19,6 +19,8 @@ wings version
 
 ```yml
 api:
+  # max amount of active file pulls per server
+  server_remote_download_limit: 3
   # cidrs to block on the remote download pull endpoint
   remote_download_blocked_cidrs:
   - '127.0.0.0/8'

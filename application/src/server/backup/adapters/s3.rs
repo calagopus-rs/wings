@@ -395,11 +395,12 @@ impl BackupExt for S3Backup {
                 server.app_state.config.system.backups.read_limit * 1024 * 1024,
             );
             let reader = CountingReader::new_with_bytes_read(reader, progress);
-
             let reader = CompressionReader::new(reader, CompressionType::Gz);
-            let mut archive = tar::Archive::new(reader);
 
+            let mut archive = tar::Archive::new(reader);
+            let mut directory_entries = Vec::new();
             let entries = archive.entries()?;
+
             for entry in entries {
                 let mut entry = entry?;
                 let path = entry.path()?;
@@ -419,15 +420,9 @@ impl BackupExt for S3Backup {
                                 Permissions::from_mode(header.mode().unwrap_or(0o755)),
                             )
                             ?;
+
                         if let Ok(modified_time) = header.mtime() {
-                            server
-                                .filesystem
-                                .set_times(
-                                    path.as_ref(),
-                                    std::time::UNIX_EPOCH
-                                        + std::time::Duration::from_secs(modified_time),
-                                    None,
-                                )?;
+                            directory_entries.push((path.to_path_buf(), modified_time));
                         }
                     }
                     tar::EntryType::Regular => {
@@ -475,6 +470,14 @@ impl BackupExt for S3Backup {
                     }
                     _ => {}
                 }
+            }
+
+            for (destination_path, modified_time) in directory_entries {
+                server.filesystem.set_times(
+                    &destination_path,
+                    std::time::UNIX_EPOCH + std::time::Duration::from_secs(modified_time),
+                    None,
+                )?;
             }
 
             Ok(())

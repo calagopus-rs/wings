@@ -343,6 +343,7 @@ impl Archive {
                     }
 
                     let mut archive = tar::Archive::new(reader);
+                    let mut directory_entries = Vec::new();
                     let mut entries = archive.entries()?;
 
                     while let Some(Ok(mut entry)) = entries.next() {
@@ -371,13 +372,9 @@ impl Archive {
                                         .filesystem
                                         .set_permissions(&destination_path, permissions)?;
                                 }
+
                                 if let Ok(modified_time) = header.mtime() {
-                                    self.server.filesystem.set_times(
-                                        &destination_path,
-                                        std::time::UNIX_EPOCH
-                                            + std::time::Duration::from_secs(modified_time),
-                                        None,
-                                    )?;
+                                    directory_entries.push((destination_path, modified_time));
                                 }
                             }
                             tar::EntryType::Regular => {
@@ -428,6 +425,14 @@ impl Archive {
                         }
                     }
 
+                    for (destination_path, modified_time) in directory_entries {
+                        self.server.filesystem.set_times(
+                            &destination_path,
+                            std::time::UNIX_EPOCH + std::time::Duration::from_secs(modified_time),
+                            None,
+                        )?;
+                    }
+
                     Ok(())
                 })
                 .await??;
@@ -462,6 +467,9 @@ impl Archive {
                     let error = Arc::new(RwLock::new(None));
 
                     pool.in_place_scope(|scope| {
+                        let archive = archive.clone();
+                        let destination = destination.clone();
+                        let server = self.server.clone();
                         let error_clone = Arc::clone(&error);
 
                         scope.spawn_broadcast(move |_, _| {
@@ -470,7 +478,7 @@ impl Archive {
                             let entry_index = Arc::clone(&entry_index);
                             let error_clone2 = Arc::clone(&error_clone);
                             let destination = destination.clone();
-                            let server = self.server.clone();
+                            let server = server.clone();
 
                             let mut run = move || -> Result<(), anyhow::Error> {
                                 loop {
@@ -510,15 +518,6 @@ impl Archive {
                                                 entry.unix_mode().unwrap_or(0o755),
                                             ),
                                         )?;
-                                        if let Some(modified_time) =
-                                            zip_entry_get_modified_time(&entry)
-                                        {
-                                            server.filesystem.set_times(
-                                                &destination_path,
-                                                modified_time.into_std(),
-                                                None,
-                                            )?;
-                                        }
                                     } else if entry.is_file() {
                                         if let Some(parent) = destination_path.parent() {
                                             server.filesystem.create_dir_all(parent)?;
@@ -579,6 +578,39 @@ impl Archive {
                             }
                         });
                     });
+
+                    for i in 0..archive.len() {
+                        let entry = archive.by_index(i)?;
+
+                        if entry.is_dir() {
+                            let path = match entry.enclosed_name() {
+                                Some(path) => path,
+                                None => continue,
+                            };
+
+                            if path.is_absolute() {
+                                continue;
+                            }
+
+                            let destination_path = destination.join(path);
+
+                            if self
+                                .server
+                                .filesystem
+                                .is_ignored_sync(&destination_path, entry.is_dir())
+                            {
+                                continue;
+                            }
+
+                            if let Some(modified_time) = zip_entry_get_modified_time(&entry) {
+                                self.server.filesystem.set_times(
+                                    &destination_path,
+                                    modified_time.into_std(),
+                                    None,
+                                )?;
+                            }
+                        }
+                    }
 
                     if let Some(err) = error.write().unwrap().take() {
                         Err(err)
@@ -742,18 +774,6 @@ impl Archive {
                                                 err.to_string().into(),
                                             ));
                                         }
-
-                                        if entry.has_last_modified_date
-                                            && let Err(err) = server.filesystem.set_times(
-                                                &destination_path,
-                                                entry.last_modified_date.into(),
-                                                None,
-                                            )
-                                        {
-                                            return Err(sevenz_rust2::Error::Other(
-                                                err.to_string().into(),
-                                            ));
-                                        }
                                     } else {
                                         if let Some(parent) = destination_path.parent()
                                             && let Err(err) =
@@ -799,6 +819,31 @@ impl Archive {
                             });
                         }
                     });
+
+                    for entry in archive.files {
+                        if entry.is_directory() && entry.has_last_modified_date {
+                            let path = entry.name();
+                            if path.starts_with('/') || path.starts_with('\\') {
+                                continue;
+                            }
+
+                            let destination_path = destination.join(path);
+
+                            if self
+                                .server
+                                .filesystem
+                                .is_ignored_sync(&destination_path, entry.is_directory())
+                            {
+                                continue;
+                            }
+
+                            self.server.filesystem.set_times(
+                                &destination_path,
+                                entry.last_modified_date.into(),
+                                None,
+                            )?;
+                        }
+                    }
 
                     if let Some(err) = error.write().unwrap().take() {
                         Err(err.into())
