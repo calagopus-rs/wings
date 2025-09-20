@@ -65,7 +65,7 @@ WantedBy=multi-user.target
                 return 1;
             }
 
-            println!("systemd reloaded successfully");
+            println!("system daemons reloaded successfully");
 
             if let Err(err) = Command::new("systemctl")
                 .arg("enable")

@@ -737,18 +737,18 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.5.47"
+version = "4.5.48"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7eac00902d9d136acd712710d71823fb8ac8004ca445a89e73a41d45aa712931"
+checksum = "e2134bb3ea021b78629caa971416385309e0131b351b25e01dc16fb54e1b5fae"
 dependencies = [
  "clap_builder",
 ]
 
 [[package]]
 name = "clap_builder"
-version = "4.5.47"
+version = "4.5.48"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ad9bbf750e73b5884fb8a211a9424a1906c1e156724260fdae972f31d70e1d6"
+checksum = "c2ba64afa3c0a6df7fa517765e31314e983f51dda798ffba27b988194fb65dc9"
 dependencies = [
  "anstream",
  "anstyle",
@@ -2437,15 +2437,19 @@ dependencies = [
 
 [[package]]
 name = "lzma-rust2"
-version = "0.10.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f60b8ad6122c05a4d5e23db8eab1ced778e252b3e29c5e96b4a965fc72476277"
-
-[[package]]
-name = "lzma-rust2"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c60a23ffb90d527e23192f1246b14746e2f7f071cb84476dd879071696c18a4a"
+dependencies = [
+ "crc",
+ "sha2",
+]
+
+[[package]]
+name = "lzma-rust2"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "79ef85f79493b5f9baabde64dc8456092886647c5682c44ff48a54b247228dda"
 dependencies = [
  "crc",
  "sha2",
@@ -3797,9 +3801,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with"
-version = "3.14.0"
+version = "3.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2c45cd61fefa9db6f254525d46e392b852e0e61d9a1fd36e5bd183450a556d5"
+checksum = "c522100790450cf78eeac1507263d0a350d4d5b30df0c8e1fe051a10c22b376e"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -3831,13 +3835,12 @@ dependencies = [
 
 [[package]]
 name = "sevenz-rust2"
-version = "0.18.0"
+version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8f3cc2b52a3f98e75e6a1884e40fc986bf5f1966274aec869a4e6a0a5f72292"
+checksum = "5635c7cedd84efe2723df4e54047252e65fde0cb273acaff91c1942ef8396844"
 dependencies = [
  "aes",
  "brotli",
- "byteorder",
  "bzip2",
  "cbc",
  "crc32fast",
@@ -3845,7 +3848,7 @@ dependencies = [
  "getrandom 0.3.3",
  "js-sys",
  "lz4_flex",
- "lzma-rust2 0.10.2",
+ "lzma-rust2 0.14.0",
  "ppmd-rust",
  "sha2",
  "wasm-bindgen",
@@ -5270,7 +5273,7 @@ checksum = "271414315aff87387382ec3d271b52d7ae78726f5d44ac98b4f4030c91880486"
 
 [[package]]
 name = "wings-rs"
-version = "0.19.11"
+version = "0.20.0"
 dependencies = [
  "ansi_term",
  "anyhow",
@@ -5305,7 +5308,7 @@ dependencies = [
  "jwt",
  "libloading",
  "lz4",
- "lzma-rust2 0.13.0",
+ "lzma-rust2 0.14.0",
  "md5 0.8.0",
  "nestify",
  "new_mime_guess",

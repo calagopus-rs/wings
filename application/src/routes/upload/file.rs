@@ -169,7 +169,7 @@ mod post {
                     user: Some(payload.user_uuid),
                     ip: user_ip,
                     metadata: Some(json!({
-                        "file": filename,
+                        "files": [filename],
                         "directory": server.filesystem.relative_path(&directory),
                     })),
                     timestamp: chrono::Utc::now(),
