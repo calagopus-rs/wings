@@ -159,7 +159,12 @@ impl Download {
         })
     }
 
-    pub async fn start(&mut self) -> (uuid::Uuid, tokio::task::JoinHandle<Option<()>>) {
+    pub async fn start(
+        &mut self,
+    ) -> (
+        uuid::Uuid,
+        tokio::task::JoinHandle<Option<Result<(), anyhow::Error>>>,
+    ) {
         let progress = Arc::clone(&self.progress);
         let destination = self.destination.clone();
         let server = self.server.clone();
@@ -201,6 +206,8 @@ impl Download {
                                 "pull completed: {}",
                                 destination.to_string_lossy()
                             );
+
+                            Ok(())
                         }
                         Err(err) => {
                             tracing::error!(
@@ -208,6 +215,8 @@ impl Download {
                                 "failed to pull file: {:#?}",
                                 err
                             );
+
+                            Err(err)
                         }
                     }
                 },

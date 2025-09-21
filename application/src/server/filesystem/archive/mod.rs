@@ -461,8 +461,7 @@ impl Archive {
 
                     let pool = rayon::ThreadPoolBuilder::new()
                         .num_threads(self.server.app_state.config.api.file_decompression_threads)
-                        .build()
-                        .unwrap();
+                        .build()?;
 
                     let error = Arc::new(RwLock::new(None));
 
@@ -579,42 +578,42 @@ impl Archive {
                         });
                     });
 
-                    for i in 0..archive.len() {
-                        let entry = archive.by_index(i)?;
-
-                        if entry.is_dir() {
-                            let path = match entry.enclosed_name() {
-                                Some(path) => path,
-                                None => continue,
-                            };
-
-                            if path.is_absolute() {
-                                continue;
-                            }
-
-                            let destination_path = destination.join(path);
-
-                            if self
-                                .server
-                                .filesystem
-                                .is_ignored_sync(&destination_path, entry.is_dir())
-                            {
-                                continue;
-                            }
-
-                            if let Some(modified_time) = zip_entry_get_modified_time(&entry) {
-                                self.server.filesystem.set_times(
-                                    &destination_path,
-                                    modified_time.into_std(),
-                                    None,
-                                )?;
-                            }
-                        }
-                    }
-
                     if let Some(err) = error.write().unwrap().take() {
                         Err(err)
                     } else {
+                        for i in 0..archive.len() {
+                            let entry = archive.by_index(i)?;
+
+                            if entry.is_dir() {
+                                let path = match entry.enclosed_name() {
+                                    Some(path) => path,
+                                    None => continue,
+                                };
+
+                                if path.is_absolute() {
+                                    continue;
+                                }
+
+                                let destination_path = destination.join(path);
+
+                                if self
+                                    .server
+                                    .filesystem
+                                    .is_ignored_sync(&destination_path, entry.is_dir())
+                                {
+                                    continue;
+                                }
+
+                                if let Some(modified_time) = zip_entry_get_modified_time(&entry) {
+                                    self.server.filesystem.set_times(
+                                        &destination_path,
+                                        modified_time.into_std(),
+                                        None,
+                                    )?;
+                                }
+                            }
+                        }
+
                         Ok(())
                     }
                 })
@@ -874,34 +873,34 @@ impl Archive {
                         }
                     });
 
-                    for entry in archive.files {
-                        if entry.is_directory() && entry.has_last_modified_date {
-                            let path = entry.name();
-                            if path.starts_with('/') || path.starts_with('\\') {
-                                continue;
-                            }
-
-                            let destination_path = destination.join(path);
-
-                            if self
-                                .server
-                                .filesystem
-                                .is_ignored_sync(&destination_path, entry.is_directory())
-                            {
-                                continue;
-                            }
-
-                            self.server.filesystem.set_times(
-                                &destination_path,
-                                entry.last_modified_date.into(),
-                                None,
-                            )?;
-                        }
-                    }
-
                     if let Some(err) = error.write().unwrap().take() {
                         Err(err.into())
                     } else {
+                        for entry in archive.files {
+                            if entry.is_directory() && entry.has_last_modified_date {
+                                let path = entry.name();
+                                if path.starts_with('/') || path.starts_with('\\') {
+                                    continue;
+                                }
+
+                                let destination_path = destination.join(path);
+
+                                if self
+                                    .server
+                                    .filesystem
+                                    .is_ignored_sync(&destination_path, entry.is_directory())
+                                {
+                                    continue;
+                                }
+
+                                self.server.filesystem.set_times(
+                                    &destination_path,
+                                    entry.last_modified_date.into(),
+                                    None,
+                                )?;
+                            }
+                        }
+
                         Ok(())
                     }
                 })

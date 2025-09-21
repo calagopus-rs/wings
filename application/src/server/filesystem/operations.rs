@@ -63,11 +63,17 @@ impl OperationManager {
         self.operations.read().await
     }
 
-    pub async fn add_operation<T: Send + 'static, F: Future<Output = T> + Send + 'static>(
+    pub async fn add_operation<
+        T: Send + 'static,
+        F: Future<Output = Result<T, anyhow::Error>> + Send + 'static,
+    >(
         &self,
         operation: FilesystemOperation,
         f: F,
-    ) -> (uuid::Uuid, tokio::task::JoinHandle<Option<T>>) {
+    ) -> (
+        uuid::Uuid,
+        tokio::task::JoinHandle<Option<Result<T, anyhow::Error>>>,
+    ) {
         let operation_uuid = uuid::Uuid::new_v4();
         let (abort_sender, abort_receiver) = tokio::sync::oneshot::channel();
 
@@ -100,12 +106,47 @@ impl OperationManager {
                 };
 
                 operations.write().await.remove(&operation_uuid);
-                sender
-                    .send(crate::server::websocket::WebsocketMessage::new(
-                        crate::server::websocket::WebsocketEvent::ServerOperationCompleted,
-                        &[operation_uuid.to_string()],
-                    ))
-                    .ok();
+                if let Some(Err(err)) = result.as_ref() {
+                    let message = if let Some(err) = err.downcast_ref::<&str>() {
+                        err.to_string()
+                    } else if let Some(err) = err.downcast_ref::<String>() {
+                        err.to_string()
+                    } else if let Some(err) = err.downcast_ref::<std::io::Error>() {
+                        err.to_string()
+                    } else if let Some(err) = err.downcast_ref::<zip::result::ZipError>() {
+                        match err {
+                            zip::result::ZipError::Io(err) => err.to_string(),
+                            _ => err.to_string(),
+                        }
+                    } else if let Some(err) = err.downcast_ref::<sevenz_rust2::Error>() {
+                        match err {
+                            sevenz_rust2::Error::Io(err, _) => err.to_string(),
+                            _ => err.to_string(),
+                        }
+                    } else {
+                        tracing::error!(
+                            operation = ?operation_uuid,
+                            "unknown operation error: {:#?}",
+                            err
+                        );
+
+                        String::from("unknown error")
+                    };
+
+                    sender
+                        .send(crate::server::websocket::WebsocketMessage::new(
+                            crate::server::websocket::WebsocketEvent::ServerOperationError,
+                            &[operation_uuid.to_string(), message],
+                        ))
+                        .ok();
+                } else {
+                    sender
+                        .send(crate::server::websocket::WebsocketMessage::new(
+                            crate::server::websocket::WebsocketEvent::ServerOperationCompleted,
+                            &[operation_uuid.to_string()],
+                        ))
+                        .ok();
+                }
 
                 result
             }

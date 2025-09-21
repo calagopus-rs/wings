@@ -84,6 +84,8 @@ pub enum WebsocketEvent {
     ServerOperationProgress,
     #[serde(rename = "operation completed")]
     ServerOperationCompleted,
+    #[serde(rename = "operation error")]
+    ServerOperationError,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

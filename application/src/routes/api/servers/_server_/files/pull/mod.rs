@@ -155,7 +155,18 @@ mod post {
 
         if data.foreground {
             match task.await {
-                Ok(Some(())) => {}
+                Ok(Some(Ok(_))) => {}
+                Ok(Some(Err(err))) => {
+                    tracing::error!(
+                        server = %server.uuid,
+                        "failed to pull file: {:#?}",
+                        err,
+                    );
+
+                    return ApiResponse::error(&err.to_string())
+                        .with_status(StatusCode::EXPECTATION_FAILED)
+                        .ok();
+                }
                 Ok(None) => {
                     return ApiResponse::error("pull aborted by another source")
                         .with_status(StatusCode::EXPECTATION_FAILED)
