@@ -160,7 +160,12 @@ impl Archive {
         };
 
         let archive_format = match path.extension() {
-            Some(ext) if ext == "tar" => ArchiveType::Tar,
+            Some(ext)
+                if ["tar", "tgz", "tbz", "tbz2", "txz", "tlz", "tlz4", "tzst"]
+                    .contains(&ext.to_str().unwrap_or_default()) =>
+            {
+                ArchiveType::Tar
+            }
             Some(ext) if ext == "zip" => ArchiveType::Zip,
             Some(ext) if ext == "rar" => ArchiveType::Rar,
             Some(ext) if ext == "7z" => ArchiveType::SevenZip,
