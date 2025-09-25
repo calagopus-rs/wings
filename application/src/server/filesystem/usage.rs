@@ -8,7 +8,7 @@ pub struct DiskUsage {
 
 impl DiskUsage {
     pub fn get_size(&self, path: &Path) -> Option<u64> {
-        if path == Path::new("") || path == Path::new("/") {
+        if likely_stable::unlikely(path == Path::new("") || path == Path::new("/")) {
             return Some(self.size);
         }
 
@@ -25,17 +25,18 @@ impl DiskUsage {
     }
 
     pub fn update_size(&mut self, path: &Path, delta: i64) {
-        if path == Path::new("") || path == Path::new("/") {
+        if likely_stable::unlikely(path == Path::new("") || path == Path::new("/")) {
             return;
         }
 
         let mut current = self;
         for component in path.components() {
             current = {
-                if current
-                    .entries
-                    .contains_key(component.as_os_str().to_str().unwrap())
-                {
+                if likely_stable::likely(
+                    current
+                        .entries
+                        .contains_key(component.as_os_str().to_str().unwrap()),
+                ) {
                     // this is perfectly safe, we have a mutable reference to `current`
                     // and we know the entry exists (using check above)
                     let entry = current
@@ -75,7 +76,7 @@ impl DiskUsage {
     }
 
     pub fn update_size_slice(&mut self, path: &[String], delta: i64) {
-        if path.is_empty() {
+        if likely_stable::unlikely(path.is_empty()) {
             return;
         }
 
@@ -110,7 +111,7 @@ impl DiskUsage {
     }
 
     pub fn remove_path(&mut self, path: &Path) -> Option<DiskUsage> {
-        if path == Path::new("") || path == Path::new("/") {
+        if likely_stable::unlikely(path == Path::new("") || path == Path::new("/")) {
             return None;
         }
 
@@ -148,7 +149,7 @@ impl DiskUsage {
     }
 
     pub fn add_directory(&mut self, target_path: &[String], source_dir: DiskUsage) -> bool {
-        if target_path.is_empty() {
+        if likely_stable::unlikely(target_path.is_empty()) {
             return false;
         }
 

@@ -96,13 +96,13 @@ impl Write for FileSystemWriter {
 
         self.current_position += written as u64;
 
-        if self.current_position > self.highest_position {
+        if likely_stable::unlikely(self.current_position > self.highest_position) {
             let additional_space = (self.current_position - self.highest_position) as i64;
             self.accumulated_bytes += additional_space;
             self.highest_position = self.current_position;
         }
 
-        if self.accumulated_bytes >= ALLOCATION_THRESHOLD {
+        if likely_stable::unlikely(self.accumulated_bytes >= ALLOCATION_THRESHOLD) {
             self.allocate_accumulated()?;
         }
 
@@ -211,7 +211,9 @@ impl AsyncFileSystemWriter {
     }
 
     fn start_allocation(&mut self) {
-        if self.accumulated_bytes > 0 && self.allocation_in_progress.is_none() {
+        if likely_stable::likely(
+            self.accumulated_bytes > 0 && self.allocation_in_progress.is_none(),
+        ) {
             let server = self.server.clone();
             let parent = self.parent.clone();
             let bytes = self.accumulated_bytes;
@@ -295,7 +297,7 @@ impl AsyncWrite for AsyncFileSystemWriter {
             Poll::Pending => return Poll::Pending,
         }
 
-        if self.accumulated_bytes > 0 {
+        if likely_stable::likely(self.accumulated_bytes > 0) {
             self.start_allocation();
 
             match self.poll_allocation(cx) {
@@ -315,7 +317,7 @@ impl AsyncWrite for AsyncFileSystemWriter {
             Poll::Pending => return Poll::Pending,
         }
 
-        if self.accumulated_bytes > 0 {
+        if likely_stable::likely(self.accumulated_bytes > 0) {
             self.start_allocation();
 
             match self.poll_allocation(cx) {
@@ -331,7 +333,7 @@ impl AsyncWrite for AsyncFileSystemWriter {
 
 impl AsyncSeek for AsyncFileSystemWriter {
     fn start_seek(mut self: Pin<&mut Self>, position: SeekFrom) -> std::io::Result<()> {
-        if self.accumulated_bytes > 0 {
+        if likely_stable::unlikely(self.accumulated_bytes > 0) {
             self.start_allocation();
         }
 

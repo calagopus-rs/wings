@@ -348,7 +348,7 @@ impl Archive {
                     }
 
                     let mut archive = tar::Archive::new(reader);
-                    let mut directory_entries = Vec::new();
+                    let mut directory_entries = chunked_vec::ChunkedVec::new();
                     let mut entries = archive.entries()?;
 
                     while let Some(Ok(mut entry)) = entries.next() {
@@ -671,7 +671,7 @@ impl Archive {
                     let mut archive =
                         unrar::Archive::new_owned(self.server.filesystem.base_path.join(self.path))
                             .open_for_processing()?;
-                    let mut directory_entries = Vec::new();
+                    let mut directory_entries = chunked_vec::ChunkedVec::new();
 
                     loop {
                         let entry = match archive.read_header()? {

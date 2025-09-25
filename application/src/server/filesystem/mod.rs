@@ -411,7 +411,7 @@ impl Filesystem {
     ///
     /// Returns `true` if allocation was successful, `false` if it would exceed disk limit
     pub async fn async_allocate_in_path(&self, path: &Path, delta: i64, ignorant: bool) -> bool {
-        if delta == 0 {
+        if likely_stable::unlikely(delta == 0) {
             return true;
         }
 
@@ -457,7 +457,7 @@ impl Filesystem {
         delta: i64,
         ignorant: bool,
     ) -> bool {
-        if delta == 0 {
+        if likely_stable::unlikely(delta == 0) {
             return true;
         }
 
@@ -498,7 +498,7 @@ impl Filesystem {
     ///
     /// Returns `true` if allocation was successful, `false` if it would exceed disk limit
     pub fn allocate_in_path(&self, path: &Path, delta: i64, ignorant: bool) -> bool {
-        if delta == 0 {
+        if likely_stable::unlikely(delta == 0) {
             return true;
         }
 
@@ -539,7 +539,7 @@ impl Filesystem {
     ///
     /// Returns `true` if allocation was successful, `false` if it would exceed disk limit
     pub fn allocate_in_path_slice(&self, path: &[String], delta: i64, ignorant: bool) -> bool {
-        if delta == 0 {
+        if likely_stable::unlikely(delta == 0) {
             return true;
         }
 
@@ -601,7 +601,8 @@ impl Filesystem {
             let base_path = self.base_path.clone();
 
             move || {
-                if path == PathBuf::from("") || path == PathBuf::from("/") {
+                if likely_stable::unlikely(path == PathBuf::from("") || path == PathBuf::from("/"))
+                {
                     Ok::<_, anyhow::Error>(std::os::unix::fs::chown(
                         base_path,
                         Some(owner_uid.as_raw()),

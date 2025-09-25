@@ -150,6 +150,7 @@ mod post {
                         );
 
                         let mut archive = tar::Archive::new(reader);
+                        let mut directory_entries = chunked_vec::ChunkedVec::new();
                         let mut entries = archive.entries()?;
 
                         while let Some(Ok(mut entry)) = entries.next() {
@@ -171,6 +172,11 @@ mod post {
                                         server
                                             .filesystem
                                             .set_permissions(destination_path, permissions)?;
+                                    }
+
+                                    if let Ok(modified_time) = header.mtime() {
+                                        directory_entries
+                                            .push((destination_path.to_path_buf(), modified_time));
                                     }
                                 }
                                 tar::EntryType::Regular => {
@@ -220,6 +226,15 @@ mod post {
                                 }
                                 _ => {}
                             }
+                        }
+
+                        for (destination_path, modified_time) in directory_entries {
+                            server.filesystem.set_times(
+                                &destination_path,
+                                std::time::UNIX_EPOCH
+                                    + std::time::Duration::from_secs(modified_time),
+                                None,
+                            )?;
                         }
                     } else if field.name().is_some_and(|n| n.starts_with("backup-")) {
                         tracing::debug!(
