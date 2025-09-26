@@ -1,4 +1,4 @@
-# pterodactyl-rs wings (close to official stability)
+# calagopus-rs wings (close to official stability)
 
 a rewrite of [pterodactyl wings](https://github.com/pterodactyl/wings) in the rust programming language. this rewrite aims to be 100% API compatible while implementing new features and better performance.
 
@@ -9,7 +9,7 @@ a rewrite of [pterodactyl wings](https://github.com/pterodactyl/wings) in the ru
 ### please remember to update atleast weekly
 
 ```bash
-sudo curl -L "https://github.com/pterodactyl-rs/wings/releases/latest/download/wings-rs-$(uname -m)-linux" -o /usr/local/bin/wings
+sudo curl -L "https://github.com/calagopus-rs/wings/releases/latest/download/wings-rs-$(uname -m)-linux" -o /usr/local/bin/wings
 sudo chmod +x /usr/local/bin/wings
 
 wings version

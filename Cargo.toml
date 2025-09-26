@@ -5,7 +5,7 @@ default-members = ["application"]
 
 [workspace.dependencies]
 anyhow = "1.0.98"
-axum = { version = "0.8.1", features = ["ws", "multipart"] }
+axum = { version = "0.8.1", features = ["http2", "ws", "multipart"] }
 axum-server = { version = "0.7.2", features = ["tls-rustls"] }
 axum-extra = { version = "0.10.1", features = ["query"] }
 bollard = "0.18.1"

@@ -158,7 +158,13 @@ impl BackupCreateExt for S3Backup {
         _ignore_raw: String,
     ) -> Result<RawServerBackup, anyhow::Error> {
         let file_name = Self::get_file_name(&server.app_state.config, uuid);
-        let mut file = tokio::fs::File::create(&file_name).await?;
+        let mut file = tokio::fs::OpenOptions::new()
+            .read(true)
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&file_name)
+            .await?;
 
         let (mut checksum_reader, checksum_writer) = tokio::io::duplex(crate::BUFFER_SIZE);
 
