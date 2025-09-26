@@ -7,7 +7,7 @@ on:
 env:
   BIN_NAME: wings-rs
   PROJECT_NAME: wings-rs
-  REPO_NAME: pterodactyl-rs/wings
+  REPO_NAME: calagopus-rs/wings
 
 jobs:
   dist:
