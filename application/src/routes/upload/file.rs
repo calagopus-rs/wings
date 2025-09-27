@@ -177,7 +177,9 @@ mod post {
                 .await;
 
             while let Ok(Some(chunk)) = field.chunk().await {
-                if written_size + chunk.len() > state.config.api.upload_limit * 1000 * 1000 {
+                if likely_stable::unlikely(
+                    written_size + chunk.len() > state.config.api.upload_limit * 1000 * 1000,
+                ) {
                     return ApiResponse::error(&format!(
                         "file size is larger than {}MB",
                         state.config.api.upload_limit

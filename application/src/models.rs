@@ -1,5 +1,6 @@
 use crate::server::state::ServerState;
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 use utoipa::ToSchema;
 
 #[derive(ToSchema, Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -10,6 +11,23 @@ pub enum ServerPowerAction {
     Stop,
     Restart,
     Kill,
+}
+
+impl FromStr for ServerPowerAction {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "start" => Ok(Self::Start),
+            "stop" => Ok(Self::Stop),
+            "restart" => Ok(Self::Restart),
+            "kill" => Ok(Self::Kill),
+            _ => Err(anyhow::anyhow!(
+                "invalid server power action provided: {}",
+                s
+            )),
+        }
+    }
 }
 
 #[derive(ToSchema, Serialize)]

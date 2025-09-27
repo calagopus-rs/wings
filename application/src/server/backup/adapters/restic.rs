@@ -580,6 +580,7 @@ impl BackupExt for ResticBackup {
                     let mut subtar = tar::Archive::new(child.stdout.unwrap());
                     let mut entries = subtar.entries()?;
 
+                    let mut read_buffer = vec![0; crate::BUFFER_SIZE];
                     while let Some(Ok(mut entry)) = entries.next() {
                         let header = entry.header().clone();
                         let relative = entry.path()?;
@@ -611,7 +612,7 @@ impl BackupExt for ResticBackup {
                             }
                             tar::EntryType::Regular => {
                                 archive.start_file(relative.to_string_lossy(), options)?;
-                                std::io::copy(&mut entry, &mut archive)?;
+                                crate::io::copy_shared(&mut read_buffer, &mut entry, &mut archive)?;
                             }
                             _ => continue,
                         }
@@ -644,7 +645,7 @@ impl BackupExt for ResticBackup {
                         file_compression_threads,
                     );
 
-                    if let Err(err) = std::io::copy(&mut child.stdout.unwrap(), &mut writer) {
+                    if let Err(err) = crate::io::copy(&mut child.stdout.unwrap(), &mut writer) {
                         tracing::error!(
                             "failed to compress tar archive for restic backup: {}",
                             err
@@ -1041,6 +1042,7 @@ impl BackupBrowseExt for BrowseResticBackup {
                     let mut subtar = tar::Archive::new(child.stdout.unwrap());
                     let mut entries = subtar.entries()?;
 
+                    let mut read_buffer = vec![0; crate::BUFFER_SIZE];
                     while let Some(Ok(mut entry)) = entries.next() {
                         let header = entry.header().clone();
                         let relative = entry.path()?;
@@ -1072,7 +1074,7 @@ impl BackupBrowseExt for BrowseResticBackup {
                             }
                             tar::EntryType::Regular => {
                                 archive.start_file(relative.to_string_lossy(), options)?;
-                                std::io::copy(&mut entry, &mut archive)?;
+                                crate::io::copy_shared(&mut read_buffer, &mut entry, &mut archive)?;
                             }
                             _ => continue,
                         }
@@ -1106,7 +1108,7 @@ impl BackupBrowseExt for BrowseResticBackup {
                         file_compression_threads,
                     );
 
-                    if let Err(err) = std::io::copy(&mut child.stdout.unwrap(), &mut writer) {
+                    if let Err(err) = crate::io::copy(&mut child.stdout.unwrap(), &mut writer) {
                         tracing::error!(
                             "failed to compress tar archive for restic backup: {}",
                             err
@@ -1223,6 +1225,7 @@ impl BackupBrowseExt for BrowseResticBackup {
                                         Err(_) => continue,
                                     };
 
+                                    let mut read_buffer = vec![0; crate::BUFFER_SIZE];
                                     while let Some(Ok(mut entry)) = entries.next() {
                                         let header = entry.header().clone();
                                         let relative = relative.join(entry.path()?);
@@ -1262,7 +1265,11 @@ impl BackupBrowseExt for BrowseResticBackup {
                                                     relative.to_string_lossy(),
                                                     options,
                                                 )?;
-                                                std::io::copy(&mut entry, &mut archive)?;
+                                                crate::io::copy_shared(
+                                                    &mut read_buffer,
+                                                    &mut entry,
+                                                    &mut archive,
+                                                )?;
                                             }
                                             _ => continue,
                                         }
@@ -1288,7 +1295,7 @@ impl BackupBrowseExt for BrowseResticBackup {
                                     };
 
                                     archive.start_file(relative.to_string_lossy(), options)?;
-                                    std::io::copy(&mut child.stdout.unwrap(), &mut archive)?;
+                                    crate::io::copy(&mut child.stdout.unwrap(), &mut archive)?;
                                 }
                                 _ => continue,
                             }

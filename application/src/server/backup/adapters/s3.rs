@@ -26,7 +26,7 @@ use std::{
 };
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, ReadBuf},
-    sync::RwLock,
+    sync::{Mutex, OwnedMutexGuard, RwLock},
 };
 
 static CLIENT: RwLock<Option<Arc<reqwest::Client>>> = RwLock::const_new(None);
@@ -58,7 +58,7 @@ async fn get_client(server: &crate::server::Server) -> Arc<reqwest::Client> {
 }
 
 struct BoundedReader {
-    file: tokio::fs::File,
+    file: OwnedMutexGuard<tokio::fs::File>,
     size: u64,
     position: u64,
 
@@ -67,15 +67,17 @@ struct BoundedReader {
 
 impl BoundedReader {
     async fn new_with_bytes_written(
-        file: &mut tokio::fs::File,
+        file: Arc<Mutex<tokio::fs::File>>,
         offset: u64,
         size: u64,
         bytes_written: Arc<AtomicU64>,
     ) -> std::io::Result<Self> {
-        file.seek(std::io::SeekFrom::Start(offset)).await?;
+        let mut guard = file.lock_owned().await;
+
+        guard.seek(std::io::SeekFrom::Start(offset)).await?;
 
         Ok(Self {
-            file: file.try_clone().await?,
+            file: guard,
             size,
             position: 0,
             bytes_written,
@@ -248,6 +250,8 @@ impl BackupCreateExt for S3Backup {
             .backup_upload_urls(uuid, size)
             .await?;
 
+        let file = Arc::new(Mutex::new(file));
+
         let mut remaining_size = size;
         let mut parts = Vec::with_capacity(part_urls.len());
         for (i, url) in part_urls.into_iter().enumerate() {
@@ -282,7 +286,7 @@ impl BackupCreateExt for S3Backup {
                         tokio_util::io::ReaderStream::with_capacity(
                             AsyncLimitedReader::new_with_bytes_per_second(
                                 BoundedReader::new_with_bytes_written(
-                                    &mut file,
+                                    Arc::clone(&file),
                                     offset,
                                     part_size,
                                     Arc::clone(&progress),
@@ -407,6 +411,7 @@ impl BackupExt for S3Backup {
             let mut directory_entries = Vec::new();
             let entries = archive.entries()?;
 
+            let mut read_buffer = vec![0; crate::BUFFER_SIZE];
             for entry in entries {
                 let mut entry = entry?;
                 let path = entry.path()?;
@@ -455,7 +460,7 @@ impl BackupExt for S3Backup {
                                 .ok(),
                         )?;
 
-                        std::io::copy(&mut entry, &mut writer)?;
+                        crate::io::copy_shared(&mut read_buffer, &mut entry, &mut writer)?;
                         writer.flush()?;
                     }
                     tar::EntryType::Symlink => {

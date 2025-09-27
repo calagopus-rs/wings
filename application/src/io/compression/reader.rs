@@ -59,7 +59,7 @@ impl AsyncCompressionReader {
             let mut writer = tokio_util::io::SyncIoBridge::new(inner_writer);
             let mut stream = CompressionReader::new(reader, compression_type);
 
-            match std::io::copy(&mut stream, &mut writer) {
+            match crate::io::copy(&mut stream, &mut writer) {
                 Ok(_) => {}
                 Err(e) => {
                     let _ = inner_error_sender.send(e);

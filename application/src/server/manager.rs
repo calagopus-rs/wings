@@ -16,8 +16,7 @@ pub struct Manager {
 
 impl Manager {
     pub fn new(raw_servers: &[crate::remote::servers::RawServer]) -> Self {
-        let mut servers = Vec::new();
-        servers.reserve_exact(raw_servers.len());
+        let servers = Vec::with_capacity(raw_servers.len());
 
         Self {
             servers: Arc::new(RwLock::new(servers)),

@@ -368,6 +368,7 @@ impl BackupExt for WingsBackup {
                     let mut directory_entries = Vec::new();
                     let mut entries = archive.entries()?;
 
+                    let mut read_buffer = vec![0; crate::BUFFER_SIZE];
                     while let Some(Ok(mut entry)) = entries.next() {
                         let path = entry.path()?;
 
@@ -417,7 +418,7 @@ impl BackupExt for WingsBackup {
                                             .ok(),
                                     )?;
 
-                                std::io::copy(&mut entry, &mut writer)?;
+                                crate::io::copy_shared(&mut read_buffer, &mut entry, &mut writer)?;
                                 writer.flush()?;
                             }
                             tar::EntryType::Symlink => {
@@ -495,6 +496,8 @@ impl BackupExt for WingsBackup {
                             let server = server.clone();
 
                             let mut run = move || -> Result<(), anyhow::Error> {
+                                let mut read_buffer = vec![0; crate::BUFFER_SIZE];
+
                                 loop {
                                     if error_clone2.read().unwrap().is_some() {
                                         return Ok(());
@@ -545,7 +548,7 @@ impl BackupExt for WingsBackup {
                                             Arc::clone(&progress),
                                         );
 
-                                        if let Err(err) = std::io::copy(&mut reader, &mut writer) {
+                                        if let Err(err) = crate::io::copy_shared(&mut read_buffer, &mut reader, &mut writer) {
                                             if err.kind() == std::io::ErrorKind::InvalidData {
                                                 tracing::warn!(
                                                     path = %path.display(),
@@ -926,6 +929,7 @@ impl BackupBrowseExt for BrowseWingsBackup {
                     let writer = tokio_util::io::SyncIoBridge::new(writer);
                     let mut zip = zip::ZipWriter::new_stream(writer);
 
+                    let mut read_buffer = vec![0; crate::BUFFER_SIZE];
                     for i in 0..archive.len() {
                         let mut entry = archive.by_index(i)?;
                         let name = match entry.enclosed_name() {
@@ -947,7 +951,7 @@ impl BackupBrowseExt for BrowseWingsBackup {
                         } else {
                             zip.start_file(name.to_string_lossy(), entry.options())?;
 
-                            std::io::copy(&mut entry, &mut zip)?;
+                            crate::io::copy_shared(&mut read_buffer, &mut entry, &mut zip)?;
                         }
                     }
 
@@ -1040,6 +1044,7 @@ impl BackupBrowseExt for BrowseWingsBackup {
                     let writer = tokio_util::io::SyncIoBridge::new(writer);
                     let mut zip = zip::ZipWriter::new_stream(writer);
 
+                    let mut read_buffer = vec![0; crate::BUFFER_SIZE];
                     for i in 0..archive.len() {
                         let mut entry = archive.by_index(i)?;
                         let name = match entry.enclosed_name() {
@@ -1065,7 +1070,7 @@ impl BackupBrowseExt for BrowseWingsBackup {
                         } else {
                             zip.start_file(name.to_string_lossy(), entry.options())?;
 
-                            std::io::copy(&mut entry, &mut zip)?;
+                            crate::io::copy_shared(&mut read_buffer, &mut entry, &mut zip)?;
                         }
                     }
 

@@ -181,7 +181,7 @@ impl DdupBakBackup {
                 );
 
                 zip.start_file(path.to_string_lossy(), options)?;
-                std::io::copy(&mut reader, zip)?;
+                crate::io::copy(&mut reader, zip)?;
             }
             Entry::Symlink(link) => {
                 zip.add_symlink(&link.name, &link.target, options)?;
@@ -538,7 +538,7 @@ impl BackupExt for DdupBakBackup {
                         let mut reader =
                             CountingReader::new_with_bytes_read(reader, Arc::clone(progress));
 
-                        std::io::copy(&mut reader, &mut writer)?;
+                        crate::io::copy(&mut reader, &mut writer)?;
                         writer.flush()?;
                     }
                     Entry::Directory(directory) => {

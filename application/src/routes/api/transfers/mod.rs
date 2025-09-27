@@ -200,7 +200,7 @@ mod post {
                                                 .ok(),
                                         )?;
 
-                                    std::io::copy(&mut entry, &mut writer)?;
+                                    crate::io::copy(&mut entry, &mut writer)?;
                                     writer.flush()?;
                                 }
                                 tar::EntryType::Symlink => {
@@ -296,7 +296,7 @@ mod post {
                                     }
                                 };
 
-                                if let Err(err) = std::io::copy(&mut reader, &mut file) {
+                                if let Err(err) = crate::io::copy(&mut reader, &mut file) {
                                     tracing::error!(
                                         "failed to copy backup file {}: {:#?}",
                                         file_name.display(),

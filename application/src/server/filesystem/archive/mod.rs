@@ -318,7 +318,7 @@ impl Archive {
                         metadata.modified().ok(),
                     )?;
 
-                    std::io::copy(&mut reader, &mut writer)?;
+                    crate::io::copy(&mut reader, &mut writer)?;
                     writer.flush()?;
 
                     Ok(())
@@ -351,6 +351,7 @@ impl Archive {
                     let mut directory_entries = chunked_vec::ChunkedVec::new();
                     let mut entries = archive.entries()?;
 
+                    let mut read_buffer = vec![0; crate::BUFFER_SIZE];
                     while let Some(Ok(mut entry)) = entries.next() {
                         let path = entry.path()?;
 
@@ -402,7 +403,7 @@ impl Archive {
                                         .ok(),
                                 )?;
 
-                                std::io::copy(&mut entry, &mut writer)?;
+                                crate::io::copy_shared(&mut read_buffer, &mut entry, &mut writer)?;
                                 writer.flush()?;
                             }
                             tar::EntryType::Symlink => {
@@ -485,6 +486,8 @@ impl Archive {
                             let server = server.clone();
 
                             let mut run = move || -> Result<(), anyhow::Error> {
+                                let mut read_buffer = vec![0; crate::BUFFER_SIZE];
+
                                 loop {
                                     if error_clone2.read().unwrap().is_some() {
                                         return Ok(());
@@ -544,7 +547,11 @@ impl Archive {
                                             None => Box::new(entry),
                                         };
 
-                                        std::io::copy(&mut reader, &mut writer)?;
+                                        crate::io::copy_shared(
+                                            &mut read_buffer,
+                                            &mut reader,
+                                            &mut writer,
+                                        )?;
                                         writer.flush()?;
                                     } else if entry.is_symlink()
                                         && (1..=2048).contains(&entry.size())
@@ -809,6 +816,7 @@ impl Archive {
                                     &mut reader,
                                 );
 
+                                let mut read_buffer = vec![0; crate::BUFFER_SIZE];
                                 if let Err(err) = folder.for_each_entries(&mut |entry, reader| {
                                     let path = entry.name();
                                     if path.starts_with('/') || path.starts_with('\\') {
@@ -866,7 +874,11 @@ impl Archive {
                                             None => Box::new(reader),
                                         };
 
-                                        std::io::copy(&mut reader, &mut writer)?;
+                                        crate::io::copy_shared(
+                                            &mut read_buffer,
+                                            &mut reader,
+                                            &mut writer,
+                                        )?;
                                         writer.flush()?;
                                     }
 
@@ -1007,7 +1019,7 @@ impl Archive {
                                 };
 
                                 scope.spawn(move |_| {
-                                    std::io::copy(&mut reader, &mut writer).unwrap();
+                                    crate::io::copy(&mut reader, &mut writer).unwrap();
                                     writer.flush().unwrap();
                                 });
                             }

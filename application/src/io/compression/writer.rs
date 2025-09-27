@@ -151,7 +151,7 @@ impl AsyncCompressionWriter {
             let mut stream =
                 CompressionWriter::new(writer, compression_type, compression_level, threads);
 
-            match std::io::copy(&mut reader, &mut stream) {
+            match crate::io::copy(&mut reader, &mut stream) {
                 Ok(_) => {}
                 Err(e) => {
                     let _ = inner_error_sender.send(e);

@@ -23,7 +23,7 @@ impl<R: Read> FixedReader<R> {
 
 impl<R: Read> Read for FixedReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        if self.bytes_read >= self.size {
+        if likely_stable::unlikely(self.bytes_read >= self.size) {
             return Ok(0);
         }
 
@@ -33,7 +33,7 @@ impl<R: Read> Read for FixedReader<R> {
         let bytes_read = self.inner.read(&mut buf[..to_read])?;
         self.bytes_read += bytes_read;
 
-        if bytes_read < to_read {
+        if likely_stable::unlikely(bytes_read < to_read) {
             let zeros_needed = to_read - bytes_read;
             for i in 0..zeros_needed {
                 buf[bytes_read + i] = 0;
@@ -68,7 +68,7 @@ impl<R: AsyncRead + Unpin> AsyncRead for AsyncFixedReader<R> {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
-        if self.bytes_read >= self.size {
+        if likely_stable::unlikely(self.bytes_read >= self.size) {
             return Poll::Ready(Ok(()));
         }
 
@@ -84,7 +84,7 @@ impl<R: AsyncRead + Unpin> AsyncRead for AsyncFixedReader<R> {
                 buf.advance(bytes_read);
                 self.bytes_read += bytes_read;
 
-                if bytes_read < to_read {
+                if likely_stable::unlikely(bytes_read < to_read) {
                     let unfilled = buf.initialize_unfilled_to(to_read - bytes_read);
                     for byte in unfilled {
                         *byte = 0;

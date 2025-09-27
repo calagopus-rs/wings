@@ -7,7 +7,7 @@ use anyhow::Context;
 use axum::extract::ws::{Message, WebSocket};
 use futures_util::stream::SplitSink;
 use serde_json::json;
-use std::net::IpAddr;
+use std::{net::IpAddr, str::FromStr};
 use tokio::sync::Mutex;
 
 pub async fn handle_message(
@@ -53,9 +53,9 @@ pub async fn handle_message(
             }
         }
         WebsocketEvent::SetState => {
-            let power_state = serde_json::from_value(serde_json::Value::from(
-                message.args.first().map_or("", |v| v.as_str()),
-            ))?;
+            let power_state = crate::models::ServerPowerAction::from_str(
+                message.args.first().map_or("", |s| s.as_str()),
+            )?;
 
             match power_state {
                 crate::models::ServerPowerAction::Start => {

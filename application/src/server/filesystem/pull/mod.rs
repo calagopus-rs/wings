@@ -228,6 +228,7 @@ impl Download {
         (identifier, task)
     }
 
+    #[inline]
     pub fn to_api_response(&self) -> crate::models::Download {
         crate::models::Download {
             identifier: self.identifier,

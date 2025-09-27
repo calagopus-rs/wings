@@ -34,6 +34,7 @@ pub async fn create_zip(
         let writer = AbortWriter::new(destination, listener);
         let mut archive = zip::ZipWriter::new(writer);
 
+        let mut read_buffer = vec![0; crate::BUFFER_SIZE];
         for source in sources {
             let relative = source;
             let source = base.join(&relative);
@@ -129,7 +130,7 @@ pub async fn create_zip(
                         };
 
                         archive.start_file(relative.to_string_lossy(), zip_options)?;
-                        std::io::copy(&mut reader, &mut archive)?;
+                        crate::io::copy_shared(&mut read_buffer, &mut reader, &mut archive)?;
                     } else if let Ok(link_target) = filesystem.read_link_contents(&path) {
                         archive.add_symlink(
                             relative.to_string_lossy(),
@@ -152,7 +153,7 @@ pub async fn create_zip(
                 };
 
                 archive.start_file(relative.to_string_lossy(), zip_options)?;
-                std::io::copy(&mut reader, &mut archive)?;
+                crate::io::copy_shared(&mut read_buffer, &mut reader, &mut archive)?;
             } else if let Ok(link_target) = filesystem.read_link_contents(&source) {
                 archive.add_symlink(
                     relative.to_string_lossy(),
@@ -191,6 +192,7 @@ pub async fn create_zip_streaming(
         let writer = AbortWriter::new(destination, listener);
         let mut archive = zip::ZipWriter::new_stream(writer);
 
+        let mut read_buffer = vec![0; crate::BUFFER_SIZE];
         for source in sources {
             let relative = source;
             let source = base.join(&relative);
@@ -286,7 +288,7 @@ pub async fn create_zip_streaming(
                         };
 
                         archive.start_file(relative.to_string_lossy(), zip_options)?;
-                        std::io::copy(&mut reader, &mut archive)?;
+                        crate::io::copy_shared(&mut read_buffer, &mut reader, &mut archive)?;
                     } else if let Ok(link_target) = filesystem.read_link_contents(&path) {
                         archive.add_symlink(
                             relative.to_string_lossy(),
@@ -309,7 +311,7 @@ pub async fn create_zip_streaming(
                 };
 
                 archive.start_file(relative.to_string_lossy(), zip_options)?;
-                std::io::copy(&mut reader, &mut archive)?;
+                crate::io::copy_shared(&mut read_buffer, &mut reader, &mut archive)?;
             } else if let Ok(link_target) = filesystem.read_link_contents(&source) {
                 archive.add_symlink(
                     relative.to_string_lossy(),
