@@ -5259,7 +5259,6 @@ dependencies = [
  "infer",
  "jwt",
  "libloading",
- "likely_stable",
  "lz4",
  "lzma-rust2 0.14.2",
  "md5 0.8.0",

@@ -27,7 +27,7 @@ impl<W: Write> LimitedWriter<W> {
 
 impl<W: Write> Write for LimitedWriter<W> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        if likely_stable::unlikely(buf.is_empty()) {
+        if crate::unlikely(buf.is_empty()) {
             return Ok(0);
         }
 
@@ -135,7 +135,7 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for AsyncLimitedWriter<W> {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
-        if likely_stable::unlikely(buf.is_empty()) {
+        if crate::unlikely(buf.is_empty()) {
             return Poll::Ready(Ok(0));
         }
 

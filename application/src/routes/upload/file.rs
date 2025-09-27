@@ -177,7 +177,7 @@ mod post {
                 .await;
 
             while let Ok(Some(chunk)) = field.chunk().await {
-                if likely_stable::unlikely(
+                if crate::unlikely(
                     written_size + chunk.len() > state.config.api.upload_limit * 1000 * 1000,
                 ) {
                     return ApiResponse::error(&format!(

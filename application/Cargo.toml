@@ -70,7 +70,6 @@ lz4 = "1.28.1"
 zstd = { version = "0.13.3", features = ["zstdmt"] }
 base64 = "0.22.1"
 chunked_vec = "=0.3.4"
-likely_stable = "0.1.3"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 tikv-jemallocator = "0.6.0"

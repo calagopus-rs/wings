@@ -26,7 +26,7 @@ impl<R: Read> LimitedReader<R> {
 
 impl<R: Read> Read for LimitedReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        if likely_stable::unlikely(buf.is_empty()) {
+        if crate::unlikely(buf.is_empty()) {
             return Ok(0);
         }
 
@@ -134,7 +134,7 @@ impl<R: AsyncRead + Unpin> AsyncRead for AsyncLimitedReader<R> {
     ) -> Poll<std::io::Result<()>> {
         let this = self.as_mut().get_mut();
 
-        if likely_stable::unlikely(buf.remaining() == 0) {
+        if crate::unlikely(buf.remaining() == 0) {
             return Poll::Ready(Ok(()));
         }
 

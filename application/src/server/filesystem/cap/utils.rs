@@ -154,7 +154,7 @@ impl<'a> AsyncWalkDir<'a> {
                         .ignored
                         .iter()
                         .any(|ignored| ignored.matched(&full_path, is_dir).is_ignore());
-                    if likely_stable::unlikely(should_ignore) {
+                    if crate::unlikely(should_ignore) {
                         continue 'stack;
                     }
 
@@ -196,7 +196,7 @@ impl<'a> AsyncWalkDir<'a> {
                     let error = Arc::clone(&error);
                     let func = Arc::clone(&func);
 
-                    if likely_stable::unlikely(error.read().await.is_some()) {
+                    if crate::unlikely(error.read().await.is_some()) {
                         break;
                     }
 
@@ -260,7 +260,7 @@ impl<'a> WalkDir<'a> {
                         .ignored
                         .iter()
                         .any(|ignored| ignored.matched(&full_path, is_dir).is_ignore());
-                    if likely_stable::unlikely(should_ignore) {
+                    if crate::unlikely(should_ignore) {
                         continue 'stack;
                     }
 

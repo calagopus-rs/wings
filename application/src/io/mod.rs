@@ -26,7 +26,7 @@ pub fn copy_shared(
     loop {
         let bytes_read = reader.read(buffer)?;
 
-        if likely_stable::unlikely(bytes_read == 0) {
+        if crate::unlikely(bytes_read == 0) {
             break;
         }
 
