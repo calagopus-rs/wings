@@ -18,7 +18,7 @@ impl Client {
         headers.insert(
             "User-Agent",
             format!(
-                "pterodactyl-rs wings/v{} (id:{})",
+                "calagopus-rs wings/v{} (id:{})",
                 crate::VERSION,
                 config.token_id
             )

@@ -283,7 +283,7 @@ async fn main() {
                 "{: >25} |_|  |___/",
                 format!("{} (git-{})", wings_rs::VERSION, wings_rs::GIT_COMMIT)
             );
-            tracing::info!("github.com/pterodactyl-rs/wings\n");
+            tracing::info!("github.com/calagopus-rs/wings\n");
         }
         _ => {
             cli().print_help().unwrap();
