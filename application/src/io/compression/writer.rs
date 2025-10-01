@@ -37,12 +37,7 @@ impl<'a, W: Write + Send + 'static> CompressionWriter<'a, W> {
                     writer,
                     {
                         let mut options =
-                            lzma_rust2::XzOptions::with_preset(match compression_level {
-                                CompressionLevel::BestSpeed => 1,
-                                CompressionLevel::GoodSpeed => 4,
-                                CompressionLevel::GoodCompression => 6,
-                                CompressionLevel::BestCompression => 9,
-                            });
+                            lzma_rust2::XzOptions::with_preset(compression_level.to_xz_level());
                         options.set_block_size(Some(std::num::NonZeroU64::new(1 << 20).unwrap()));
 
                         options
@@ -53,27 +48,14 @@ impl<'a, W: Write + Send + 'static> CompressionWriter<'a, W> {
             )),
             CompressionType::Bz2 => CompressionWriter::Bz2(bzip2::write::BzEncoder::new(
                 writer,
-                bzip2::Compression::new(match compression_level {
-                    CompressionLevel::BestSpeed => 1,
-                    CompressionLevel::GoodSpeed => 4,
-                    CompressionLevel::GoodCompression => 6,
-                    CompressionLevel::BestCompression => 9,
-                }),
+                bzip2::Compression::new(compression_level.to_bz2_level()),
             )),
             CompressionType::Lz4 => {
                 CompressionWriter::Lz4(lz4::EncoderBuilder::new().build(writer).unwrap())
             }
             CompressionType::Zstd => CompressionWriter::Zstd({
-                let mut encoder = zstd::Encoder::new(
-                    writer,
-                    match compression_level {
-                        CompressionLevel::BestSpeed => 1,
-                        CompressionLevel::GoodSpeed => 8,
-                        CompressionLevel::GoodCompression => 14,
-                        CompressionLevel::BestCompression => 22,
-                    },
-                )
-                .unwrap();
+                let mut encoder =
+                    zstd::Encoder::new(writer, compression_level.to_zstd_level()).unwrap();
                 encoder.multithread(threads as u32).ok();
 
                 encoder

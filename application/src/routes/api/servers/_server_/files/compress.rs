@@ -219,7 +219,14 @@ mod post {
                                     data.files.into_iter().map(PathBuf::from).collect(),
                                     Some(progress),
                                     vec![ignored],
-                                    crate::server::filesystem::archive::create::Create7zOptions {},
+                                    crate::server::filesystem::archive::create::Create7zOptions {
+                                        compression_level: state
+                                            .config
+                                            .system
+                                            .backups
+                                            .compression_level,
+                                        threads: state.config.api.file_compression_threads,
+                                    },
                                 )
                                 .await
                             }

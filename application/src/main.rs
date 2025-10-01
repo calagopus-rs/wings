@@ -55,15 +55,6 @@ fn cli() -> Command {
                 .value_parser(clap::value_parser!(bool))
                 .required(false),
         )
-        .arg(
-            Arg::new("extensions")
-                .help("set the location for the extensions directory")
-                .num_args(1)
-                .long("extensions")
-                .default_value("/etc/pterodactyl/extensions")
-                .global(true)
-                .required(false),
-        )
         .subcommand(
             Command::new("version")
                 .about("Prints the current executable version and exits.")
@@ -233,7 +224,6 @@ async fn main() {
     let matches = cli().get_matches();
 
     let config_path = matches.get_one::<String>("config").unwrap();
-    let extensions_path = matches.get_one::<String>("extensions").unwrap();
     let debug = *matches.get_one::<bool>("debug").unwrap();
     let ignore_certificate_errors = matches
         .get_one::<bool>("ignore_certificate_errors")
@@ -329,9 +319,6 @@ async fn main() {
         .context("failed to ensure docker network")
         .unwrap();
 
-    tracing::info!("loading extensions");
-    let extension_manager = Arc::new(wings_rs::extensions::manager::Manager::new(extensions_path));
-
     match config.client.reset_state().await {
         Ok(_) => tracing::info!("remote state reset successfully"),
         Err(err) => {
@@ -358,22 +345,12 @@ async fn main() {
         backup_manager: Arc::new(wings_rs::server::backup::manager::BackupManager::new(
             Arc::clone(&config),
         )),
-        extension_manager: Arc::clone(&extension_manager),
     });
 
     state.server_manager.boot(&state, servers).await;
 
-    let mut extension_router = OpenApiRouter::new();
-
-    for extension in extension_manager.get_extensions_mut_unchecked() {
-        extension.on_init(state.clone());
-
-        extension_router = extension_router.merge(extension.router(state.clone()));
-    }
-
     let app = OpenApiRouter::new()
         .merge(wings_rs::routes::router(&state))
-        .merge(extension_router)
         .fallback(|| async {
             (
                 StatusCode::NOT_FOUND,

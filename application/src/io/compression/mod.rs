@@ -35,4 +35,44 @@ impl CompressionLevel {
             CompressionLevel::BestCompression => 9,
         }
     }
+
+    #[inline]
+    pub const fn to_xz_level(self) -> u32 {
+        match self {
+            CompressionLevel::BestSpeed => 1,
+            CompressionLevel::GoodSpeed => 4,
+            CompressionLevel::GoodCompression => 6,
+            CompressionLevel::BestCompression => 9,
+        }
+    }
+
+    #[inline]
+    pub const fn to_bz2_level(self) -> u32 {
+        match self {
+            CompressionLevel::BestSpeed => 1,
+            CompressionLevel::GoodSpeed => 4,
+            CompressionLevel::GoodCompression => 6,
+            CompressionLevel::BestCompression => 9,
+        }
+    }
+
+    #[inline]
+    pub const fn to_zstd_level(self) -> i32 {
+        match self {
+            CompressionLevel::BestSpeed => 1,
+            CompressionLevel::GoodSpeed => 8,
+            CompressionLevel::GoodCompression => 14,
+            CompressionLevel::BestCompression => 22,
+        }
+    }
+
+    #[inline]
+    pub const fn to_lzma2_level(self) -> u32 {
+        match self {
+            CompressionLevel::BestSpeed => 1,
+            CompressionLevel::GoodSpeed => 4,
+            CompressionLevel::GoodCompression => 6,
+            CompressionLevel::BestCompression => 9,
+        }
+    }
 }

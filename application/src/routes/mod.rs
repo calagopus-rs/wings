@@ -16,7 +16,6 @@ pub struct AppState {
     pub docker: Arc<Docker>,
     pub server_manager: Arc<crate::server::manager::Manager>,
     pub backup_manager: Arc<crate::server::backup::manager::BackupManager>,
-    pub extension_manager: Arc<crate::extensions::manager::Manager>,
 }
 
 #[derive(ToSchema, Serialize)]

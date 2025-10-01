@@ -45,10 +45,12 @@ pub struct AbortReader<R: Read> {
 }
 
 impl<R: Read> AbortReader<R> {
+    #[inline]
     pub fn new(inner: R, listener: AbortListener) -> Self {
         Self { inner, listener }
     }
 
+    #[inline]
     pub fn into_inner(self) -> R {
         self.inner
     }
@@ -64,6 +66,7 @@ impl<R: Read + Clone> Clone for AbortReader<R> {
 }
 
 impl<R: Read> Read for AbortReader<R> {
+    #[inline]
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         if self.listener.is_aborted() {
             return Err(std::io::Error::other("Operation aborted"));
@@ -74,6 +77,7 @@ impl<R: Read> Read for AbortReader<R> {
 }
 
 impl<R: Read + Seek> Seek for AbortReader<R> {
+    #[inline]
     fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
         if self.listener.is_aborted() {
             return Err(std::io::Error::other("Operation aborted"));
@@ -89,10 +93,12 @@ pub struct AbortWriter<W: Write> {
 }
 
 impl<W: Write> AbortWriter<W> {
+    #[inline]
     pub fn new(inner: W, listener: AbortListener) -> Self {
         Self { inner, listener }
     }
 
+    #[inline]
     pub fn into_inner(self) -> W {
         self.inner
     }
@@ -108,6 +114,7 @@ impl<W: Write + Clone> Clone for AbortWriter<W> {
 }
 
 impl<W: Write> Write for AbortWriter<W> {
+    #[inline]
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         if self.listener.is_aborted() {
             return Err(std::io::Error::other("Operation aborted"));
@@ -116,6 +123,7 @@ impl<W: Write> Write for AbortWriter<W> {
         self.inner.write(buf)
     }
 
+    #[inline]
     fn flush(&mut self) -> std::io::Result<()> {
         if self.listener.is_aborted() {
             return Err(std::io::Error::other("Operation aborted"));
@@ -126,6 +134,7 @@ impl<W: Write> Write for AbortWriter<W> {
 }
 
 impl<W: Write + Seek> Seek for AbortWriter<W> {
+    #[inline]
     fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
         if self.listener.is_aborted() {
             return Err(std::io::Error::other("Operation aborted"));

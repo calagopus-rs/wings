@@ -1,6 +1,11 @@
 use crate::io::{
     abort::{AbortGuard, AbortWriter},
+    compression::CompressionLevel,
     counting_reader::CountingReader,
+};
+use sevenz_rust2::{
+    EncoderConfiguration, EncoderMethod,
+    encoder_options::{EncoderOptions, Lzma2Options},
 };
 use std::{
     io::{Read, Seek, Write},
@@ -11,7 +16,10 @@ use std::{
     },
 };
 
-pub struct Create7zOptions {}
+pub struct Create7zOptions {
+    pub compression_level: CompressionLevel,
+    pub threads: usize,
+}
 
 pub async fn create_7z(
     filesystem: crate::server::filesystem::cap::CapFilesystem,
@@ -20,7 +28,7 @@ pub async fn create_7z(
     sources: Vec<PathBuf>,
     bytes_archived: Option<Arc<AtomicU64>>,
     ignored: Vec<ignore::gitignore::Gitignore>,
-    _options: Create7zOptions,
+    options: Create7zOptions,
 ) -> Result<(), anyhow::Error> {
     let base = filesystem.relative_path(base);
     let (_guard, listener) = AbortGuard::new();
@@ -28,6 +36,16 @@ pub async fn create_7z(
     tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
         let writer = AbortWriter::new(destination, listener);
         let mut archive = sevenz_rust2::ArchiveWriter::new(writer)?;
+
+        archive.set_content_methods(vec![
+            EncoderConfiguration::new(EncoderMethod::LZMA2).with_options(EncoderOptions::Lzma2(
+                Lzma2Options::from_level_mt(
+                    options.compression_level.to_lzma2_level(),
+                    options.threads as u32,
+                    16 * 1024,
+                ),
+            )),
+        ]);
 
         for source in sources {
             let relative = source;

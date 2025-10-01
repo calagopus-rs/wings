@@ -864,7 +864,19 @@ impl ScheduleAction {
                                     files.into_iter().map(PathBuf::from).collect(),
                                     None,
                                     vec![ignored],
-                                    crate::server::filesystem::archive::create::Create7zOptions {},
+                                    crate::server::filesystem::archive::create::Create7zOptions {
+                                        compression_level: server
+                                            .app_state
+                                            .config
+                                            .system
+                                            .backups
+                                            .compression_level,
+                                        threads: server
+                                            .app_state
+                                            .config
+                                            .api
+                                            .file_compression_threads,
+                                    },
                                 )
                                 .await
                             }
