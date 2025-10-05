@@ -90,6 +90,7 @@ impl<'a, W: Write + Send + 'static> CompressionWriter<'a, W> {
 }
 
 impl<'a, R: Write + Send + 'static> Write for CompressionWriter<'a, R> {
+    #[inline]
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         match self {
             CompressionWriter::None(writer) => writer.write(buf),
@@ -101,6 +102,7 @@ impl<'a, R: Write + Send + 'static> Write for CompressionWriter<'a, R> {
         }
     }
 
+    #[inline]
     fn flush(&mut self) -> std::io::Result<()> {
         match self {
             CompressionWriter::None(writer) => writer.flush(),

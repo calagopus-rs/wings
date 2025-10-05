@@ -41,7 +41,7 @@ api:
   file_search_threads: 4
   # how many threads to use when decompressing .zip/.7z/.ddup
   file_decompression_threads: 2
-  # how many threads to use when compressing .gz/.xz
+  # how many threads to use when compressing .gz/.xz/.7z
   file_compression_threads: 2
 
 system:
@@ -83,12 +83,12 @@ system:
 
     # settings for the wings backup driver
     wings:
-      # how many threads to use when creating a .gz/.xz wings backup
+      # how many threads to use when creating a .gz/.xz/.7z wings backup
       create_threads: 4
       # how many threads to use when restoring a zip wings backup
       restore_threads: 4
       # what archive format to use for local (wings) backups
-      # tar, tar_gz, tar_zstd, zip
+      # tar, tar_gz, tar_xz, tar_bz2, tar_lz4, tar_zstd, zip, seven_zip
       archive_format: tar_gz
 
     # settings for the s3 backup driver
@@ -116,8 +116,6 @@ system:
       password-file: /var/lib/pterodactyl/backups/restic_password
       # how long to wait for a repository lock if locked in seconds (can be overriden by panel)
       retry_lock_seconds: 60
-      # whether to ignore the panel restic backup list (only if you know what you are doing)
-      ignore_server_backup_list: false
       # the restic cli environment for each command (useful for s3 credentials, etc, can be overriden by panel)
       environment: {}
 

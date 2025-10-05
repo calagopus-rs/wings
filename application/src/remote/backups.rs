@@ -11,13 +11,15 @@ pub struct RawServerBackupPart {
     pub part_number: usize,
 }
 
-#[derive(Debug, ToSchema, Serialize)]
+#[derive(Debug, Default, ToSchema, Serialize)]
 pub struct RawServerBackup {
     pub checksum: String,
     pub checksum_type: String,
     pub size: u64,
     pub files: u64,
     pub successful: bool,
+    pub browsable: bool,
+    pub streaming: bool,
     pub parts: Vec<RawServerBackupPart>,
 }
 

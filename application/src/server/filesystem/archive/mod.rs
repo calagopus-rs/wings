@@ -8,7 +8,7 @@ use crate::io::{
     counting_writer::CountingWriter,
 };
 use cap_std::fs::{Permissions, PermissionsExt as _};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
     io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
@@ -34,6 +34,79 @@ pub enum ArchiveType {
     Rar,
     SevenZip,
     Ddup,
+}
+
+#[derive(ToSchema, Deserialize, Serialize, Default, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+#[schema(rename_all = "snake_case")]
+pub enum ArchiveFormat {
+    Tar,
+    #[default]
+    TarGz,
+    TarXz,
+    TarBz2,
+    TarLz4,
+    TarZstd,
+    Zip,
+    SevenZip,
+}
+
+impl ArchiveFormat {
+    #[inline]
+    pub fn variants() -> &'static [ArchiveFormat] {
+        &[
+            ArchiveFormat::Tar,
+            ArchiveFormat::TarGz,
+            ArchiveFormat::TarXz,
+            ArchiveFormat::TarBz2,
+            ArchiveFormat::TarLz4,
+            ArchiveFormat::TarZstd,
+            ArchiveFormat::Zip,
+            ArchiveFormat::SevenZip,
+        ]
+    }
+
+    #[inline]
+    pub fn compression_format(self) -> CompressionType {
+        match self {
+            ArchiveFormat::Tar => CompressionType::None,
+            ArchiveFormat::TarGz => CompressionType::Gz,
+            ArchiveFormat::TarXz => CompressionType::Xz,
+            ArchiveFormat::TarBz2 => CompressionType::Bz2,
+            ArchiveFormat::TarLz4 => CompressionType::Lz4,
+            ArchiveFormat::TarZstd => CompressionType::Zstd,
+            ArchiveFormat::Zip => CompressionType::None,
+            ArchiveFormat::SevenZip => CompressionType::None,
+        }
+    }
+
+    #[inline]
+    pub fn extension(self) -> &'static str {
+        match self {
+            ArchiveFormat::Tar => "tar",
+            ArchiveFormat::TarGz => "tar.gz",
+            ArchiveFormat::TarXz => "tar.xz",
+            ArchiveFormat::TarBz2 => "tar.bz2",
+            ArchiveFormat::TarLz4 => "tar.lz4",
+            ArchiveFormat::TarZstd => "tar.zst",
+            ArchiveFormat::Zip => "zip",
+            ArchiveFormat::SevenZip => "7z",
+        }
+    }
+
+    #[inline]
+    pub fn mime_type(self) -> &'static str {
+        match self {
+            ArchiveFormat::Tar => "application/x-tar",
+            ArchiveFormat::TarGz => "application/gzip",
+            ArchiveFormat::TarXz => "application/x-xz",
+            ArchiveFormat::TarBz2 => "application/x-bzip2",
+            ArchiveFormat::TarLz4 => "application/x-lz4",
+            ArchiveFormat::TarZstd => "application/zstd",
+            ArchiveFormat::Zip => "application/zip",
+            ArchiveFormat::SevenZip => "application/x-7z-compressed",
+        }
+    }
 }
 
 #[derive(ToSchema, Deserialize, Default, Clone, Copy)]

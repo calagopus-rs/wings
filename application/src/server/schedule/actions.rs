@@ -1,7 +1,9 @@
 use crate::{
-    io::compression::CompressionType,
     routes::State,
-    server::activity::{Activity, ActivityEvent},
+    server::{
+        activity::{Activity, ActivityEvent},
+        filesystem::archive::ArchiveFormat,
+    },
 };
 use cap_std::fs::OpenOptions;
 use serde::{Deserialize, Serialize};
@@ -15,19 +17,6 @@ use tokio::io::AsyncWriteExt;
 pub struct RenameFile {
     pub from: String,
     pub to: String,
-}
-
-#[derive(Clone, Copy, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ArchiveFormat {
-    Tar,
-    TarGz,
-    TarXz,
-    TarBz2,
-    TarLz4,
-    TarZstd,
-    Zip,
-    SevenZip,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -813,15 +802,7 @@ impl ScheduleAction {
                                     None,
                                     vec![ignored],
                                     crate::server::filesystem::archive::create::CreateTarOptions {
-                                        compression_type: match format {
-                                            ArchiveFormat::Tar => CompressionType::None,
-                                            ArchiveFormat::TarGz => CompressionType::Gz,
-                                            ArchiveFormat::TarXz => CompressionType::Xz,
-                                            ArchiveFormat::TarBz2 => CompressionType::Bz2,
-                                            ArchiveFormat::TarLz4 => CompressionType::Lz4,
-                                            ArchiveFormat::TarZstd => CompressionType::Zstd,
-                                            _ => unreachable!(),
-                                        },
+                                        compression_type: format.compression_format(),
                                         compression_level: server
                                             .app_state
                                             .config

@@ -33,6 +33,7 @@ impl<'a, R: Read> CompressionReader<'a, R> {
 }
 
 impl<'a, R: Read> Read for CompressionReader<'a, R> {
+    #[inline]
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         match self {
             CompressionReader::None(reader) => reader.read(buf),

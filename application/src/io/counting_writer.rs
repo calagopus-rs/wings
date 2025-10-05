@@ -18,6 +18,7 @@ impl<R: std::io::Write> CountingWriter<R> {
 }
 
 impl<R: std::io::Write> std::io::Write for CountingWriter<R> {
+    #[inline]
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let bytes_written = self.inner.write(buf)?;
         self.bytes_written
@@ -25,6 +26,7 @@ impl<R: std::io::Write> std::io::Write for CountingWriter<R> {
         Ok(bytes_written)
     }
 
+    #[inline]
     fn flush(&mut self) -> std::io::Result<()> {
         self.inner.flush()
     }

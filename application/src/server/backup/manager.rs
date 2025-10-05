@@ -181,17 +181,7 @@ impl BackupManager {
                     .app_state
                     .config
                     .client
-                    .set_backup_status(
-                        uuid,
-                        &RawServerBackup {
-                            checksum: String::new(),
-                            checksum_type: String::new(),
-                            size: 0,
-                            files: 0,
-                            successful: false,
-                            parts: vec![],
-                        },
-                    )
+                    .set_backup_status(uuid, &RawServerBackup::default())
                     .await?;
                 server
                     .websocket
@@ -205,6 +195,8 @@ impl BackupManager {
                                 "size": 0,
                                 "files": 0,
                                 "successful": false,
+                                "browsable": false,
+                                "streaming": false,
                             })
                             .to_string(),
                         ],
@@ -240,6 +232,8 @@ impl BackupManager {
                         "size": backup.size,
                         "files": backup.files,
                         "successful": backup.successful,
+                        "browsable": backup.browsable,
+                        "streaming": backup.streaming,
                     })
                     .to_string(),
                 ],

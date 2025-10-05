@@ -214,6 +214,8 @@ impl BackupCreateExt for BtrfsBackup {
             size: total_size,
             files: total_files,
             successful: true,
+            browsable: true,
+            streaming: true,
             parts: vec![],
         })
     }

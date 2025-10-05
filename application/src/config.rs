@@ -487,13 +487,7 @@ nestify::nest! {
                     pub restore_threads: usize,
 
                     #[serde(default)]
-                    pub archive_format: #[derive(Clone, Copy, Deserialize, Serialize, Default)] #[serde(rename_all = "snake_case")] pub enum SystemBackupsWingsArchiveFormat {
-                        Tar,
-                        #[default]
-                        TarGz,
-                        TarZstd,
-                        Zip,
-                    },
+                    pub archive_format: crate::server::filesystem::archive::ArchiveFormat,
                 },
                 #[serde(default)]
                 pub s3: #[derive(Deserialize, Serialize, DefaultFromSerde)] #[serde(default)] pub struct SystemBackupsS3 {

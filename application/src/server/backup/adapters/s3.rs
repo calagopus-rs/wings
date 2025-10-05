@@ -353,6 +353,8 @@ impl BackupCreateExt for S3Backup {
             size,
             files: total_files,
             successful: true,
+            browsable: false,
+            streaming: false,
             parts,
         })
     }

@@ -6,6 +6,7 @@ mod post {
         io::compression::CompressionType,
         response::{ApiResponse, ApiResponseResult},
         routes::{ApiError, GetState, api::servers::_server_::GetServer},
+        server::filesystem::archive::ArchiveFormat,
     };
     use axum::http::StatusCode;
     use serde::{Deserialize, Serialize};
@@ -17,21 +18,6 @@ mod post {
 
     fn foreground() -> bool {
         true
-    }
-
-    #[derive(ToSchema, Deserialize, Default, Clone, Copy)]
-    #[serde(rename_all = "snake_case")]
-    #[schema(rename_all = "snake_case")]
-    pub enum ArchiveFormat {
-        Tar,
-        #[default]
-        TarGz,
-        TarXz,
-        TarBz2,
-        TarLz4,
-        TarZstd,
-        Zip,
-        SevenZip,
     }
 
     #[derive(ToSchema, Deserialize)]

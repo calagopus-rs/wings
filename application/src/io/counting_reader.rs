@@ -20,6 +20,7 @@ impl<R: std::io::Read> CountingReader<R> {
 }
 
 impl<R: std::io::Read> std::io::Read for CountingReader<R> {
+    #[inline]
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         let bytes_read = self.inner.read(buf)?;
         self.bytes_read

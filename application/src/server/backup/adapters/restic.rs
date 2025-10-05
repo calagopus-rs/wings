@@ -537,6 +537,8 @@ impl BackupCreateExt for ResticBackup {
             size: total_bytes_processed,
             files: total_files_processed,
             successful: true,
+            browsable: true,
+            streaming: true,
             parts: vec![],
         })
     }

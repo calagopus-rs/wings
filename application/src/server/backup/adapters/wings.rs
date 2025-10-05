@@ -1,6 +1,6 @@
 use crate::{
     io::{
-        compression::{CompressionType, reader::CompressionReader, writer::CompressionWriter},
+        compression::{reader::CompressionReader, writer::CompressionWriter},
         counting_reader::CountingReader,
         limited_reader::LimitedReader,
         limited_writer::LimitedWriter,
@@ -14,12 +14,17 @@ use crate::{
             BrowseBackup,
         },
         filesystem::archive::{
-            StreamableArchiveFormat, multi_reader::MultiReader, zip_entry_get_modified_time,
+            ArchiveFormat, StreamableArchiveFormat, multi_reader::MultiReader,
+            zip_entry_get_modified_time,
         },
     },
 };
-use axum::{body::Body, http::HeaderMap};
+use axum::{
+    body::Body,
+    http::{HeaderMap, HeaderValue},
+};
 use cap_std::fs::{Permissions, PermissionsExt};
+use chrono::{Datelike, Timelike};
 use sha1::Digest;
 use std::{
     io::{Read, Seek, Write},
@@ -33,85 +38,49 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 pub struct WingsBackup {
     uuid: uuid::Uuid,
-    format: crate::config::SystemBackupsWingsArchiveFormat,
+    format: ArchiveFormat,
 
     path: PathBuf,
 }
 
 impl WingsBackup {
     #[inline]
-    fn get_tar_file_name(config: &crate::config::Config, uuid: uuid::Uuid) -> PathBuf {
-        Path::new(&config.system.backup_directory).join(format!("{uuid}.tar"))
-    }
-
-    #[inline]
-    fn get_tar_gz_file_name(config: &crate::config::Config, uuid: uuid::Uuid) -> PathBuf {
-        Path::new(&config.system.backup_directory).join(format!("{uuid}.tar.gz"))
-    }
-
-    #[inline]
-    fn get_tar_zstd_file_name(config: &crate::config::Config, uuid: uuid::Uuid) -> PathBuf {
-        Path::new(&config.system.backup_directory).join(format!("{uuid}.tar.zst"))
-    }
-
-    #[inline]
-    fn get_zip_file_name(config: &crate::config::Config, uuid: uuid::Uuid) -> PathBuf {
-        Path::new(&config.system.backup_directory).join(format!("{uuid}.zip"))
+    fn get_format_file_name(
+        config: &crate::config::Config,
+        uuid: uuid::Uuid,
+        format: ArchiveFormat,
+    ) -> PathBuf {
+        Path::new(&config.system.backup_directory).join(format!("{uuid}.{}", format.extension()))
     }
 
     #[inline]
     fn get_file_name(config: &crate::config::Config, uuid: uuid::Uuid) -> PathBuf {
-        match config.system.backups.wings.archive_format {
-            crate::config::SystemBackupsWingsArchiveFormat::Tar => {
-                Self::get_tar_file_name(config, uuid)
-            }
-            crate::config::SystemBackupsWingsArchiveFormat::TarGz => {
-                Self::get_tar_gz_file_name(config, uuid)
-            }
-            crate::config::SystemBackupsWingsArchiveFormat::TarZstd => {
-                Self::get_tar_zstd_file_name(config, uuid)
-            }
-            crate::config::SystemBackupsWingsArchiveFormat::Zip => {
-                Self::get_zip_file_name(config, uuid)
-            }
-        }
+        Self::get_format_file_name(config, uuid, config.system.backups.wings.archive_format)
     }
 
     #[inline]
     pub async fn get_first_file_name(
         config: &crate::config::Config,
         uuid: uuid::Uuid,
-    ) -> Result<(crate::config::SystemBackupsWingsArchiveFormat, PathBuf), anyhow::Error> {
-        let file_name = Self::get_tar_file_name(config, uuid);
-        if tokio::fs::metadata(&file_name).await.is_ok() {
-            return Ok((
-                crate::config::SystemBackupsWingsArchiveFormat::Tar,
-                file_name,
-            ));
+    ) -> Result<(ArchiveFormat, PathBuf), anyhow::Error> {
+        let mut futures = Vec::new();
+        futures.reserve_exact(ArchiveFormat::variants().len());
+        for format in ArchiveFormat::variants() {
+            let file_name = Self::get_format_file_name(config, uuid, *format);
+            futures.push(async move {
+                (
+                    tokio::fs::metadata(&file_name).await.is_ok(),
+                    *format,
+                    file_name,
+                )
+            });
         }
 
-        let file_name = Self::get_tar_gz_file_name(config, uuid);
-        if tokio::fs::metadata(&file_name).await.is_ok() {
-            return Ok((
-                crate::config::SystemBackupsWingsArchiveFormat::TarGz,
-                file_name,
-            ));
-        }
-
-        let file_name = Self::get_tar_zstd_file_name(config, uuid);
-        if tokio::fs::metadata(&file_name).await.is_ok() {
-            return Ok((
-                crate::config::SystemBackupsWingsArchiveFormat::TarZstd,
-                file_name,
-            ));
-        }
-
-        let file_name = Self::get_zip_file_name(config, uuid);
-        if tokio::fs::metadata(&file_name).await.is_ok() {
-            return Ok((
-                crate::config::SystemBackupsWingsArchiveFormat::Zip,
-                file_name,
-            ));
+        let results = futures_util::future::join_all(futures).await;
+        for (found, format, file_name) in results {
+            if found {
+                return Ok((format, file_name));
+            }
         }
 
         Err(anyhow::anyhow!("no backup file found for backup {}", uuid))
@@ -189,9 +158,12 @@ impl BackupCreateExt for WingsBackup {
             );
 
             match server.app_state.config.system.backups.wings.archive_format {
-                crate::config::SystemBackupsWingsArchiveFormat::Tar
-                | crate::config::SystemBackupsWingsArchiveFormat::TarGz
-                | crate::config::SystemBackupsWingsArchiveFormat::TarZstd => {
+                ArchiveFormat::Tar
+                | ArchiveFormat::TarGz
+                | ArchiveFormat::TarXz
+                | ArchiveFormat::TarBz2
+                | ArchiveFormat::TarLz4
+                | ArchiveFormat::TarZstd => {
                     crate::server::filesystem::archive::create::create_tar(
                         server.filesystem.clone(),
                         writer,
@@ -200,25 +172,14 @@ impl BackupCreateExt for WingsBackup {
                         Some(progress),
                         vec![ignore],
                         crate::server::filesystem::archive::create::CreateTarOptions {
-                            compression_type: match server
+                            compression_type: server
                                 .app_state
                                 .config
                                 .system
                                 .backups
                                 .wings
                                 .archive_format
-                            {
-                                crate::config::SystemBackupsWingsArchiveFormat::Tar => {
-                                    CompressionType::None
-                                }
-                                crate::config::SystemBackupsWingsArchiveFormat::TarGz => {
-                                    CompressionType::Gz
-                                }
-                                crate::config::SystemBackupsWingsArchiveFormat::TarZstd => {
-                                    CompressionType::Zstd
-                                }
-                                _ => unreachable!(),
-                            },
+                                .compression_format(),
                             compression_level: server
                                 .app_state
                                 .config
@@ -230,7 +191,7 @@ impl BackupCreateExt for WingsBackup {
                     )
                     .await
                 }
-                crate::config::SystemBackupsWingsArchiveFormat::Zip => {
+                ArchiveFormat::Zip => {
                     crate::server::filesystem::archive::create::create_zip(
                         server.filesystem.clone(),
                         writer,
@@ -245,6 +206,26 @@ impl BackupCreateExt for WingsBackup {
                                 .system
                                 .backups
                                 .compression_level,
+                        },
+                    )
+                    .await
+                }
+                ArchiveFormat::SevenZip => {
+                    crate::server::filesystem::archive::create::create_7z(
+                        server.filesystem.clone(),
+                        writer,
+                        Path::new(""),
+                        sources.into_iter().map(PathBuf::from).collect(),
+                        Some(progress),
+                        vec![ignore],
+                        crate::server::filesystem::archive::create::Create7zOptions {
+                            compression_level: server
+                                .app_state
+                                .config
+                                .system
+                                .backups
+                                .compression_level,
+                            threads: server.app_state.config.system.backups.wings.create_threads,
                         },
                     )
                     .await
@@ -271,6 +252,11 @@ impl BackupCreateExt for WingsBackup {
             size: tokio::fs::metadata(file_name).await?.len(),
             files: total_files,
             successful: true,
+            browsable: matches!(
+                server.app_state.config.system.backups.wings.archive_format,
+                ArchiveFormat::Zip | ArchiveFormat::SevenZip
+            ),
+            streaming: false,
             parts: vec![],
         })
     }
@@ -291,37 +277,18 @@ impl BackupExt for WingsBackup {
         let file = tokio::fs::File::open(&self.path).await?;
 
         let mut headers = HeaderMap::with_capacity(3);
-        match self.format {
-            crate::config::SystemBackupsWingsArchiveFormat::Tar => {
-                headers.insert(
-                    "Content-Disposition",
-                    format!("attachment; filename={}.tar", self.uuid).parse()?,
-                );
-                headers.insert("Content-Type", "application/x-tar".parse()?);
-            }
-            crate::config::SystemBackupsWingsArchiveFormat::TarGz => {
-                headers.insert(
-                    "Content-Disposition",
-                    format!("attachment; filename={}.tar.gz", self.uuid).parse()?,
-                );
-                headers.insert("Content-Type", "application/gzip".parse()?);
-            }
-            crate::config::SystemBackupsWingsArchiveFormat::TarZstd => {
-                headers.insert(
-                    "Content-Disposition",
-                    format!("attachment; filename={}.tar.zst", self.uuid).parse()?,
-                );
-                headers.insert("Content-Type", "application/zstd".parse()?);
-            }
-            crate::config::SystemBackupsWingsArchiveFormat::Zip => {
-                headers.insert(
-                    "Content-Disposition",
-                    format!("attachment; filename={}.zip", self.uuid).parse()?,
-                );
-                headers.insert("Content-Type", "application/zip".parse()?);
-            }
-        };
-
+        headers.insert(
+            "Content-Disposition",
+            HeaderValue::try_from(format!(
+                "attachment; filename={}.{}",
+                self.uuid,
+                self.format.extension()
+            ))?,
+        );
+        headers.insert(
+            "Content-Type",
+            HeaderValue::from_static(self.format.mime_type()),
+        );
         headers.insert("Content-Length", file.metadata().await?.len().into());
 
         Ok(ApiResponse::new(Body::from_stream(
@@ -340,18 +307,14 @@ impl BackupExt for WingsBackup {
         let file = tokio::fs::File::open(&self.path).await?.into_std().await;
 
         match self.format {
-            crate::config::SystemBackupsWingsArchiveFormat::Tar
-            | crate::config::SystemBackupsWingsArchiveFormat::TarGz
-            | crate::config::SystemBackupsWingsArchiveFormat::TarZstd => {
-                let compression_type = match self.format {
-                    crate::config::SystemBackupsWingsArchiveFormat::Tar => CompressionType::None,
-                    crate::config::SystemBackupsWingsArchiveFormat::TarGz => CompressionType::Gz,
-                    crate::config::SystemBackupsWingsArchiveFormat::TarZstd => {
-                        CompressionType::Zstd
-                    }
-                    _ => unreachable!(),
-                };
+            ArchiveFormat::Tar
+            | ArchiveFormat::TarGz
+            | ArchiveFormat::TarXz
+            | ArchiveFormat::TarBz2
+            | ArchiveFormat::TarLz4
+            | ArchiveFormat::TarZstd => {
                 let runtime = tokio::runtime::Handle::current();
+                let compression_type = self.format.compression_format();
                 let server = server.clone();
 
                 tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
@@ -457,7 +420,7 @@ impl BackupExt for WingsBackup {
                 })
                 .await??;
             }
-            crate::config::SystemBackupsWingsArchiveFormat::Zip => {
+            ArchiveFormat::Zip => {
                 let runtime = tokio::runtime::Handle::current();
                 let server = server.clone();
 
@@ -624,6 +587,155 @@ impl BackupExt for WingsBackup {
                 })
                 .await??;
             }
+            ArchiveFormat::SevenZip => {
+                let runtime = tokio::runtime::Handle::current();
+                let server = server.clone();
+
+                tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
+                    let reader = MultiReader::new(Arc::new(file))?;
+                    let password = sevenz_rust2::Password::empty();
+                    let archive = sevenz_rust2::Archive::read(&mut reader.clone(), &password)?;
+
+                    total.store(
+                        archive.files.iter().map(|f| f.size).sum(),
+                        Ordering::Relaxed,
+                    );
+
+                    let pool = rayon::ThreadPoolBuilder::new()
+                        .num_threads(server.app_state.config.system.backups.wings.restore_threads)
+                        .build()
+                        .unwrap();
+
+                    let error = Arc::new(RwLock::new(None));
+
+                    pool.in_place_scope(|scope| {
+                        for block_index in 0..archive.blocks.len() {
+                            let archive = archive.clone();
+                            let progress = progress.clone();
+                            let mut reader = reader.clone();
+                            let runtime = runtime.clone();
+                            let server = server.clone();
+                            let error_clone = Arc::clone(&error);
+
+                            scope.spawn(move |_| {
+                                if error_clone.read().unwrap().is_some() {
+                                    return;
+                                }
+
+                                let password = sevenz_rust2::Password::empty();
+                                let folder = sevenz_rust2::BlockDecoder::new(
+                                    1,
+                                    block_index,
+                                    &archive,
+                                    &password,
+                                    &mut reader,
+                                );
+
+                                let mut read_buffer = vec![0; crate::BUFFER_SIZE];
+                                if let Err(err) = folder.for_each_entries(&mut |entry, reader| {
+                                    let path = entry.name();
+                                    if path.starts_with('/') || path.starts_with('\\') {
+                                        return Ok(true);
+                                    }
+
+                                    let destination_path = Path::new(path);
+
+                                    if server
+                                        .filesystem
+                                        .is_ignored_sync(destination_path, entry.is_directory())
+                                    {
+                                        return Ok(true);
+                                    }
+
+                                    if entry.is_directory() {
+                                        if let Err(err) =
+                                            server.filesystem.create_dir_all(destination_path)
+                                        {
+                                            return Err(sevenz_rust2::Error::Other(
+                                                err.to_string().into(),
+                                            ));
+                                        }
+                                    } else {
+                                        runtime.block_on(
+                                            server.log_daemon(format!("(restoring): {path}")),
+                                        );
+
+                                        if let Some(parent) = destination_path.parent()
+                                            && let Err(err) =
+                                                server.filesystem.create_dir_all(parent)
+                                        {
+                                            return Err(sevenz_rust2::Error::Other(
+                                                err.to_string().into(),
+                                            ));
+                                        }
+
+                                        let mut writer = crate::server::filesystem::writer::FileSystemWriter::new(
+                                            server.clone(),
+                                            destination_path,
+                                            None,
+                                            if entry.has_last_modified_date {
+                                                Some(cap_std::time::SystemTime::from_std(
+                                                    entry.last_modified_date.into(),
+                                                ))
+                                            } else {
+                                                None
+                                            },
+                                        )
+                                        .map_err(|e| std::io::Error::other(e.to_string()))?;
+
+                                        let mut reader = CountingReader::new_with_bytes_read(
+                                            reader,
+                                            Arc::clone(&progress),
+                                        );
+
+                                        crate::io::copy_shared(
+                                            &mut read_buffer,
+                                            &mut reader,
+                                            &mut writer,
+                                        )?;
+                                        writer.flush()?;
+                                    }
+
+                                    Ok(true)
+                                }) {
+                                    error_clone.write().unwrap().replace(err);
+                                }
+                            });
+                        }
+                    });
+
+                    if let Some(err) = error.write().unwrap().take() {
+                        Err(err.into())
+                    } else {
+                        for entry in archive.files {
+                            if entry.is_directory() && entry.has_last_modified_date {
+                                let path = entry.name();
+                                if path.starts_with('/') || path.starts_with('\\') {
+                                    continue;
+                                }
+
+                                let destination_path = Path::new(path);
+
+                                if server
+                                    .filesystem
+                                    .is_ignored_sync(destination_path, entry.is_directory())
+                                {
+                                    continue;
+                                }
+
+                                server.filesystem.set_times(
+                                    destination_path,
+                                    entry.last_modified_date.into(),
+                                    None,
+                                )?;
+                            }
+                        }
+
+                        Ok(())
+                    }
+                })
+                .await??;
+            }
         };
 
         Ok(())
@@ -637,14 +749,29 @@ impl BackupExt for WingsBackup {
 
     async fn browse(&self, server: &crate::server::Server) -> Result<BrowseBackup, anyhow::Error> {
         match self.format {
-            crate::config::SystemBackupsWingsArchiveFormat::Zip => {
-                let archive = zip::ZipArchive::new(Arc::new(
-                    tokio::fs::File::open(&self.path).await?.into_std().await,
-                ))?;
+            ArchiveFormat::Zip => {
+                let reader = Arc::new(tokio::fs::File::open(&self.path).await?.into_std().await);
+                let archive =
+                    tokio::task::spawn_blocking(move || zip::ZipArchive::new(reader)).await??;
 
                 Ok(BrowseBackup::Wings(BrowseWingsBackup {
                     server: server.clone(),
-                    archive,
+                    archive: BrowseWingsBackupArchive::Zip(archive),
+                }))
+            }
+            ArchiveFormat::SevenZip => {
+                let reader = Arc::new(tokio::fs::File::open(&self.path).await?.into_std().await);
+                let password = sevenz_rust2::Password::empty();
+                let archive = tokio::task::spawn_blocking({
+                    let mut reader = reader.clone();
+
+                    move || sevenz_rust2::Archive::read(&mut reader, &password)
+                })
+                .await??;
+
+                Ok(BrowseBackup::Wings(BrowseWingsBackup {
+                    server: server.clone(),
+                    archive: BrowseWingsBackupArchive::SevenZip(Arc::new(archive), reader),
                 }))
             }
             _ => Err(anyhow::anyhow!(
@@ -668,9 +795,15 @@ impl BackupCleanExt for WingsBackup {
     }
 }
 
+#[derive(Clone)]
+pub enum BrowseWingsBackupArchive {
+    Zip(zip::ZipArchive<Arc<std::fs::File>>),
+    SevenZip(Arc<sevenz_rust2::Archive>, Arc<std::fs::File>),
+}
+
 pub struct BrowseWingsBackup {
     server: crate::server::Server,
-    archive: zip::ZipArchive<Arc<std::fs::File>>,
+    archive: BrowseWingsBackupArchive,
 }
 
 impl BrowseWingsBackup {
@@ -757,6 +890,86 @@ impl BrowseWingsBackup {
             mime,
         }
     }
+
+    fn seven_zip_entry_to_directory_entry(
+        path: &Path,
+        sizes: &[(u64, PathBuf)],
+        entry: &sevenz_rust2::ArchiveEntry,
+        reader: &mut dyn Read,
+    ) -> DirectoryEntry {
+        let size = if entry.is_directory() {
+            sizes
+                .iter()
+                .filter(|(_, name)| name.starts_with(path))
+                .map(|(size, _)| *size)
+                .sum()
+        } else {
+            entry.size()
+        };
+
+        let mut buffer = [0; 64];
+        let buffer = if reader.read(&mut buffer).is_err() {
+            None
+        } else {
+            Some(&buffer)
+        };
+
+        let mime = if entry.is_directory() {
+            "inode/directory"
+        } else if let Some(buffer) = buffer {
+            if let Some(mime) = infer::get(buffer) {
+                mime.mime_type()
+            } else if let Some(mime) = new_mime_guess::from_path(entry.name()).iter_raw().next() {
+                mime
+            } else if crate::is_valid_utf8_slice(buffer) || buffer.is_empty() {
+                "text/plain"
+            } else {
+                "application/octet-stream"
+            }
+        } else {
+            "application/octet-stream"
+        };
+
+        let mut mode_str = String::new();
+        let mode = if entry.is_directory() { 0o755 } else { 0o644 };
+
+        mode_str.reserve_exact(10);
+        mode_str.push(if entry.is_directory() { 'd' } else { '-' });
+
+        const RWX: &str = "rwxrwxrwx";
+        for i in 0..9 {
+            if mode & (1 << (8 - i)) != 0 {
+                mode_str.push(RWX.chars().nth(i).unwrap());
+            } else {
+                mode_str.push('-');
+            }
+        }
+
+        DirectoryEntry {
+            name: path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+            created: if entry.has_creation_date {
+                std::time::SystemTime::from(entry.creation_date).into()
+            } else {
+                Default::default()
+            },
+            modified: if entry.has_last_modified_date {
+                std::time::SystemTime::from(entry.last_modified_date).into()
+            } else {
+                Default::default()
+            },
+            mode: mode_str,
+            mode_bits: format!("{:o}", mode),
+            size,
+            directory: entry.is_directory(),
+            file: !entry.is_directory(),
+            symlink: false,
+            mime,
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -768,105 +981,247 @@ impl BackupBrowseExt for BrowseWingsBackup {
         page: usize,
         is_ignored: impl Fn(PathBuf, bool) -> bool + Send + Sync + 'static,
     ) -> Result<(usize, Vec<crate::models::DirectoryEntry>), anyhow::Error> {
-        let mut archive = self.archive.clone();
+        let archive = self.archive.clone();
 
         let entries = tokio::task::spawn_blocking(
-            move || -> Result<(usize, Vec<DirectoryEntry>), std::io::Error> {
-                let names = archive
-                    .file_names()
-                    .map(|name| name.to_string())
-                    .collect::<Vec<_>>();
-                let sizes = names
-                    .into_iter()
-                    .map(|name| {
-                        (
-                            archive
-                                .by_name(&name)
-                                .map(|file| file.size())
-                                .unwrap_or_default(),
-                            PathBuf::from(name),
-                        )
-                    })
-                    .collect::<Vec<_>>();
+            move || -> Result<(usize, Vec<DirectoryEntry>), anyhow::Error> {
+                match archive {
+                    BrowseWingsBackupArchive::Zip(mut archive) => {
+                        let names = archive
+                            .file_names()
+                            .map(|name| name.to_string())
+                            .collect::<Vec<_>>();
+                        let sizes = names
+                            .into_iter()
+                            .map(|name| {
+                                (
+                                    archive
+                                        .by_name(&name)
+                                        .map(|file| file.size())
+                                        .unwrap_or_default(),
+                                    PathBuf::from(name),
+                                )
+                            })
+                            .collect::<Vec<_>>();
 
-                let mut directory_entries = Vec::new();
-                let mut other_entries = Vec::new();
+                        let mut directory_entries = Vec::new();
+                        let mut other_entries = Vec::new();
 
-                let path_len = path.components().count();
-                for i in 0..archive.len() {
-                    let entry = archive.by_index(i)?;
-                    let name = match entry.enclosed_name() {
-                        Some(name) => name,
-                        None => continue,
-                    };
+                        let path_len = path.components().count();
+                        for i in 0..archive.len() {
+                            let entry = archive.by_index(i)?;
+                            let name = match entry.enclosed_name() {
+                                Some(name) => name,
+                                None => continue,
+                            };
 
-                    let name_len = name.components().count();
-                    if name_len < path_len
-                        || !name.starts_with(&path)
-                        || name == path
-                        || name_len > path_len + 1
-                    {
-                        continue;
+                            let name_len = name.components().count();
+                            if name_len < path_len
+                                || !name.starts_with(&path)
+                                || name == path
+                                || name_len > path_len + 1
+                            {
+                                continue;
+                            }
+
+                            if is_ignored(name, entry.is_dir()) {
+                                continue;
+                            }
+
+                            if entry.is_dir() {
+                                directory_entries.push((i, entry.name().to_string()));
+                            } else {
+                                other_entries.push((i, entry.name().to_string()));
+                            }
+                        }
+
+                        directory_entries.sort_unstable_by(|a, b| a.1.cmp(&b.1));
+                        other_entries.sort_unstable_by(|a, b| a.1.cmp(&b.1));
+
+                        let total_entries = directory_entries.len() + other_entries.len();
+                        let mut entries = Vec::new();
+
+                        if let Some(per_page) = per_page {
+                            let start = (page - 1) * per_page;
+
+                            for entry in directory_entries
+                                .into_iter()
+                                .chain(other_entries.into_iter())
+                                .skip(start)
+                                .take(per_page)
+                            {
+                                let entry = archive.by_index(entry.0)?;
+                                let entry_path = match entry.enclosed_name() {
+                                    Some(name) => name,
+                                    None => continue,
+                                };
+
+                                entries.push(Self::zip_entry_to_directory_entry(
+                                    &entry_path,
+                                    &sizes,
+                                    entry,
+                                ));
+                            }
+                        } else {
+                            for entry in directory_entries
+                                .into_iter()
+                                .chain(other_entries.into_iter())
+                            {
+                                let entry = archive.by_index(entry.0)?;
+                                let entry_path = match entry.enclosed_name() {
+                                    Some(name) => name,
+                                    None => continue,
+                                };
+
+                                entries.push(Self::zip_entry_to_directory_entry(
+                                    &entry_path,
+                                    &sizes,
+                                    entry,
+                                ));
+                            }
+                        }
+
+                        Ok((total_entries, entries))
                     }
+                    BrowseWingsBackupArchive::SevenZip(archive, mut archive_reader) => {
+                        let sizes = archive
+                            .files
+                            .iter()
+                            .map(|entry| (entry.size, PathBuf::from(&entry.name)))
+                            .collect::<Vec<_>>();
 
-                    if is_ignored(name, entry.is_dir()) {
-                        continue;
-                    }
+                        let mut directory_entries = Vec::new();
+                        let mut other_entries = Vec::new();
 
-                    if entry.is_dir() {
-                        directory_entries.push((i, entry.name().to_string()));
-                    } else {
-                        other_entries.push((i, entry.name().to_string()));
+                        let path_len = path.components().count();
+                        for (i, entry) in archive.files.iter().enumerate() {
+                            let name = Path::new(entry.name());
+
+                            let name_len = name.components().count();
+                            if name_len < path_len
+                                || !name.starts_with(&path)
+                                || name == path
+                                || name_len > path_len + 1
+                            {
+                                continue;
+                            }
+
+                            if is_ignored(name.to_path_buf(), entry.is_directory()) {
+                                continue;
+                            }
+
+                            if entry.is_directory() {
+                                directory_entries.push((i, entry.name()));
+                            } else {
+                                other_entries.push((i, entry.name()));
+                            }
+                        }
+
+                        directory_entries.sort_unstable_by(|a, b| a.1.cmp(b.1));
+                        other_entries.sort_unstable_by(|a, b| a.1.cmp(b.1));
+
+                        let total_entries = directory_entries.len() + other_entries.len();
+                        let mut entries = Vec::new();
+
+                        if let Some(per_page) = per_page {
+                            let start = (page - 1) * per_page;
+
+                            for entry in directory_entries
+                                .into_iter()
+                                .chain(other_entries.into_iter())
+                                .skip(start)
+                                .take(per_page)
+                            {
+                                let archive_entry = &archive.files[entry.0];
+                                let entry_path = Path::new(archive_entry.name());
+
+                                match archive.stream_map.file_block_index[entry.0] {
+                                    Some(block_index) => {
+                                        let password = sevenz_rust2::Password::empty();
+                                        let folder = sevenz_rust2::BlockDecoder::new(
+                                            1,
+                                            block_index,
+                                            &archive,
+                                            &password,
+                                            &mut archive_reader,
+                                        );
+
+                                        folder.for_each_entries(&mut |entry, reader| {
+                                            let path = entry.name();
+                                            if path != archive_entry.name() {
+                                                std::io::copy(reader, &mut std::io::sink())?;
+
+                                                return Ok(true);
+                                            }
+
+                                            entries.push(Self::seven_zip_entry_to_directory_entry(
+                                                entry_path,
+                                                &sizes,
+                                                archive_entry,
+                                                reader,
+                                            ));
+
+                                            Ok(true)
+                                        })?;
+                                    }
+                                    None => entries.push(Self::seven_zip_entry_to_directory_entry(
+                                        entry_path,
+                                        &sizes,
+                                        archive_entry,
+                                        &mut std::io::empty(),
+                                    )),
+                                };
+                            }
+                        } else {
+                            for entry in directory_entries
+                                .into_iter()
+                                .chain(other_entries.into_iter())
+                            {
+                                let archive_entry = &archive.files[entry.0];
+                                let entry_path = Path::new(archive_entry.name());
+
+                                match archive.stream_map.file_block_index[entry.0] {
+                                    Some(block_index) => {
+                                        let password = sevenz_rust2::Password::empty();
+                                        let folder = sevenz_rust2::BlockDecoder::new(
+                                            1,
+                                            block_index,
+                                            &archive,
+                                            &password,
+                                            &mut archive_reader,
+                                        );
+
+                                        folder.for_each_entries(&mut |entry, reader| {
+                                            let path = entry.name();
+                                            if path != archive_entry.name() {
+                                                std::io::copy(reader, &mut std::io::sink())?;
+
+                                                return Ok(true);
+                                            }
+
+                                            entries.push(Self::seven_zip_entry_to_directory_entry(
+                                                entry_path,
+                                                &sizes,
+                                                archive_entry,
+                                                reader,
+                                            ));
+
+                                            Ok(true)
+                                        })?;
+                                    }
+                                    None => entries.push(Self::seven_zip_entry_to_directory_entry(
+                                        entry_path,
+                                        &sizes,
+                                        archive_entry,
+                                        &mut std::io::empty(),
+                                    )),
+                                };
+                            }
+                        }
+
+                        Ok((total_entries, entries))
                     }
                 }
-
-                directory_entries.sort_unstable_by(|a, b| a.1.cmp(&b.1));
-                other_entries.sort_unstable_by(|a, b| a.1.cmp(&b.1));
-
-                let total_entries = directory_entries.len() + other_entries.len();
-                let mut entries = Vec::new();
-
-                if let Some(per_page) = per_page {
-                    let start = (page - 1) * per_page;
-
-                    for entry in directory_entries
-                        .into_iter()
-                        .chain(other_entries.into_iter())
-                        .skip(start)
-                        .take(per_page)
-                    {
-                        let entry = archive.by_index(entry.0)?;
-                        let entry_path = match entry.enclosed_name() {
-                            Some(name) => name,
-                            None => continue,
-                        };
-
-                        entries.push(Self::zip_entry_to_directory_entry(
-                            &entry_path,
-                            &sizes,
-                            entry,
-                        ));
-                    }
-                } else {
-                    for entry in directory_entries
-                        .into_iter()
-                        .chain(other_entries.into_iter())
-                    {
-                        let entry = archive.by_index(entry.0)?;
-                        let entry_path = match entry.enclosed_name() {
-                            Some(name) => name,
-                            None => continue,
-                        };
-
-                        entries.push(Self::zip_entry_to_directory_entry(
-                            &entry_path,
-                            &sizes,
-                            entry,
-                        ));
-                    }
-                }
-
-                Ok((total_entries, entries))
             },
         )
         .await??;
@@ -878,33 +1233,101 @@ impl BackupBrowseExt for BrowseWingsBackup {
         &self,
         path: PathBuf,
     ) -> Result<(u64, Box<dyn tokio::io::AsyncRead + Unpin + Send>), anyhow::Error> {
-        let mut archive = self.archive.clone();
+        let archive = self.archive.clone();
 
-        let size = archive.by_name(&path.to_string_lossy())?.size();
-        let (reader, mut writer) = tokio::io::duplex(crate::BUFFER_SIZE);
+        match archive {
+            BrowseWingsBackupArchive::Zip(mut archive) => {
+                let size = archive.by_name(&path.to_string_lossy())?.size();
+                let (reader, mut writer) = tokio::io::duplex(crate::BUFFER_SIZE);
 
-        tokio::task::spawn_blocking(move || {
-            let runtime = tokio::runtime::Handle::current();
-            let mut entry = archive.by_name(&path.to_string_lossy()).unwrap();
+                tokio::task::spawn_blocking(move || {
+                    let runtime = tokio::runtime::Handle::current();
+                    let mut entry = archive.by_name(&path.to_string_lossy()).unwrap();
 
-            let mut buffer = vec![0; crate::BUFFER_SIZE];
-            loop {
-                match entry.read(&mut buffer) {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        if runtime.block_on(writer.write_all(&buffer[..n])).is_err() {
-                            break;
+                    let mut buffer = vec![0; crate::BUFFER_SIZE];
+                    loop {
+                        match entry.read(&mut buffer) {
+                            Ok(0) => break,
+                            Ok(n) => {
+                                if runtime.block_on(writer.write_all(&buffer[..n])).is_err() {
+                                    break;
+                                }
+                            }
+                            Err(err) => {
+                                tracing::error!("error reading from zip entry: {:#?}", err);
+                                break;
+                            }
                         }
                     }
-                    Err(err) => {
-                        tracing::error!("error reading from zip entry: {:#?}", err);
-                        break;
-                    }
-                }
-            }
-        });
+                });
 
-        Ok((size, Box::new(reader)))
+                Ok((size, Box::new(reader)))
+            }
+            BrowseWingsBackupArchive::SevenZip(archive, mut archive_reader) => {
+                let (entry_index, size) = match archive
+                    .files
+                    .iter()
+                    .enumerate()
+                    .find(|f| Path::new(f.1.name()) == path)
+                {
+                    Some((i, entry)) => (i, entry.size),
+                    None => return Err(anyhow::anyhow!("7z archive entry not found")),
+                };
+                let (reader, mut writer) = tokio::io::duplex(crate::BUFFER_SIZE);
+
+                tokio::task::spawn_blocking(move || {
+                    let runtime = tokio::runtime::Handle::current();
+
+                    if let Some(block_index) = archive.stream_map.file_block_index[entry_index] {
+                        let password = sevenz_rust2::Password::empty();
+                        let folder = sevenz_rust2::BlockDecoder::new(
+                            1,
+                            block_index,
+                            &archive,
+                            &password,
+                            &mut archive_reader,
+                        );
+
+                        folder
+                            .for_each_entries(&mut |entry, reader| {
+                                let entry_path = Path::new(entry.name());
+                                if entry_path != path {
+                                    std::io::copy(reader, &mut std::io::sink())?;
+
+                                    return Ok(true);
+                                }
+
+                                let mut buffer = vec![0; crate::BUFFER_SIZE];
+                                loop {
+                                    match reader.read(&mut buffer) {
+                                        Ok(0) => break,
+                                        Ok(n) => {
+                                            if runtime
+                                                .block_on(writer.write_all(&buffer[..n]))
+                                                .is_err()
+                                            {
+                                                break;
+                                            }
+                                        }
+                                        Err(err) => {
+                                            tracing::error!(
+                                                "error reading from 7z entry: {:#?}",
+                                                err
+                                            );
+                                            break;
+                                        }
+                                    }
+                                }
+
+                                Ok(true)
+                            })
+                            .unwrap_or_default();
+                    };
+                });
+
+                Ok((size, Box::new(reader)))
+            }
+        }
     }
 
     async fn read_directory_archive(
@@ -912,7 +1335,7 @@ impl BackupBrowseExt for BrowseWingsBackup {
         path: PathBuf,
         archive_format: StreamableArchiveFormat,
     ) -> Result<tokio::io::DuplexStream, anyhow::Error> {
-        let mut archive = self.archive.clone();
+        let archive = self.archive.clone();
 
         let (reader, writer) = tokio::io::duplex(crate::BUFFER_SIZE);
         let compression_level = self
@@ -923,99 +1346,253 @@ impl BackupBrowseExt for BrowseWingsBackup {
             .backups
             .compression_level;
 
-        match archive_format {
-            StreamableArchiveFormat::Zip => {
-                tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
-                    let writer = tokio_util::io::SyncIoBridge::new(writer);
-                    let mut zip = zip::ZipWriter::new_stream(writer);
+        match archive {
+            BrowseWingsBackupArchive::Zip(mut archive) => match archive_format {
+                StreamableArchiveFormat::Zip => {
+                    tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
+                        let writer = tokio_util::io::SyncIoBridge::new(writer);
+                        let mut zip = zip::ZipWriter::new_stream(writer);
 
-                    let mut read_buffer = vec![0; crate::BUFFER_SIZE];
-                    for i in 0..archive.len() {
-                        let mut entry = archive.by_index(i)?;
-                        let name = match entry.enclosed_name() {
-                            Some(name) => name,
-                            None => continue,
-                        };
+                        let mut read_buffer = vec![0; crate::BUFFER_SIZE];
+                        for i in 0..archive.len() {
+                            let mut entry = archive.by_index(i)?;
+                            let name = match entry.enclosed_name() {
+                                Some(name) => name,
+                                None => continue,
+                            };
 
-                        let name = match name.strip_prefix(&path) {
-                            Ok(name) => name,
-                            Err(_) => continue,
-                        };
+                            let name = match name.strip_prefix(&path) {
+                                Ok(name) => name,
+                                Err(_) => continue,
+                            };
 
-                        if name.components().count() == 0 {
-                            continue;
+                            if name.components().count() == 0 {
+                                continue;
+                            }
+
+                            if entry.is_dir() {
+                                zip.add_directory(name.to_string_lossy(), entry.options())?;
+                            } else {
+                                zip.start_file(name.to_string_lossy(), entry.options())?;
+
+                                crate::io::copy_shared(&mut read_buffer, &mut entry, &mut zip)?;
+                            }
                         }
 
-                        if entry.is_dir() {
-                            zip.add_directory(name.to_string_lossy(), entry.options())?;
-                        } else {
-                            zip.start_file(name.to_string_lossy(), entry.options())?;
+                        Ok(())
+                    });
+                }
+                _ => {
+                    let writer = CompressionWriter::new(
+                        tokio_util::io::SyncIoBridge::new(writer),
+                        archive_format.compression_format(),
+                        compression_level,
+                        self.server.app_state.config.api.file_compression_threads,
+                    );
 
-                            crate::io::copy_shared(&mut read_buffer, &mut entry, &mut zip)?;
+                    tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
+                        let mut tar = tar::Builder::new(writer);
+                        tar.mode(tar::HeaderMode::Complete);
+
+                        for i in 0..archive.len() {
+                            let entry = archive.by_index(i)?;
+                            let name = match entry.enclosed_name() {
+                                Some(name) => name,
+                                None => continue,
+                            };
+
+                            let name = match name.strip_prefix(&path) {
+                                Ok(name) => name,
+                                Err(_) => continue,
+                            };
+
+                            if name.components().count() == 0 {
+                                continue;
+                            }
+
+                            let mut entry_header = tar::Header::new_gnu();
+                            if let Some(mode) = entry.unix_mode() {
+                                entry_header.set_mode(mode);
+                            }
+                            entry_header.set_mtime(
+                                zip_entry_get_modified_time(&entry)
+                                    .map(|dt| dt.into_std().elapsed().unwrap_or_default().as_secs())
+                                    .unwrap_or_default(),
+                            );
+
+                            if entry.is_dir() {
+                                entry_header.set_entry_type(tar::EntryType::Directory);
+
+                                tar.append_data(&mut entry_header, name, std::io::empty())?;
+                            } else if entry.is_file() {
+                                entry_header.set_entry_type(tar::EntryType::Regular);
+                                entry_header.set_size(entry.size());
+
+                                tar.append_data(&mut entry_header, name, entry)?;
+                            } else if entry.is_symlink() && (1..=2048).contains(&entry.size()) {
+                                entry_header.set_entry_type(tar::EntryType::Symlink);
+
+                                let link_name = std::io::read_to_string(entry)?;
+                                tar.append_link(&mut entry_header, name, link_name)?;
+                            }
                         }
-                    }
 
-                    Ok(())
-                });
-            }
-            _ => {
-                let writer = CompressionWriter::new(
-                    tokio_util::io::SyncIoBridge::new(writer),
-                    archive_format.compression_format(),
-                    compression_level,
-                    self.server.app_state.config.api.file_compression_threads,
-                );
+                        Ok(())
+                    });
+                }
+            },
+            BrowseWingsBackupArchive::SevenZip(archive, mut archive_reader) => match archive_format
+            {
+                StreamableArchiveFormat::Zip => {
+                    tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
+                        let writer = tokio_util::io::SyncIoBridge::new(writer);
+                        let mut zip = zip::ZipWriter::new_stream(writer);
 
-                tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
-                    let mut tar = tar::Builder::new(writer);
-                    tar.mode(tar::HeaderMode::Complete);
+                        let mut read_buffer = vec![0; crate::BUFFER_SIZE];
+                        for (i, entry) in archive.files.iter().enumerate() {
+                            let name = match Path::new(entry.name()).strip_prefix(&path) {
+                                Ok(name) => name,
+                                Err(_) => continue,
+                            };
 
-                    for i in 0..archive.len() {
-                        let entry = archive.by_index(i)?;
-                        let name = match entry.enclosed_name() {
-                            Some(name) => name,
-                            None => continue,
-                        };
+                            if name.components().count() == 0 {
+                                continue;
+                            }
 
-                        let name = match name.strip_prefix(&path) {
-                            Ok(name) => name,
-                            Err(_) => continue,
-                        };
+                            let mut zip_options: zip::write::FileOptions<'_, ()> =
+                                zip::write::FileOptions::default()
+                                    .compression_level(Some(
+                                        compression_level.to_deflate_level() as i64
+                                    ))
+                                    .large_file(true);
 
-                        if name.components().count() == 0 {
-                            continue;
+                            if entry.has_last_modified_date {
+                                let mtime: chrono::DateTime<chrono::Utc> = chrono::DateTime::from(
+                                    std::time::SystemTime::from(entry.last_modified_date),
+                                );
+
+                                if let Ok(mtime) = zip::DateTime::from_date_and_time(
+                                    mtime.year() as u16,
+                                    mtime.month() as u8,
+                                    mtime.day() as u8,
+                                    mtime.hour() as u8,
+                                    mtime.minute() as u8,
+                                    mtime.second() as u8,
+                                ) {
+                                    zip_options = zip_options.last_modified_time(mtime);
+                                }
+                            }
+
+                            if entry.is_directory() {
+                                zip.add_directory(name.to_string_lossy(), zip_options)?;
+                            } else {
+                                zip.start_file(name.to_string_lossy(), zip_options)?;
+
+                                if let Some(block_index) = archive.stream_map.file_block_index[i] {
+                                    let password = sevenz_rust2::Password::empty();
+                                    let folder = sevenz_rust2::BlockDecoder::new(
+                                        1,
+                                        block_index,
+                                        &archive,
+                                        &password,
+                                        &mut archive_reader,
+                                    );
+
+                                    folder
+                                        .for_each_entries(&mut |block_entry, reader| {
+                                            if block_entry.name() != entry.name() {
+                                                std::io::copy(reader, &mut std::io::sink())?;
+
+                                                return Ok(true);
+                                            }
+
+                                            crate::io::copy_shared(
+                                                &mut read_buffer,
+                                                reader,
+                                                &mut zip,
+                                            )?;
+
+                                            Ok(true)
+                                        })
+                                        .unwrap_or_default();
+                                };
+                            }
                         }
 
-                        let mut entry_header = tar::Header::new_gnu();
-                        if let Some(mode) = entry.unix_mode() {
-                            entry_header.set_mode(mode);
+                        Ok(())
+                    });
+                }
+                _ => {
+                    let writer = CompressionWriter::new(
+                        tokio_util::io::SyncIoBridge::new(writer),
+                        archive_format.compression_format(),
+                        compression_level,
+                        self.server.app_state.config.api.file_compression_threads,
+                    );
+
+                    tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
+                        let mut tar = tar::Builder::new(writer);
+                        tar.mode(tar::HeaderMode::Complete);
+
+                        for (i, entry) in archive.files.iter().enumerate() {
+                            let name = match Path::new(entry.name()).strip_prefix(&path) {
+                                Ok(name) => name,
+                                Err(_) => continue,
+                            };
+
+                            if name.components().count() == 0 {
+                                continue;
+                            }
+
+                            let mut entry_header = tar::Header::new_gnu();
+                            if entry.has_last_modified_date {
+                                entry_header.set_mtime(
+                                    std::time::SystemTime::from(entry.last_modified_date)
+                                        .elapsed()
+                                        .unwrap_or_default()
+                                        .as_secs(),
+                                );
+                            }
+
+                            if entry.is_directory() {
+                                entry_header.set_entry_type(tar::EntryType::Directory);
+
+                                tar.append_data(&mut entry_header, name, std::io::empty())?;
+                            } else {
+                                entry_header.set_entry_type(tar::EntryType::Regular);
+                                entry_header.set_size(entry.size);
+
+                                if let Some(block_index) = archive.stream_map.file_block_index[i] {
+                                    let password = sevenz_rust2::Password::empty();
+                                    let folder = sevenz_rust2::BlockDecoder::new(
+                                        1,
+                                        block_index,
+                                        &archive,
+                                        &password,
+                                        &mut archive_reader,
+                                    );
+
+                                    folder
+                                        .for_each_entries(&mut |block_entry, reader| {
+                                            if block_entry.name() != entry.name() {
+                                                std::io::copy(reader, &mut std::io::sink())?;
+
+                                                return Ok(true);
+                                            }
+
+                                            tar.append_data(&mut entry_header, name, reader)?;
+
+                                            Ok(true)
+                                        })
+                                        .unwrap_or_default();
+                                };
+                            }
                         }
-                        entry_header.set_mtime(
-                            zip_entry_get_modified_time(&entry)
-                                .map(|dt| dt.into_std().elapsed().unwrap_or_default().as_secs())
-                                .unwrap_or_default(),
-                        );
 
-                        if entry.is_dir() {
-                            entry_header.set_entry_type(tar::EntryType::Directory);
-
-                            tar.append_data(&mut entry_header, name, std::io::empty())?;
-                        } else if entry.is_file() {
-                            entry_header.set_entry_type(tar::EntryType::Regular);
-                            entry_header.set_size(entry.size());
-
-                            tar.append_data(&mut entry_header, name, entry)?;
-                        } else if entry.is_symlink() && (1..=2048).contains(&entry.size()) {
-                            entry_header.set_entry_type(tar::EntryType::Symlink);
-
-                            let link_name = std::io::read_to_string(entry)?;
-                            tar.append_link(&mut entry_header, name, link_name)?;
-                        }
-                    }
-
-                    Ok(())
-                });
-            }
+                        Ok(())
+                    });
+                }
+            },
         }
 
         Ok(reader)
@@ -1027,7 +1604,7 @@ impl BackupBrowseExt for BrowseWingsBackup {
         file_paths: Vec<PathBuf>,
         archive_format: StreamableArchiveFormat,
     ) -> Result<tokio::io::DuplexStream, anyhow::Error> {
-        let mut archive = self.archive.clone();
+        let archive = self.archive.clone();
 
         let (reader, writer) = tokio::io::duplex(crate::BUFFER_SIZE);
         let compression_level = self
@@ -1038,107 +1615,271 @@ impl BackupBrowseExt for BrowseWingsBackup {
             .backups
             .compression_level;
 
-        match archive_format {
-            StreamableArchiveFormat::Zip => {
-                tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
-                    let writer = tokio_util::io::SyncIoBridge::new(writer);
-                    let mut zip = zip::ZipWriter::new_stream(writer);
+        match archive {
+            BrowseWingsBackupArchive::Zip(mut archive) => {
+                match archive_format {
+                    StreamableArchiveFormat::Zip => {
+                        tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
+                            let writer = tokio_util::io::SyncIoBridge::new(writer);
+                            let mut zip = zip::ZipWriter::new_stream(writer);
 
-                    let mut read_buffer = vec![0; crate::BUFFER_SIZE];
-                    for i in 0..archive.len() {
-                        let mut entry = archive.by_index(i)?;
-                        let name = match entry.enclosed_name() {
-                            Some(name) => name,
-                            None => continue,
-                        };
+                            let mut read_buffer = vec![0; crate::BUFFER_SIZE];
+                            for i in 0..archive.len() {
+                                let mut entry = archive.by_index(i)?;
+                                let name = match entry.enclosed_name() {
+                                    Some(name) => name,
+                                    None => continue,
+                                };
 
-                        let name = match name.strip_prefix(&path) {
-                            Ok(name) => name,
-                            Err(_) => continue,
-                        };
+                                let name = match name.strip_prefix(&path) {
+                                    Ok(name) => name,
+                                    Err(_) => continue,
+                                };
 
-                        if !file_paths.iter().any(|p| name.starts_with(p)) {
-                            continue;
-                        }
+                                if !file_paths.iter().any(|p| name.starts_with(p)) {
+                                    continue;
+                                }
 
-                        if name.components().count() == 0 {
-                            continue;
-                        }
+                                if name.components().count() == 0 {
+                                    continue;
+                                }
 
-                        if entry.is_dir() {
-                            zip.add_directory(name.to_string_lossy(), entry.options())?;
-                        } else {
-                            zip.start_file(name.to_string_lossy(), entry.options())?;
+                                if entry.is_dir() {
+                                    zip.add_directory(name.to_string_lossy(), entry.options())?;
+                                } else {
+                                    zip.start_file(name.to_string_lossy(), entry.options())?;
 
-                            crate::io::copy_shared(&mut read_buffer, &mut entry, &mut zip)?;
-                        }
+                                    crate::io::copy_shared(&mut read_buffer, &mut entry, &mut zip)?;
+                                }
+                            }
+
+                            Ok(())
+                        });
                     }
-
-                    Ok(())
-                });
-            }
-            _ => {
-                let writer = CompressionWriter::new(
-                    tokio_util::io::SyncIoBridge::new(writer),
-                    archive_format.compression_format(),
-                    compression_level,
-                    self.server.app_state.config.api.file_compression_threads,
-                );
-
-                tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
-                    let mut tar = tar::Builder::new(writer);
-                    tar.mode(tar::HeaderMode::Complete);
-
-                    for i in 0..archive.len() {
-                        let entry = archive.by_index(i)?;
-                        let name = match entry.enclosed_name() {
-                            Some(name) => name,
-                            None => continue,
-                        };
-
-                        let name = match name.strip_prefix(&path) {
-                            Ok(name) => name,
-                            Err(_) => continue,
-                        };
-
-                        if !file_paths.iter().any(|p| name.starts_with(p)) {
-                            continue;
-                        }
-
-                        if name.components().count() == 0 {
-                            continue;
-                        }
-
-                        let mut entry_header = tar::Header::new_gnu();
-                        if let Some(mode) = entry.unix_mode() {
-                            entry_header.set_mode(mode);
-                        }
-                        entry_header.set_mtime(
-                            crate::server::filesystem::archive::zip_entry_get_modified_time(&entry)
-                                .map(|dt| dt.into_std().elapsed().unwrap_or_default().as_secs())
-                                .unwrap_or_default(),
+                    _ => {
+                        let writer = CompressionWriter::new(
+                            tokio_util::io::SyncIoBridge::new(writer),
+                            archive_format.compression_format(),
+                            compression_level,
+                            self.server.app_state.config.api.file_compression_threads,
                         );
 
-                        if entry.is_dir() {
-                            entry_header.set_entry_type(tar::EntryType::Directory);
+                        tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
+                            let mut tar = tar::Builder::new(writer);
+                            tar.mode(tar::HeaderMode::Complete);
 
-                            tar.append_data(&mut entry_header, name, std::io::empty())?;
-                        } else if entry.is_file() {
-                            entry_header.set_entry_type(tar::EntryType::Regular);
-                            entry_header.set_size(entry.size());
+                            for i in 0..archive.len() {
+                                let entry = archive.by_index(i)?;
+                                let name = match entry.enclosed_name() {
+                                    Some(name) => name,
+                                    None => continue,
+                                };
 
-                            tar.append_data(&mut entry_header, name, entry)?;
-                        } else if entry.is_symlink() && (1..=2048).contains(&entry.size()) {
-                            entry_header.set_entry_type(tar::EntryType::Symlink);
+                                let name = match name.strip_prefix(&path) {
+                                    Ok(name) => name,
+                                    Err(_) => continue,
+                                };
 
-                            let link_name = std::io::read_to_string(entry)?;
-                            tar.append_link(&mut entry_header, name, link_name)?;
-                        }
+                                if !file_paths.iter().any(|p| name.starts_with(p)) {
+                                    continue;
+                                }
+
+                                if name.components().count() == 0 {
+                                    continue;
+                                }
+
+                                let mut entry_header = tar::Header::new_gnu();
+                                if let Some(mode) = entry.unix_mode() {
+                                    entry_header.set_mode(mode);
+                                }
+                                entry_header.set_mtime(
+                                    crate::server::filesystem::archive::zip_entry_get_modified_time(&entry)
+                                        .map(|dt| dt.into_std().elapsed().unwrap_or_default().as_secs())
+                                        .unwrap_or_default(),
+                                );
+
+                                if entry.is_dir() {
+                                    entry_header.set_entry_type(tar::EntryType::Directory);
+
+                                    tar.append_data(&mut entry_header, name, std::io::empty())?;
+                                } else if entry.is_file() {
+                                    entry_header.set_entry_type(tar::EntryType::Regular);
+                                    entry_header.set_size(entry.size());
+
+                                    tar.append_data(&mut entry_header, name, entry)?;
+                                } else if entry.is_symlink() && (1..=2048).contains(&entry.size()) {
+                                    entry_header.set_entry_type(tar::EntryType::Symlink);
+
+                                    let link_name = std::io::read_to_string(entry)?;
+                                    tar.append_link(&mut entry_header, name, link_name)?;
+                                }
+                            }
+
+                            Ok(())
+                        });
                     }
-
-                    Ok(())
-                });
+                }
             }
+            BrowseWingsBackupArchive::SevenZip(archive, mut archive_reader) => match archive_format
+            {
+                StreamableArchiveFormat::Zip => {
+                    tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
+                        let writer = tokio_util::io::SyncIoBridge::new(writer);
+                        let mut zip = zip::ZipWriter::new_stream(writer);
+
+                        let mut read_buffer = vec![0; crate::BUFFER_SIZE];
+                        for (i, entry) in archive.files.iter().enumerate() {
+                            let name = match Path::new(entry.name()).strip_prefix(&path) {
+                                Ok(name) => name,
+                                Err(_) => continue,
+                            };
+
+                            if !file_paths.iter().any(|p| name.starts_with(p)) {
+                                continue;
+                            }
+
+                            if name.components().count() == 0 {
+                                continue;
+                            }
+
+                            let mut zip_options: zip::write::FileOptions<'_, ()> =
+                                zip::write::FileOptions::default()
+                                    .compression_level(Some(
+                                        compression_level.to_deflate_level() as i64
+                                    ))
+                                    .large_file(true);
+
+                            if entry.has_last_modified_date {
+                                let mtime: chrono::DateTime<chrono::Utc> = chrono::DateTime::from(
+                                    std::time::SystemTime::from(entry.last_modified_date),
+                                );
+
+                                if let Ok(mtime) = zip::DateTime::from_date_and_time(
+                                    mtime.year() as u16,
+                                    mtime.month() as u8,
+                                    mtime.day() as u8,
+                                    mtime.hour() as u8,
+                                    mtime.minute() as u8,
+                                    mtime.second() as u8,
+                                ) {
+                                    zip_options = zip_options.last_modified_time(mtime);
+                                }
+                            }
+
+                            if entry.is_directory() {
+                                zip.add_directory(name.to_string_lossy(), zip_options)?;
+                            } else {
+                                zip.start_file(name.to_string_lossy(), zip_options)?;
+
+                                if let Some(block_index) = archive.stream_map.file_block_index[i] {
+                                    let password = sevenz_rust2::Password::empty();
+                                    let folder = sevenz_rust2::BlockDecoder::new(
+                                        1,
+                                        block_index,
+                                        &archive,
+                                        &password,
+                                        &mut archive_reader,
+                                    );
+
+                                    folder
+                                        .for_each_entries(&mut |block_entry, reader| {
+                                            if block_entry.name() != entry.name() {
+                                                std::io::copy(reader, &mut std::io::sink())?;
+
+                                                return Ok(true);
+                                            }
+
+                                            crate::io::copy_shared(
+                                                &mut read_buffer,
+                                                reader,
+                                                &mut zip,
+                                            )?;
+
+                                            Ok(true)
+                                        })
+                                        .unwrap_or_default();
+                                };
+                            }
+                        }
+
+                        Ok(())
+                    });
+                }
+                _ => {
+                    let writer = CompressionWriter::new(
+                        tokio_util::io::SyncIoBridge::new(writer),
+                        archive_format.compression_format(),
+                        compression_level,
+                        self.server.app_state.config.api.file_compression_threads,
+                    );
+
+                    tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
+                        let mut tar = tar::Builder::new(writer);
+                        tar.mode(tar::HeaderMode::Complete);
+
+                        for (i, entry) in archive.files.iter().enumerate() {
+                            let name = match Path::new(entry.name()).strip_prefix(&path) {
+                                Ok(name) => name,
+                                Err(_) => continue,
+                            };
+
+                            if !file_paths.iter().any(|p| name.starts_with(p)) {
+                                continue;
+                            }
+
+                            if name.components().count() == 0 {
+                                continue;
+                            }
+
+                            let mut entry_header = tar::Header::new_gnu();
+                            if entry.has_last_modified_date {
+                                entry_header.set_mtime(
+                                    std::time::SystemTime::from(entry.last_modified_date)
+                                        .elapsed()
+                                        .unwrap_or_default()
+                                        .as_secs(),
+                                );
+                            }
+
+                            if entry.is_directory() {
+                                entry_header.set_entry_type(tar::EntryType::Directory);
+
+                                tar.append_data(&mut entry_header, name, std::io::empty())?;
+                            } else {
+                                entry_header.set_entry_type(tar::EntryType::Regular);
+                                entry_header.set_size(entry.size);
+
+                                if let Some(block_index) = archive.stream_map.file_block_index[i] {
+                                    let password = sevenz_rust2::Password::empty();
+                                    let folder = sevenz_rust2::BlockDecoder::new(
+                                        1,
+                                        block_index,
+                                        &archive,
+                                        &password,
+                                        &mut archive_reader,
+                                    );
+
+                                    folder
+                                        .for_each_entries(&mut |block_entry, reader| {
+                                            if block_entry.name() != entry.name() {
+                                                std::io::copy(reader, &mut std::io::sink())?;
+
+                                                return Ok(true);
+                                            }
+
+                                            tar.append_data(&mut entry_header, name, reader)?;
+
+                                            Ok(true)
+                                        })
+                                        .unwrap_or_default();
+                                };
+                            }
+                        }
+
+                        Ok(())
+                    });
+                }
+            },
         }
 
         Ok(reader)
