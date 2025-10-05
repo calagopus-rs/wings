@@ -88,19 +88,6 @@ impl AsyncRead for AsyncCompressionReader {
             return Poll::Ready(Err(err));
         }
 
-        match Pin::new(&mut self.inner_reader).poll_read(cx, buf) {
-            Poll::Ready(Ok(())) => {
-                if buf.filled().is_empty() {
-                    if Pin::new(&mut self.inner_error_receiver).poll(cx).is_ready() {
-                        return Poll::Ready(Ok(()));
-                    }
-
-                    return Poll::Pending;
-                }
-                Poll::Ready(Ok(()))
-            }
-            Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
-            Poll::Pending => Poll::Pending,
-        }
+        Pin::new(&mut self.inner_reader).poll_read(cx, buf)
     }
 }
