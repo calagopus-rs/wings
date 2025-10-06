@@ -11,6 +11,7 @@ mod post {
     use crate::{
         io::{
             compression::{CompressionType, reader::CompressionReader},
+            hash_reader::HashReader,
             limited_reader::LimitedReader,
         },
         response::{ApiResponse, ApiResponseResult},
@@ -24,6 +25,7 @@ mod post {
     use cap_std::fs::{Permissions, PermissionsExt};
     use futures::TryStreamExt;
     use serde::Serialize;
+    use sha1::Digest;
     use std::{io::Write, path::Path, str::FromStr};
     use utoipa::ToSchema;
 
@@ -117,12 +119,14 @@ mod post {
         let handle = tokio::task::spawn_blocking({
             let runtime = tokio::runtime::Handle::current();
             let server = server.clone();
+            let state = state.clone();
 
             move || -> Result<(), anyhow::Error> {
                 let mut backups = Vec::new();
+                let mut archive_checksum = None;
 
                 while let Ok(Some(field)) = runtime.block_on(multipart.next_field()) {
-                    if let Some("archive") = field.name() {
+                    if field.name() == Some("archive") {
                         let file_name = field.file_name().unwrap_or("archive.tar.gz").to_string();
                         let reader =
                             tokio_util::io::StreamReader::new(field.into_stream().map_err(|err| {
@@ -135,6 +139,7 @@ mod post {
                             reader,
                             state.config.system.transfers.download_limit * 1024 * 1024,
                         );
+                        let reader = HashReader::new_with_hasher(reader, sha2::Sha256::new());
                         let reader = CompressionReader::new(
                             reader,
                             match TransferArchiveFormat::from_str(&file_name)
@@ -153,6 +158,7 @@ mod post {
                         let mut directory_entries = chunked_vec::ChunkedVec::new();
                         let mut entries = archive.entries()?;
 
+                        let mut read_buffer = vec![0; crate::BUFFER_SIZE];
                         while let Some(Ok(mut entry)) = entries.next() {
                             let path = entry.path()?;
 
@@ -200,7 +206,11 @@ mod post {
                                                 .ok(),
                                         )?;
 
-                                    crate::io::copy(&mut entry, &mut writer)?;
+                                    crate::io::copy_shared(
+                                        &mut read_buffer,
+                                        &mut entry,
+                                        &mut writer,
+                                    )?;
                                     writer.flush()?;
                                 }
                                 tar::EntryType::Symlink => {
@@ -215,12 +225,12 @@ mod post {
                                             "failed to create symlink from archive: {:#?}",
                                             err
                                         );
-                                    } else if let Ok(permissions) =
-                                        header.mode().map(Permissions::from_mode)
-                                    {
-                                        server.filesystem.set_symlink_permissions(
+                                    } else if let Ok(modified_time) = header.mtime() {
+                                        server.filesystem.set_times(
                                             destination_path,
-                                            permissions,
+                                            std::time::UNIX_EPOCH
+                                                + std::time::Duration::from_secs(modified_time),
+                                            None,
                                         )?;
                                     }
                                 }
@@ -235,6 +245,26 @@ mod post {
                                     + std::time::Duration::from_secs(modified_time),
                                 None,
                             )?;
+                        }
+
+                        let mut inner = archive.into_inner().into_inner();
+                        crate::io::copy_shared(&mut read_buffer, &mut inner, &mut std::io::sink())?;
+                        archive_checksum = Some(inner.finish());
+                    } else if field.name() == Some("checksum") {
+                        let archive_checksum = match archive_checksum.take() {
+                            Some(checksum) => format!("{:x}", checksum),
+                            None => {
+                                return Err(anyhow::anyhow!(
+                                    "archive checksum does not match multipart checksum, None to be found"
+                                ));
+                            }
+                        };
+                        let checksum = runtime.block_on(field.text())?;
+
+                        if archive_checksum != checksum {
+                            return Err(anyhow::anyhow!(
+                                "archive checksum does not match multipart checksum, {checksum} != {archive_checksum}"
+                            ));
                         }
                     } else if field.name().is_some_and(|n| n.starts_with("backup-")) {
                         tracing::debug!(
@@ -372,6 +402,13 @@ mod post {
                     err
                 );
 
+                state
+                    .config
+                    .client
+                    .set_server_transfer(subject, false, vec![])
+                    .await
+                    .unwrap_or_default();
+
                 return ApiResponse::error("failed to complete server transfer")
                     .with_status(StatusCode::EXPECTATION_FAILED)
                     .ok();
@@ -382,6 +419,13 @@ mod post {
                     "failed to complete server transfer: {:#?}",
                     err
                 );
+
+                state
+                    .config
+                    .client
+                    .set_server_transfer(subject, false, vec![])
+                    .await
+                    .unwrap_or_default();
 
                 return ApiResponse::error("failed to complete server transfer")
                     .with_status(StatusCode::EXPECTATION_FAILED)

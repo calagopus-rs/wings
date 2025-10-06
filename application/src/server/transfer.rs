@@ -206,7 +206,7 @@ impl OutgoingServerTransfer {
                 let mut buffer = vec![0; crate::BUFFER_SIZE];
                 loop {
                     let bytes_read = checksummed_reader.read(&mut buffer).await?;
-                    if bytes_read == 0 {
+                    if crate::unlikely(bytes_read == 0) {
                         break;
                     }
 
@@ -217,6 +217,7 @@ impl OutgoingServerTransfer {
                 checksum_writer
                     .write_all(format!("{:x}", hasher.finalize()).as_bytes())
                     .await?;
+                writer.flush().await?;
 
                 Ok::<_, anyhow::Error>(())
             });
@@ -243,69 +244,67 @@ impl OutgoingServerTransfer {
 
             let mut total_bytes = server.filesystem.limiter_usage().await;
 
-            if !backups.is_empty() {
-                for backup in &backups {
-                    if let Ok(Some(backup)) = backup_manager.find(*backup).await {
-                        match backup.adapter() {
-                            super::backup::adapters::BackupAdapter::Wings => {
-                                let file_name = match super::backup::adapters::wings::WingsBackup::get_first_file_name(&server.app_state.config, backup.uuid()).await {
-                                    Ok((_, file_name)) => file_name,
+            for backup in &backups {
+                if let Ok(Some(backup)) = backup_manager.find(*backup).await {
+                    match backup.adapter() {
+                        super::backup::adapters::BackupAdapter::Wings => {
+                            let file_name = match super::backup::adapters::wings::WingsBackup::get_first_file_name(&server.app_state.config, backup.uuid()).await {
+                                Ok((_, file_name)) => file_name,
+                                Err(err) => {
+                                    tracing::error!(
+                                        server = %server.uuid,
+                                        "failed to get first file name for backup {}: {}",
+                                        backup.uuid(),
+                                        err
+                                    );
+                                    continue;
+                                }
+                            };
+                            let reader = AsyncCountingReader::new_with_bytes_read(
+                                match tokio::fs::File::open(&file_name).await {
+                                    Ok(file) => file,
                                     Err(err) => {
                                         tracing::error!(
                                             server = %server.uuid,
-                                            "failed to get first file name for backup {}: {}",
-                                            backup.uuid(),
+                                            "failed to open backup file {}: {}",
+                                            file_name.display(),
                                             err
                                         );
                                         continue;
                                     }
-                                };
-                                let reader = AsyncCountingReader::new_with_bytes_read(
-                                    match tokio::fs::File::open(&file_name).await {
-                                        Ok(file) => file,
-                                        Err(err) => {
-                                            tracing::error!(
-                                                server = %server.uuid,
-                                                "failed to open backup file {}: {}",
-                                                file_name.display(),
-                                                err
-                                            );
-                                            continue;
-                                        }
-                                    },
-                                    Arc::clone(&bytes_archived),
-                                );
+                                },
+                                Arc::clone(&bytes_archived),
+                            );
 
-                                total_bytes += tokio::fs::metadata(&file_name)
-                                    .await
-                                    .map(|m| m.len())
-                                    .unwrap_or(0);
+                            total_bytes += tokio::fs::metadata(&file_name)
+                                .await
+                                .map(|m| m.len())
+                                .unwrap_or(0);
 
-                                form = form.part(
-                                    format!("backup-{}", backup.uuid()),
-                                    reqwest::multipart::Part::stream(reqwest::Body::wrap_stream(
-                                        tokio_util::io::ReaderStream::with_capacity(reader, crate::BUFFER_SIZE),
-                                    ))
-                                    .file_name(file_name.file_name().unwrap_or_default().to_string_lossy().to_string())
-                                    .mime_str("backup/wings")
-                                    .unwrap(),
-                                );
-                            }
-                            _ => {
-                                tracing::warn!(
-                                    server = %server.uuid,
-                                    "backup {} is not a Wings backup and cannot be transferred, skipping",
-                                    backup.uuid()
-                                );
-                            }
+                            form = form.part(
+                                format!("backup-{}", backup.uuid()),
+                                reqwest::multipart::Part::stream(reqwest::Body::wrap_stream(
+                                    tokio_util::io::ReaderStream::with_capacity(reader, crate::BUFFER_SIZE),
+                                ))
+                                .file_name(file_name.file_name().unwrap_or_default().to_string_lossy().to_string())
+                                .mime_str("backup/wings")
+                                .unwrap(),
+                            );
                         }
-                    } else {
-                        tracing::warn!(
-                            server = %server.uuid,
-                            "requested backup {} does not exist",
-                            backup
-                        );
+                        _ => {
+                            tracing::warn!(
+                                server = %server.uuid,
+                                "backup {} is not a Wings backup and cannot be transferred, skipping",
+                                backup.uuid()
+                            );
+                        }
                     }
+                } else {
+                    tracing::warn!(
+                        server = %server.uuid,
+                        "requested backup {} does not exist",
+                        backup
+                    );
                 }
             }
 

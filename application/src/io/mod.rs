@@ -2,10 +2,10 @@ use std::io::{Read, Write};
 
 pub mod abort;
 pub mod compression;
-
 pub mod counting_reader;
 pub mod counting_writer;
 pub mod fixed_reader;
+pub mod hash_reader;
 pub mod limited_reader;
 pub mod limited_writer;
 
