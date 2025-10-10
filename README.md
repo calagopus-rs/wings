@@ -158,13 +158,16 @@ remote_query:
 
 - `GET /openapi.json` endpoint for getting a full OpenAPI documentation of the wings api
 - `GET /api/stats` api endpoint for seeing node usage
+- `GET /api/system/logs` api endpoint for listing all wings log files
+- `GET /api/system/logs/{file}` api endpoint for reading a wings log file
+- `POST /api/system/upgrade` api endpoint for remotely upgrading the wings binary
 - `POST /api/servers/{server}/script` api endpoint for running custom scripts async on the server
 - `POST /api/servers/{server}/ws/permissions` api endpoint for live updating user permissions on a server
 - `GET /api/servers/{server}/version` api endpoint for getting a version hash for a server
 - `GET /api/servers/{server}/files/fingerprints` api endpoint for getting fingerprints for many files at once
 - `GET /api/servers/{server}/files/list` api endpoint for listing files with pagination
 - `POST /api/servers/{server}/files/search` api endpoint for searching for file names/content
-- `GET /api/servers/{server}/download/directory` api endpoint for downloading directories on-the-fly as `.tar.gz`s
+- `GET /api/servers/{server}/download/directory` api endpoint for downloading directories on-the-fly as archives
 
 ---
 
@@ -200,7 +203,7 @@ remote_query:
 - add [`btrfs`](https://github.com/kdave/btrfs-progs) backup driver
 - add [`zfs`](https://github.com/openzfs/zfs) backup driver
 - add [`restic`](https://github.com/restic/restic) backup driver
-- add ability to create `zip` archives on `wings` backup driver
+- add ability to create `zip` and `7z` archives on `wings` backup driver
 - add ability to browse backups (for some drivers)
 
 ### cli

@@ -20,6 +20,7 @@ mod get {
 
     #[derive(ToSchema, Serialize)]
     struct Response {
+        #[schema(inline)]
         log_files: Vec<ResponseLogFile>,
     }
 
