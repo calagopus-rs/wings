@@ -9,7 +9,7 @@ use tokio::io::AsyncWrite;
 
 pub enum CompressionWriter<'a, W: Write + Send + 'static> {
     None(W),
-    Gz(gzp::par::compress::ParCompress<gzp::deflate::Gzip>),
+    Gz(gzp::par::compress::ParCompress<'a, gzp::deflate::Gzip, W>),
     Xz(Box<lzma_rust2::XzWriterMt<W>>),
     Bz2(bzip2::write::BzEncoder<W>),
     Lz4(lz4::Encoder<W>),
@@ -66,7 +66,10 @@ impl<'a, W: Write + Send + 'static> CompressionWriter<'a, W> {
     pub fn finish(self) -> std::io::Result<()> {
         match self {
             CompressionWriter::None(mut writer) => writer.flush(),
-            CompressionWriter::Gz(mut writer) => writer.finish().map_err(std::io::Error::other),
+            CompressionWriter::Gz(mut writer) => {
+                writer.finish().map_err(std::io::Error::other)?;
+                Ok(())
+            }
             CompressionWriter::Xz(writer) => {
                 writer.finish()?;
                 Ok(())

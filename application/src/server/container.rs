@@ -215,7 +215,7 @@ impl Container {
                         && ratelimit_counter >= server.app_state.config.throttles.lines
                     {
                         if ratelimit_start.elapsed()
-                            < std::time::Duration::from_secs(
+                            < std::time::Duration::from_millis(
                                 server.app_state.config.throttles.line_reset_interval,
                             )
                         {

@@ -655,6 +655,7 @@ nestify::nest! {
             #[serde(default = "throttles_lines")]
             pub lines: u64,
             #[serde(default = "throttles_line_reset_interval")]
+            /// ms
             pub line_reset_interval: u64,
         },
 
