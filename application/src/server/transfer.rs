@@ -97,7 +97,7 @@ impl OutgoingServerTransfer {
             .websocket
             .send(super::websocket::WebsocketMessage::new(
                 super::websocket::WebsocketEvent::ServerTransferLogs,
-                &[format!("{prelude} {message}")],
+                [format!("{prelude} {message}")].into(),
             ))
             .ok();
     }
@@ -117,7 +117,7 @@ impl OutgoingServerTransfer {
             .websocket
             .send(super::websocket::WebsocketMessage::new(
                 super::websocket::WebsocketEvent::ServerTransferStatus,
-                &["failure".to_string()],
+                ["failure".to_string()].into(),
             ))
             .ok();
     }
@@ -162,7 +162,7 @@ impl OutgoingServerTransfer {
                 .websocket
                 .send(super::websocket::WebsocketMessage::new(
                     super::websocket::WebsocketEvent::ServerTransferStatus,
-                    &["processing".to_string()],
+                    ["processing".to_string()].into(),
                 ))
                 .ok();
 
@@ -443,7 +443,7 @@ impl OutgoingServerTransfer {
                     .websocket
                     .send(super::websocket::WebsocketMessage::new(
                         super::websocket::WebsocketEvent::ServerTransferStatus,
-                        &["completed".to_string()],
+                        ["completed".to_string()].into(),
                     ))
                     .ok();
             });

@@ -166,7 +166,7 @@ impl Server {
                     if usage != prev_usage {
                         let message = websocket::WebsocketMessage::new(
                             websocket::WebsocketEvent::ServerStats,
-                            &[serde_json::to_string(&usage).unwrap()],
+                            [serde_json::to_string(&usage).unwrap()].into(),
                         );
 
                         if let Err(err) = server.websocket.send(message) {
@@ -673,7 +673,7 @@ impl Server {
         self.websocket
             .send(websocket::WebsocketMessage::new(
                 websocket::WebsocketEvent::ServerDaemonMessage,
-                &[message],
+                [message].into(),
             ))
             .ok();
     }
@@ -682,7 +682,7 @@ impl Server {
         self.websocket
             .send(websocket::WebsocketMessage::new(
                 websocket::WebsocketEvent::ServerInstallOutput,
-                &[message],
+                [message].into(),
             ))
             .ok();
     }
@@ -695,11 +695,12 @@ impl Server {
         self.websocket
             .send(websocket::WebsocketMessage::new(
                 websocket::WebsocketEvent::ServerConsoleOutput,
-                &[format!(
+                [format!(
                     "{} {}",
                     prelude,
                     ansi_term::Style::new().bold().paint(message)
-                )],
+                )]
+                .into(),
             ))
             .ok();
     }
@@ -718,11 +719,12 @@ impl Server {
     pub fn get_daemon_error(&self, message: &str) -> websocket::WebsocketMessage {
         websocket::WebsocketMessage::new(
             websocket::WebsocketEvent::ServerDaemonMessage,
-            &[ansi_term::Style::new()
+            [ansi_term::Style::new()
                 .bold()
                 .on(ansi_term::Color::Red)
                 .paint(message)
-                .to_string()],
+                .to_string()]
+            .into(),
         )
     }
 
@@ -775,7 +777,7 @@ impl Server {
                                         self.websocket
                                             .send(websocket::WebsocketMessage::new(
                                                 websocket::WebsocketEvent::ServerImagePullProgress,
-                                                &[
+                                                [
                                                     id,
                                                     serde_json::to_string(&crate::models::PullProgress {
                                                         status: crate::models::PullProgressStatus::Pulling,
@@ -783,7 +785,7 @@ impl Server {
                                                         total: progress_detail.total.unwrap_or_default()
                                                     })
                                                     .unwrap()
-                                                ],
+                                                ].into(),
                                             ))
                                             .ok();
                                     }
@@ -793,7 +795,7 @@ impl Server {
                                         self.websocket
                                             .send(websocket::WebsocketMessage::new(
                                                 websocket::WebsocketEvent::ServerImagePullProgress,
-                                                &[
+                                                [
                                                     id,
                                                     serde_json::to_string(&crate::models::PullProgress {
                                                         status: crate::models::PullProgressStatus::Extracting,
@@ -801,7 +803,7 @@ impl Server {
                                                         total: progress_detail.total.unwrap_or_default()
                                                     })
                                                     .unwrap()
-                                                ],
+                                                ].into(),
                                             ))
                                             .ok();
                                     }
@@ -810,7 +812,7 @@ impl Server {
                                     self.websocket
                                         .send(websocket::WebsocketMessage::new(
                                             websocket::WebsocketEvent::ServerImagePullCompleted,
-                                            &[id],
+                                            [id].into(),
                                         ))
                                         .ok();
                                 }

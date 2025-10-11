@@ -52,7 +52,10 @@ pub async fn handle_jwt(
                                 if jwt.permissions.has_permission(Permission::WebsocketConnect) {
                                     super::send_message(
                                         sender,
-                                        WebsocketMessage::new(WebsocketEvent::TokenExpired, &[]),
+                                        WebsocketMessage::new(
+                                            WebsocketEvent::TokenExpired,
+                                            [].into(),
+                                        ),
                                     )
                                     .await;
 
@@ -76,7 +79,7 @@ pub async fn handle_jwt(
                                 sender,
                                 WebsocketMessage::new(
                                     WebsocketEvent::AuthenticationSuccess,
-                                    &permissions,
+                                    permissions.into(),
                                 ),
                             )
                             .await;
@@ -86,7 +89,7 @@ pub async fn handle_jwt(
                                     sender,
                                     WebsocketMessage::new(
                                         WebsocketEvent::ServerStatus,
-                                        &[server.state.get_state().to_str().to_string()],
+                                        [server.state.get_state().to_str().to_string()].into(),
                                     ),
                                 )
                                 .await;
@@ -148,7 +151,7 @@ pub async fn listen_jwt(
                 if expiration < chrono::Utc::now().timestamp() {
                     super::send_message(
                         sender,
-                        WebsocketMessage::new(WebsocketEvent::TokenExpired, &[]),
+                        WebsocketMessage::new(WebsocketEvent::TokenExpired, [].into()),
                     )
                     .await;
 
@@ -159,7 +162,7 @@ pub async fn listen_jwt(
                 } else if expiration - 60 < chrono::Utc::now().timestamp() {
                     super::send_message(
                         sender,
-                        WebsocketMessage::new(WebsocketEvent::TokenExpiring, &[]),
+                        WebsocketMessage::new(WebsocketEvent::TokenExpiring, [].into()),
                     )
                     .await;
 

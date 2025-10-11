@@ -88,10 +88,11 @@ impl OperationManager {
                         sender
                             .send(crate::server::websocket::WebsocketMessage::new(
                                 crate::server::websocket::WebsocketEvent::ServerOperationProgress,
-                                &[
+                                [
                                     operation_uuid.to_string(),
                                     serde_json::to_string(&operation).unwrap(),
-                                ],
+                                ]
+                                .into(),
                             ))
                             .ok();
 
@@ -136,14 +137,14 @@ impl OperationManager {
                     sender
                         .send(crate::server::websocket::WebsocketMessage::new(
                             crate::server::websocket::WebsocketEvent::ServerOperationError,
-                            &[operation_uuid.to_string(), message],
+                            [operation_uuid.to_string(), message].into(),
                         ))
                         .ok();
                 } else {
                     sender
                         .send(crate::server::websocket::WebsocketMessage::new(
                             crate::server::websocket::WebsocketEvent::ServerOperationCompleted,
-                            &[operation_uuid.to_string()],
+                            [operation_uuid.to_string()].into(),
                         ))
                         .ok();
                 }

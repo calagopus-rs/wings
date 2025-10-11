@@ -80,6 +80,11 @@ pub async fn handle_ws(
                         continue;
                     }
 
+                    if let Message::Text(data) = &ws_data && data.len() > crate::BUFFER_SIZE {
+                        tracing::warn!(server = %server.uuid, "got massive websocket message from client, {} bytes", data.len());
+                        continue;
+                    }
+
                     match super::jwt::handle_jwt(&state, &server, &sender, &socket_jwt, ws_data)
                         .await
                     {
@@ -118,7 +123,7 @@ pub async fn handle_ws(
                                 &sender,
                                 websocket::WebsocketMessage::new(
                                     websocket::WebsocketEvent::JwtError,
-                                    &[err.to_string()],
+                                    [err.to_string()].into(),
                                 ),
                             )
                             .await;
@@ -128,171 +133,169 @@ pub async fn handle_ws(
             }
         };
 
-        let mut futures: Vec<Pin<Box<dyn futures_util::Future<Output = ()> + Send>>> =
-            Vec::with_capacity(4);
+        let futures: [Pin<Box<dyn futures_util::Future<Output = ()> + Send>>; 4] = [
+            // Server Listener
+            {
+                let socket_jwt = Arc::clone(&socket_jwt);
+                let sender = Arc::clone(&sender);
+                let mut reciever = server.websocket.subscribe();
+                let server = server.clone();
 
-        // Server Listener
-        futures.push({
-            let socket_jwt = Arc::clone(&socket_jwt);
-            let sender = Arc::clone(&sender);
-            let mut reciever = server.websocket.subscribe();
-            let server = server.clone();
+                Box::pin(async move {
+                    loop {
+                        match reciever.recv().await {
+                            Ok(message) => {
+                                let socket_jwt = socket_jwt.read().await;
+                                let socket_jwt = match socket_jwt.as_ref() {
+                                    Some(jwt) => jwt,
+                                    None => {
+                                        tracing::debug!(
+                                            server = %server.uuid,
+                                            "no socket jwt found, ignoring websocket message",
+                                        );
+                                        continue;
+                                    }
+                                };
 
-            Box::pin(async move {
-                loop {
-                    match reciever.recv().await {
-                        Ok(message) => {
-                            let socket_jwt = socket_jwt.read().await;
-                            let socket_jwt = match socket_jwt.as_ref() {
-                                Some(jwt) => jwt,
-                                None => {
-                                    tracing::debug!(
-                                        server = %server.uuid,
-                                        "no socket jwt found, ignoring websocket message",
-                                    );
-                                    continue;
+                                match message.event {
+                                    websocket::WebsocketEvent::ServerInstallOutput => {
+                                        if !socket_jwt
+                                            .permissions
+                                            .has_permission(Permission::AdminWebsocketInstall)
+                                        {
+                                            continue;
+                                        }
+                                    }
+                                    websocket::WebsocketEvent::ServerOperationProgress
+                                    | websocket::WebsocketEvent::ServerOperationCompleted => {
+                                        if !socket_jwt
+                                            .permissions
+                                            .has_permission(Permission::FileRead)
+                                        {
+                                            continue;
+                                        }
+                                    }
+                                    websocket::WebsocketEvent::ServerBackupProgress
+                                    | websocket::WebsocketEvent::ServerBackupCompleted => {
+                                        if !socket_jwt
+                                            .permissions
+                                            .has_permission(Permission::BackupRead)
+                                        {
+                                            continue;
+                                        }
+                                    }
+                                    websocket::WebsocketEvent::ServerScheduleStatus
+                                    | websocket::WebsocketEvent::ServerScheduleStepError => {
+                                        if !socket_jwt
+                                            .permissions
+                                            .has_permission(Permission::ScheduleRead)
+                                        {
+                                            continue;
+                                        }
+                                    }
+                                    websocket::WebsocketEvent::ServerTransferLogs => {
+                                        if !socket_jwt
+                                            .permissions
+                                            .has_permission(Permission::AdminWebsocketTransfer)
+                                        {
+                                            continue;
+                                        }
+                                    }
+                                    _ => {}
                                 }
-                            };
 
-                            match message.event {
-                                websocket::WebsocketEvent::ServerInstallOutput => {
-                                    if !socket_jwt
-                                        .permissions
-                                        .has_permission(Permission::AdminWebsocketInstall)
-                                    {
-                                        continue;
-                                    }
-                                }
-                                websocket::WebsocketEvent::ServerOperationProgress
-                                | websocket::WebsocketEvent::ServerOperationCompleted => {
-                                    if !socket_jwt.permissions.has_permission(Permission::FileRead)
-                                    {
-                                        continue;
-                                    }
-                                }
-                                websocket::WebsocketEvent::ServerBackupProgress
-                                | websocket::WebsocketEvent::ServerBackupCompleted => {
-                                    if !socket_jwt
-                                        .permissions
-                                        .has_permission(Permission::BackupRead)
-                                    {
-                                        continue;
-                                    }
-                                }
-                                websocket::WebsocketEvent::ServerScheduleStatus
-                                | websocket::WebsocketEvent::ServerScheduleStepError => {
-                                    if !socket_jwt
-                                        .permissions
-                                        .has_permission(Permission::ScheduleRead)
-                                    {
-                                        continue;
-                                    }
-                                }
-                                websocket::WebsocketEvent::ServerTransferLogs => {
-                                    if !socket_jwt
-                                        .permissions
-                                        .has_permission(Permission::AdminWebsocketTransfer)
-                                    {
-                                        continue;
-                                    }
-                                }
-                                _ => {}
+                                super::send_message(&sender, message).await
                             }
-
-                            super::send_message(&sender, message).await
+                            Err(RecvError::Closed) => {
+                                tracing::debug!(
+                                    server = %server.uuid,
+                                    "websocket channel closed, stopping listener"
+                                );
+                                break;
+                            }
+                            Err(RecvError::Lagged(_)) => {
+                                tracing::debug!(
+                                    server = %server.uuid,
+                                    "websocket lagged behind, messages dropped"
+                                );
+                            }
                         }
-                        Err(RecvError::Closed) => {
-                            tracing::debug!(
-                                server = %server.uuid,
-                                "websocket channel closed, stopping listener"
-                            );
+                    }
+                })
+            },
+            // Stdout Listener
+            {
+                let state = Arc::clone(&state);
+                let socket_jwt = Arc::clone(&socket_jwt);
+                let sender = Arc::clone(&sender);
+                let server = server.clone();
+
+                Box::pin(async move {
+                    loop {
+                        if let Some(mut stdout) = server.container_stdout().await {
+                            loop {
+                                match stdout.recv().await {
+                                    Ok(stdout) => {
+                                        let socket_jwt = socket_jwt.read().await;
+
+                                        if let Some(jwt) = socket_jwt.as_ref()
+                                            && jwt.base.validate(&state.config.jwt).await
+                                        {
+                                            super::send_message(
+                                                &sender,
+                                                websocket::WebsocketMessage::new(
+                                                    websocket::WebsocketEvent::ServerConsoleOutput,
+                                                    [stdout].into(),
+                                                ),
+                                            )
+                                            .await;
+                                        }
+                                    }
+                                    Err(RecvError::Closed) => break,
+                                    Err(RecvError::Lagged(_)) => {
+                                        tracing::debug!(
+                                            server = %server.uuid,
+                                            "stdout lagged behind, messages dropped"
+                                        );
+                                    }
+                                }
+                            }
+                        }
+
+                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    }
+                })
+            },
+            // Jwt Listener
+            {
+                let socket_jwt = Arc::clone(&socket_jwt);
+                let sender = Arc::clone(&sender);
+
+                Box::pin(async move {
+                    super::jwt::listen_jwt(&sender, &socket_jwt).await;
+                })
+            },
+            // Pinger
+            {
+                let sender = Arc::clone(&sender);
+
+                Box::pin(async move {
+                    loop {
+                        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+
+                        let ping = sender
+                            .lock()
+                            .await
+                            .send(Message::Ping(Bytes::from_static(&[1, 2, 3])))
+                            .await;
+
+                        if ping.is_err() {
                             break;
                         }
-                        Err(RecvError::Lagged(_)) => {
-                            tracing::debug!(
-                                server = %server.uuid,
-                                "websocket lagged behind, messages dropped"
-                            );
-                        }
                     }
-                }
-            })
-        });
-
-        // Stdout Listener
-        futures.push({
-            let state = Arc::clone(&state);
-            let socket_jwt = Arc::clone(&socket_jwt);
-            let sender = Arc::clone(&sender);
-            let server = server.clone();
-
-            Box::pin(async move {
-                loop {
-                    if let Some(mut stdout) = server.container_stdout().await {
-                        loop {
-                            match stdout.recv().await {
-                                Ok(stdout) => {
-                                    let socket_jwt = socket_jwt.read().await;
-
-                                    if let Some(jwt) = socket_jwt.as_ref()
-                                        && jwt.base.validate(&state.config.jwt).await
-                                    {
-                                        super::send_message(
-                                            &sender,
-                                            websocket::WebsocketMessage::new(
-                                                websocket::WebsocketEvent::ServerConsoleOutput,
-                                                &[stdout],
-                                            ),
-                                        )
-                                        .await;
-                                    }
-                                }
-                                Err(RecvError::Closed) => break,
-                                Err(RecvError::Lagged(_)) => {
-                                    tracing::debug!(
-                                        server = %server.uuid,
-                                        "stdout lagged behind, messages dropped"
-                                    );
-                                }
-                            }
-                        }
-                    }
-
-                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                }
-            })
-        });
-
-        // Jwt Listener
-        futures.push({
-            let socket_jwt = Arc::clone(&socket_jwt);
-            let sender = Arc::clone(&sender);
-
-            Box::pin(async move {
-                super::jwt::listen_jwt(&sender, &socket_jwt).await;
-            })
-        });
-
-        // Pinger
-        futures.push({
-            let sender = Arc::clone(&sender);
-
-            Box::pin(async move {
-                loop {
-                    tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-
-                    let ping = sender
-                        .lock()
-                        .await
-                        .send(Message::Ping(Bytes::from_static(&[1, 2, 3])))
-                        .await;
-
-                    if ping.is_err() {
-                        break;
-                    }
-                }
-            })
-        });
+                })
+            },
+        ];
 
         tokio::select! {
             _ = writer => {

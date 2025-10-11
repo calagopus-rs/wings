@@ -226,7 +226,7 @@ pub async fn install_server(
         .websocket
         .send(super::websocket::WebsocketMessage::new(
             super::websocket::WebsocketEvent::ServerInstallStarted,
-            &[],
+            [].into(),
         ))?;
 
     tracing::info!(
@@ -306,7 +306,7 @@ pub async fn install_server(
             .websocket
             .send(super::websocket::WebsocketMessage::new(
                 super::websocket::WebsocketEvent::ServerInstallCompleted,
-                &[],
+                [].into(),
             ))
     };
 
@@ -431,7 +431,7 @@ pub async fn install_server(
                                         .websocket
                                         .send(super::websocket::WebsocketMessage::new(
                                             super::websocket::WebsocketEvent::ServerInstallOutput,
-                                            &[line],
+                                            [line].into(),
                                         ))
                                         .ok();
 
@@ -447,7 +447,7 @@ pub async fn install_server(
                                         .websocket
                                         .send(super::websocket::WebsocketMessage::new(
                                             super::websocket::WebsocketEvent::ServerInstallOutput,
-                                            &[line],
+                                            [line].into(),
                                         ))
                                         .ok();
 
@@ -466,7 +466,7 @@ pub async fn install_server(
                                         .websocket
                                         .send(super::websocket::WebsocketMessage::new(
                                             super::websocket::WebsocketEvent::ServerInstallOutput,
-                                            &[line],
+                                            [line].into(),
                                         ))
                                         .ok();
 
@@ -492,7 +492,7 @@ pub async fn install_server(
                             .websocket
                             .send(super::websocket::WebsocketMessage::new(
                                 super::websocket::WebsocketEvent::ServerInstallOutput,
-                                &[line],
+                                [line].into(),
                             ))
                             .ok();
                     }
@@ -545,7 +545,7 @@ pub async fn attach_install_container(
         .websocket
         .send(super::websocket::WebsocketMessage::new(
             super::websocket::WebsocketEvent::ServerInstallStarted,
-            &[],
+            [].into(),
         ))?;
 
     let container_id = Mutex::new(None);
@@ -651,7 +651,7 @@ pub async fn attach_install_container(
             .websocket
             .send(super::websocket::WebsocketMessage::new(
                 super::websocket::WebsocketEvent::ServerInstallCompleted,
-                &[],
+                [].into(),
             ))
     };
 
@@ -717,7 +717,7 @@ pub async fn attach_install_container(
                                         .websocket
                                         .send(super::websocket::WebsocketMessage::new(
                                             super::websocket::WebsocketEvent::ServerInstallOutput,
-                                            &[line],
+                                            [line].into(),
                                         ))
                                         .ok();
 
@@ -733,7 +733,7 @@ pub async fn attach_install_container(
                                         .websocket
                                         .send(super::websocket::WebsocketMessage::new(
                                             super::websocket::WebsocketEvent::ServerInstallOutput,
-                                            &[line],
+                                            [line].into(),
                                         ))
                                         .ok();
 
@@ -752,7 +752,7 @@ pub async fn attach_install_container(
                                         .websocket
                                         .send(super::websocket::WebsocketMessage::new(
                                             super::websocket::WebsocketEvent::ServerInstallOutput,
-                                            &[line],
+                                            [line].into(),
                                         ))
                                         .ok();
 
@@ -778,7 +778,7 @@ pub async fn attach_install_container(
                             .websocket
                             .send(super::websocket::WebsocketMessage::new(
                                 super::websocket::WebsocketEvent::ServerInstallOutput,
-                                &[line],
+                                [line].into(),
                             ))
                             .ok();
                     }

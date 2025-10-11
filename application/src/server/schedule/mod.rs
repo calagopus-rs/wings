@@ -343,10 +343,11 @@ impl Schedule {
                         .websocket
                         .send(WebsocketMessage::new(
                             WebsocketEvent::ServerScheduleStatus,
-                            &[
+                            [
                                 uuid.to_string(),
                                 serde_json::to_string(&*status.read().await).unwrap(),
-                            ],
+                            ]
+                            .into(),
                         ))
                         .ok();
 
@@ -358,7 +359,7 @@ impl Schedule {
                                 .websocket
                                 .send(WebsocketMessage::new(
                                     WebsocketEvent::ServerScheduleStepError,
-                                    &[raw_action.uuid.to_string(), err],
+                                    [raw_action.uuid.to_string(), err].into(),
                                 ))
                                 .ok();
 
@@ -380,10 +381,11 @@ impl Schedule {
                     .websocket
                     .send(WebsocketMessage::new(
                         WebsocketEvent::ServerScheduleStatus,
-                        &[
+                        [
                             uuid.to_string(),
                             serde_json::to_string(&*status.read().await).unwrap(),
-                        ],
+                        ]
+                        .into(),
                     ))
                     .ok();
 

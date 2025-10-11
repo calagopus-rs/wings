@@ -775,7 +775,6 @@ impl Config {
 
         let (file_appender, guard) = tracing_appender::non_blocking::NonBlockingBuilder::default()
             .buffered_lines_limit(50)
-            .lossy(false)
             .finish(latest_file.and(rolling_appender));
 
         config.ensure_user()?;
@@ -805,7 +804,7 @@ impl Config {
 
         if config.api.send_offline_server_logs && config.docker.delete_container_on_stop {
             tracing::warn!(
-                "You have enabled sending offline server logs, but also deleting containers on stop. This will result in no logs being sent for stopped servers."
+                "you have enabled sending offline server logs, but also deleting containers on stop. This will result in no logs being sent for stopped servers."
             );
         }
 
@@ -1077,7 +1076,7 @@ impl Config {
                 ))?;
 
             let driver = &self.docker.network.driver;
-            if driver != "host" && driver != "overlay" && driver != "weavemesh" {
+            if !matches!(driver.as_str(), "host" | "overlay" | "weavemesh") {
                 self.unsafe_mut().docker.network.interface =
                     self.docker.network.interfaces.v4.gateway.clone();
             }

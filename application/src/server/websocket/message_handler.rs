@@ -26,7 +26,7 @@ pub async fn handle_message(
                 sender,
                 WebsocketMessage::new(
                     WebsocketEvent::ServerStats,
-                    &[serde_json::to_string(&server.resource_usage().await)?],
+                    [serde_json::to_string(&server.resource_usage().await)?].into(),
                 ),
             )
             .await;
@@ -45,7 +45,7 @@ pub async fn handle_message(
                         sender,
                         WebsocketMessage::new(
                             WebsocketEvent::ServerConsoleOutput,
-                            &[line.trim().to_string()],
+                            [line.trim().to_string()].into(),
                         ),
                     )
                     .await;

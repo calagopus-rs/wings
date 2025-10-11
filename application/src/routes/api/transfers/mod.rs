@@ -375,7 +375,7 @@ mod post {
                     .websocket
                     .send(crate::server::websocket::WebsocketMessage::new(
                         crate::server::websocket::WebsocketEvent::ServerTransferStatus,
-                        &["completed".to_string()],
+                        ["completed".to_string()].into(),
                     ))
                     .ok();
 

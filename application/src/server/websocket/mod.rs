@@ -94,17 +94,17 @@ pub struct WebsocketMessage {
 
     #[serde(deserialize_with = "string_vec_or_empty")]
     #[serde(serialize_with = "arc_vec")]
-    pub args: Arc<Vec<String>>,
+    pub args: Arc<[String]>,
 }
 
-fn string_vec_or_empty<'de, D>(deserializer: D) -> Result<Arc<Vec<String>>, D::Error>
+fn string_vec_or_empty<'de, D>(deserializer: D) -> Result<Arc<[String]>, D::Error>
 where
     D: Deserializer<'de>,
 {
-    struct StringVecVisitor(PhantomData<Vec<String>>);
+    struct StringVecVisitor(PhantomData<[String]>);
 
     impl<'de> Visitor<'de> for StringVecVisitor {
-        type Value = Arc<Vec<String>>;
+        type Value = Arc<[String]>;
 
         fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
             formatter.write_str("a string array or null")
@@ -120,21 +120,21 @@ where
                     vec.push(value);
                 }
             }
-            Ok(Arc::new(vec))
+            Ok(Arc::from(vec))
         }
 
         fn visit_unit<E>(self) -> Result<Self::Value, E>
         where
             E: serde::de::Error,
         {
-            Ok(Arc::new(Vec::new()))
+            Ok(Arc::new([]))
         }
     }
 
     deserializer.deserialize_any(StringVecVisitor(PhantomData))
 }
 
-fn arc_vec<S>(vec: &Arc<Vec<String>>, serializer: S) -> Result<S::Ok, S::Error>
+fn arc_vec<S>(vec: &Arc<[String]>, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
 {
@@ -148,11 +148,8 @@ where
 
 impl WebsocketMessage {
     #[inline]
-    pub fn new(event: WebsocketEvent, data: &[String]) -> Self {
-        Self {
-            event,
-            args: Arc::new(data.to_vec()),
-        }
+    pub fn new(event: WebsocketEvent, args: Arc<[String]>) -> Self {
+        Self { event, args }
     }
 }
 

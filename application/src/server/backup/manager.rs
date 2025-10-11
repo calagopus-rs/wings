@@ -145,11 +145,12 @@ impl BackupManager {
                         .websocket
                         .send(crate::server::websocket::WebsocketMessage::new(
                             crate::server::websocket::WebsocketEvent::ServerBackupProgress,
-                            &[
+                            [
                                 uuid.to_string(),
                                 serde_json::to_string(&crate::models::Progress { progress, total })
                                     .unwrap(),
-                            ],
+                            ]
+                            .into(),
                         ))
                         .ok();
 
@@ -187,7 +188,7 @@ impl BackupManager {
                     .websocket
                     .send(crate::server::websocket::WebsocketMessage::new(
                         crate::server::websocket::WebsocketEvent::ServerBackupCompleted,
-                        &[
+                        [
                             uuid.to_string(),
                             serde_json::json!({
                                 "checksum_type": "",
@@ -199,7 +200,8 @@ impl BackupManager {
                                 "streaming": false,
                             })
                             .to_string(),
-                        ],
+                        ]
+                        .into(),
                     ))?;
                 self.cached_backup_adapters
                     .write()
@@ -224,7 +226,7 @@ impl BackupManager {
             .websocket
             .send(crate::server::websocket::WebsocketMessage::new(
                 crate::server::websocket::WebsocketEvent::ServerBackupCompleted,
-                &[
+                [
                     uuid.to_string(),
                     serde_json::json!({
                         "checksum_type": backup.checksum_type,
@@ -236,7 +238,8 @@ impl BackupManager {
                         "streaming": backup.streaming,
                     })
                     .to_string(),
-                ],
+                ]
+                .into(),
             ))?;
         server.configuration.write().await.backups.push(uuid);
         self.cached_backup_adapters
@@ -330,11 +333,12 @@ impl BackupManager {
                         .websocket
                         .send(crate::server::websocket::WebsocketMessage::new(
                             crate::server::websocket::WebsocketEvent::ServerBackupRestoreProgress,
-                            &[serde_json::to_string(&crate::models::Progress {
+                            [serde_json::to_string(&crate::models::Progress {
                                 progress: progress_value,
                                 total: total_value,
                             })
-                            .unwrap()],
+                            .unwrap()]
+                            .into(),
                         ))
                         .ok();
 
@@ -375,7 +379,7 @@ impl BackupManager {
                     .websocket
                     .send(crate::server::websocket::WebsocketMessage::new(
                         crate::server::websocket::WebsocketEvent::ServerBackupRestoreCompleted,
-                        &[],
+                        [].into(),
                     ))?;
 
                 tracing::info!(
