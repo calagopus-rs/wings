@@ -50,9 +50,7 @@ pub async fn diagnostics(matches: &ArgMatches, config: Option<&Arc<crate::config
     write_line(
         &mut output,
         "kernel",
-        &versions
-            .kernel_version
-            .unwrap_or_else(|| "unknown".to_string()),
+        &rustix::system::uname().version().to_string_lossy(),
     );
     write_line(
         &mut output,

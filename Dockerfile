@@ -7,7 +7,7 @@ USER root
 RUN apk add --no-cache bash coreutils curl btrfs-progs xfsprogs-extra zfs restic
 
 # Environment and helper
-ENV TO_GATHER="df,curl,btrfs,xfs_quota,zfs,uname,restic"
+ENV TO_GATHER="df,curl,btrfs,xfs_quota,zfs,restic"
 ENV OUTPUT_DIR="/build/gathered"
 COPY .docker/helpers/gather.sh /usr/local/bin/gather
 RUN chmod +x /usr/local/bin/gather && /usr/local/bin/gather

@@ -178,7 +178,7 @@ mod post {
 
             while let Ok(Some(chunk)) = field.chunk().await {
                 if crate::unlikely(
-                    written_size + chunk.len() > state.config.api.upload_limit * 1000 * 1000,
+                    written_size + chunk.len() > state.config.api.upload_limit * 1024 * 1024,
                 ) {
                     return ApiResponse::error(&format!(
                         "file size is larger than {}MB",
