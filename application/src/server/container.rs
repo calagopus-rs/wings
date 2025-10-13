@@ -26,7 +26,7 @@ pub struct Container {
     pub stdin: tokio::sync::mpsc::Sender<String>,
     stdin_reciever: tokio::task::JoinHandle<()>,
 
-    pub stdout: tokio::sync::broadcast::Receiver<String>,
+    pub stdout: tokio::sync::broadcast::Receiver<Arc<String>>,
     stdout_reciever: tokio::task::JoinHandle<()>,
 }
 
@@ -304,7 +304,7 @@ impl Container {
 
                                 check_startup(&line).await;
                                 if allow_ratelimit().await
-                                    && let Err(err) = stdout_sender.send(line)
+                                    && let Err(err) = stdout_sender.send(line.into())
                                 {
                                     tracing::error!(
                                         server = %server_uuid,
@@ -324,7 +324,7 @@ impl Container {
 
                                 check_startup(&line).await;
                                 if allow_ratelimit().await
-                                    && let Err(err) = stdout_sender.send(line)
+                                    && let Err(err) = stdout_sender.send(line.into())
                                 {
                                     tracing::error!(
                                         server = %server_uuid,
@@ -345,7 +345,7 @@ impl Container {
                                 .trim()
                                 .to_string();
                                 if allow_ratelimit().await
-                                    && let Err(err) = stdout_sender.send(line)
+                                    && let Err(err) = stdout_sender.send(line.into())
                                 {
                                     tracing::error!(
                                         server = %server_uuid,
@@ -372,7 +372,7 @@ impl Container {
                     let line = String::from_utf8_lossy(&buffer[line_start..])
                         .trim()
                         .to_string();
-                    if let Err(err) = stdout_sender.send(line) {
+                    if let Err(err) = stdout_sender.send(line.into()) {
                         tracing::error!(
                             server = %server_uuid,
                             error = %err,

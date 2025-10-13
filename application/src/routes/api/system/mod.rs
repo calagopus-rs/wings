@@ -5,13 +5,12 @@ mod logs;
 mod upgrade;
 
 mod get {
-    use std::sync::LazyLock;
-
     use crate::{
         response::{ApiResponse, ApiResponseResult},
         routes::GetState,
     };
     use serde::Serialize;
+    use std::sync::LazyLock;
     use utoipa::ToSchema;
 
     #[derive(ToSchema, Serialize)]

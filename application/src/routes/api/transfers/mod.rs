@@ -124,6 +124,7 @@ mod post {
             move || -> Result<(), anyhow::Error> {
                 let mut backups = Vec::new();
                 let mut archive_checksum = None;
+                let mut backup_checksum = None;
 
                 while let Ok(Some(field)) = runtime.block_on(multipart.next_field()) {
                     if field.name() == Some("archive") {
@@ -279,6 +280,26 @@ mod post {
                         {
                             Some(uuid) => uuid,
                             None => {
+                                if field.name().is_some_and(|n| n.ends_with("checksum")) {
+                                    let backup_checksum = match backup_checksum.take() {
+                                        Some(checksum) => format!("{:x}", checksum),
+                                        None => {
+                                            return Err(anyhow::anyhow!(
+                                                "backup checksum does not match multipart checksum, None to be found"
+                                            ));
+                                        }
+                                    };
+                                    let checksum = runtime.block_on(field.text())?;
+
+                                    if backup_checksum != checksum {
+                                        return Err(anyhow::anyhow!(
+                                            "backup checksum does not match multipart checksum, {checksum} != {backup_checksum}"
+                                        ));
+                                    }
+
+                                    continue;
+                                }
+
                                 tracing::warn!(
                                     "invalid backup field name: {}",
                                     field.name().unwrap_or("unknown")
@@ -309,10 +330,12 @@ mod post {
                                     }),
                                 );
                                 let reader = tokio_util::io::SyncIoBridge::new(reader);
-                                let mut reader = LimitedReader::new_with_bytes_per_second(
+                                let reader = LimitedReader::new_with_bytes_per_second(
                                     reader,
                                     state.config.system.transfers.download_limit * 1024 * 1024,
                                 );
+                                let mut reader =
+                                    HashReader::new_with_hasher(reader, sha2::Sha256::new());
 
                                 let mut file = match std::fs::File::create(&file_name) {
                                     Ok(file) => file,
@@ -345,6 +368,7 @@ mod post {
                                 }
 
                                 backups.push(backup_uuid);
+                                backup_checksum = Some(reader.finish());
 
                                 tracing::debug!(
                                     "backup file {} transferred successfully",

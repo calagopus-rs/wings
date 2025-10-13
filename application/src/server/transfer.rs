@@ -1,7 +1,9 @@
 use crate::io::{
     compression::{CompressionLevel, CompressionType},
     counting_reader::AsyncCountingReader,
+    hash_reader::AsyncHashReader,
 };
+use futures::FutureExt;
 use human_bytes::human_bytes;
 use serde::Deserialize;
 use sha2::Digest;
@@ -12,7 +14,10 @@ use std::{
         atomic::{AtomicU64, Ordering},
     },
 };
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    sync::Mutex,
+};
 use utoipa::ToSchema;
 
 #[derive(Clone, Copy, ToSchema, Deserialize, Default)]
@@ -166,7 +171,7 @@ impl OutgoingServerTransfer {
                 ))
                 .ok();
 
-            let (mut checksum_writer, checksum_reader) = tokio::io::duplex(256);
+            let (checksum_sender, checksum_receiver) = tokio::sync::oneshot::channel();
             let (checksummed_writer, mut checksummed_reader) = tokio::io::duplex(crate::BUFFER_SIZE);
             let (mut writer, reader) = tokio::io::duplex(crate::BUFFER_SIZE);
             let archive_task = Box::pin({
@@ -214,9 +219,7 @@ impl OutgoingServerTransfer {
                     writer.write_all(&buffer[..bytes_read]).await?;
                 }
 
-                checksum_writer
-                    .write_all(format!("{:x}", hasher.finalize()).as_bytes())
-                    .await?;
+                checksum_sender.send(format!("{:x}", hasher.finalize())).ok();
                 writer.flush().await?;
 
                 Ok::<_, anyhow::Error>(())
@@ -235,7 +238,7 @@ impl OutgoingServerTransfer {
                 .part(
                     "checksum",
                     reqwest::multipart::Part::stream(reqwest::Body::wrap_stream(
-                        tokio_util::io::ReaderStream::with_capacity(checksum_reader, 256),
+                        checksum_receiver.into_stream()
                     ))
                     .file_name("checksum")
                     .mime_str("text/plain")
@@ -248,6 +251,8 @@ impl OutgoingServerTransfer {
                 if let Ok(Some(backup)) = backup_manager.find(*backup).await {
                     match backup.adapter() {
                         super::backup::adapters::BackupAdapter::Wings => {
+                            let hasher = Arc::new(Mutex::new(sha2::Sha256::new()));
+
                             let file_name = match super::backup::adapters::wings::WingsBackup::get_first_file_name(&server.app_state.config, backup.uuid()).await {
                                 Ok((_, file_name)) => file_name,
                                 Err(err) => {
@@ -275,21 +280,37 @@ impl OutgoingServerTransfer {
                                 },
                                 Arc::clone(&bytes_archived),
                             );
+                            let reader = AsyncHashReader::new_with_hasher(reader, Arc::clone(&hasher)).await;
+
+                            let (checksum_sender, checksum_receiver) = tokio::sync::oneshot::channel();
+                            tokio::spawn(async move {
+                                checksum_sender.send(format!("{:x}", hasher.lock().await.finalize_reset())).ok();
+                            });
 
                             total_bytes += tokio::fs::metadata(&file_name)
                                 .await
                                 .map(|m| m.len())
                                 .unwrap_or(0);
 
-                            form = form.part(
-                                format!("backup-{}", backup.uuid()),
-                                reqwest::multipart::Part::stream(reqwest::Body::wrap_stream(
-                                    tokio_util::io::ReaderStream::with_capacity(reader, crate::BUFFER_SIZE),
-                                ))
-                                .file_name(file_name.file_name().unwrap_or_default().to_string_lossy().to_string())
-                                .mime_str("backup/wings")
-                                .unwrap(),
-                            );
+                            form = form
+                                .part(
+                                    format!("backup-{}", backup.uuid()),
+                                    reqwest::multipart::Part::stream(reqwest::Body::wrap_stream(
+                                        tokio_util::io::ReaderStream::with_capacity(reader, crate::BUFFER_SIZE),
+                                    ))
+                                    .file_name(file_name.file_name().unwrap_or_default().to_string_lossy().to_string())
+                                    .mime_str("backup/wings")
+                                    .unwrap(),
+                                )
+                                .part(
+                                    format!("backup-checksum-{}", backup.uuid()),
+                                    reqwest::multipart::Part::stream(reqwest::Body::wrap_stream(
+                                        checksum_receiver.into_stream()
+                                    ))
+                                    .file_name(format!("backup-checksum-{}", backup.uuid()))
+                                    .mime_str("text/plain")
+                                    .unwrap(),
+                                );
                         }
                         _ => {
                             tracing::warn!(

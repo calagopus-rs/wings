@@ -25,6 +25,12 @@ pub enum ScheduleAction {
     Sleep {
         duration: u64,
     },
+    WaitForConsoleLine {
+        ignore_failure: bool,
+
+        contains: String,
+        timeout: u64,
+    },
     SendPower {
         ignore_failure: bool,
 
@@ -109,6 +115,7 @@ impl ScheduleAction {
     pub fn ignore_failure(&self) -> bool {
         match self {
             ScheduleAction::Sleep { .. } => false,
+            ScheduleAction::WaitForConsoleLine { ignore_failure, .. } => *ignore_failure,
             ScheduleAction::SendPower { ignore_failure, .. } => *ignore_failure,
             ScheduleAction::SendCommand { ignore_failure, .. } => *ignore_failure,
             ScheduleAction::CreateBackup { ignore_failure, .. } => *ignore_failure,
@@ -137,6 +144,31 @@ impl ScheduleAction {
         match self {
             ScheduleAction::Sleep { duration } => {
                 tokio::time::sleep(std::time::Duration::from_millis(*duration)).await;
+            }
+            ScheduleAction::WaitForConsoleLine {
+                contains, timeout, ..
+            } => {
+                let mut stdout = match server.container_stdout().await {
+                    Some(stdout) => stdout,
+                    None => {
+                        return Err("unable to get server stdout, is the server offline?".into());
+                    }
+                };
+
+                let line_finder = async {
+                    while let Ok(line) = stdout.recv().await {
+                        if line.contains(contains) {
+                            return;
+                        }
+                    }
+                };
+
+                if tokio::time::timeout(std::time::Duration::from_secs(*timeout), line_finder)
+                    .await
+                    .is_err()
+                {
+                    return Err("timeout while waiting for matching console output.".into());
+                }
             }
             ScheduleAction::SendPower { action, .. } => match action {
                 crate::models::ServerPowerAction::Start => {

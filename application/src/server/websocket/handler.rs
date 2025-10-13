@@ -245,7 +245,7 @@ pub async fn handle_ws(
                                                 &sender,
                                                 websocket::WebsocketMessage::new(
                                                     websocket::WebsocketEvent::ServerConsoleOutput,
-                                                    [stdout].into(),
+                                                    [stdout.to_string()].into(),
                                                 ),
                                             )
                                             .await;

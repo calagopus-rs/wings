@@ -11,6 +11,7 @@ impl ScheduleManager {
     #[inline]
     pub fn new(config: Arc<crate::config::Config>) -> Self {
         let schedules = Arc::new(RwLock::new(Vec::new()));
+
         Self {
             schedules: Arc::clone(&schedules),
             schedule_task: tokio::spawn(async move {
