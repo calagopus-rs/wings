@@ -163,7 +163,7 @@ impl ScheduleAction {
                     }
                 };
 
-                if tokio::time::timeout(std::time::Duration::from_secs(*timeout), line_finder)
+                if tokio::time::timeout(std::time::Duration::from_millis(*timeout), line_finder)
                     .await
                     .is_err()
                 {
