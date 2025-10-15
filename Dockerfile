@@ -18,6 +18,9 @@ FROM alpine:latest
 # Copy gathered binaries and libs
 COPY --from=builder /build/gathered/ /
 
+RUN apk add --no-cache ca-certificates && \
+	update-ca-certificates
+
 # Add wings-rs and entrypoint
 ARG TARGETPLATFORM
 COPY .docker/${TARGETPLATFORM#linux/}/wings-rs /usr/bin/wings-rs
