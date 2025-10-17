@@ -90,9 +90,9 @@ mod post {
         )
         .await
         {
-            Some(archive) => archive,
-            None => {
-                return ApiResponse::error("failed to open archive")
+            Ok(archive) => archive,
+            Err(err) => {
+                return ApiResponse::error(&format!("failed to open archive: {err}"))
                     .with_status(StatusCode::EXPECTATION_FAILED)
                     .ok();
             }

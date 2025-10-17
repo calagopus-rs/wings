@@ -361,7 +361,7 @@ impl ServerConfiguration {
         filesystem: &super::filesystem::Filesystem,
     ) -> bollard::container::Config<String> {
         let mut labels = self.labels.clone();
-        labels.insert("Service".to_string(), "Pterodactyl".to_string());
+        labels.insert("Service".to_string(), config.app_name.clone());
         labels.insert("ContainerType".to_string(), "server_process".to_string());
 
         let network_mode = if self.allocations.force_outgoing_ip

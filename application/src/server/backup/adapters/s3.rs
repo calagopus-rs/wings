@@ -11,6 +11,7 @@ use crate::{
         filesystem::archive::StreamableArchiveFormat,
     },
 };
+use axum_extra::{TypedHeader, headers::Range};
 use cap_std::fs::{Permissions, PermissionsExt};
 use futures::TryStreamExt;
 use sha1::Digest;
@@ -371,6 +372,7 @@ impl BackupExt for S3Backup {
         &self,
         _config: &Arc<crate::config::Config>,
         _archive_format: StreamableArchiveFormat,
+        _range: Option<TypedHeader<Range>>,
     ) -> Result<crate::response::ApiResponse, anyhow::Error> {
         Err(anyhow::anyhow!(
             "this backup adapter does not support downloads"

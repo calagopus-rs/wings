@@ -54,6 +54,9 @@ fn api_file_compression_threads() -> usize {
 fn api_upload_limit() -> usize {
     100
 }
+fn api_max_jwt_uses() -> usize {
+    5
+}
 
 fn system_root_directory() -> String {
     "/var/lib/pterodactyl".to_string()
@@ -345,8 +348,10 @@ nestify::nest! {
             #[serde(default = "api_file_compression_threads")]
             pub file_compression_threads: usize,
             #[serde(default = "api_upload_limit")]
-            /// MB
+            /// MiB
             pub upload_limit: usize,
+            #[serde(default = "api_max_jwt_uses")]
+            pub max_jwt_uses: usize,
             #[serde(default)]
             pub trusted_proxies: Vec<std::net::IpAddr>,
         },
@@ -746,7 +751,7 @@ impl Config {
             .context(format!("failed to parse config file {path}"))?;
 
         let client = crate::remote::client::Client::new(&config, ignore_certificate_errors);
-        let jwt = crate::remote::jwt::JwtClient::new(&config.token);
+        let jwt = crate::remote::jwt::JwtClient::new(&config);
         let mut config = Self {
             inner: UnsafeCell::new(config),
 

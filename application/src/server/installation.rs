@@ -26,7 +26,10 @@ async fn container_config(
     script: &InstallationScript,
 ) -> tokio::io::Result<bollard::container::Config<String>> {
     let labels = HashMap::from([
-        ("Service".to_string(), "Pterodactyl".to_string()),
+        (
+            "Service".to_string(),
+            server.app_state.config.app_name.clone(),
+        ),
         ("ContainerType".to_string(), "server_installer".to_string()),
     ]);
 
@@ -170,7 +173,7 @@ async fn cleanup_container(
     let mut file = tokio::io::BufWriter::new(tokio::fs::File::create(&log_path).await?);
     file.write_all(
         format!(
-            r"Pterodactyl Server Installation Log
+            r"Server Installation Log
 
 |
 | Details

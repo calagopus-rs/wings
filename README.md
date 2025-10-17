@@ -43,6 +43,8 @@ api:
   file_decompression_threads: 2
   # how many threads to use when compressing .gz/.xz/.7z
   file_compression_threads: 2
+  # how often a jwt can be used to download a file/backup until expiry, 0 means unlimited (2 minimum recommended)
+  max_jwt_uses: 5
 
 system:
   # apply a real quota limit to each server

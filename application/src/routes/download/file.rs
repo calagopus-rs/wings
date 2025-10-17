@@ -3,13 +3,18 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod get {
     use crate::{
+        io::range_reader::AsyncRangeReader,
         response::{ApiResponse, ApiResponseResult},
         routes::GetState,
     };
     use axum::{
-        body::Body,
         extract::Query,
         http::{HeaderMap, StatusCode},
+        response::IntoResponse,
+    };
+    use axum_extra::{
+        TypedHeader,
+        headers::{ContentRange, Range},
     };
     use serde::Deserialize;
     use std::path::Path;
@@ -41,7 +46,11 @@ mod get {
             description = "The JWT token to use for authentication",
         ),
     ))]
-    pub async fn route(state: GetState, Query(data): Query<Params>) -> ApiResponseResult {
+    pub async fn route(
+        state: GetState,
+        Query(data): Query<Params>,
+        range: Option<TypedHeader<Range>>,
+    ) -> ApiResponseResult {
         let payload: FileJwtPayload = match state.config.jwt.verify(&data.token) {
             Ok(payload) => payload,
             Err(_) => {
@@ -57,7 +66,7 @@ mod get {
                 .ok();
         }
 
-        if !state.config.jwt.one_time_id(&payload.unique_id).await {
+        if !state.config.jwt.limited_jwt_id(&payload.unique_id).await {
             return ApiResponse::error("token has already been used")
                 .with_status(StatusCode::UNAUTHORIZED)
                 .ok();
@@ -96,11 +105,8 @@ mod get {
             .backup_fs(&server, &state.backup_manager, path)
             .await
         {
-            match backup.read_file(path.clone()).await {
-                Ok((size, reader)) => {
-                    let mut headers = HeaderMap::new();
-
-                    headers.insert("Content-Length", size.into());
+            match backup.read_file(path.clone(), range).await {
+                Ok((mut headers, reader)) => {
                     headers.insert(
                         "Content-Disposition",
                         format!(
@@ -111,11 +117,16 @@ mod get {
                     );
                     headers.insert("Content-Type", "application/octet-stream".parse()?);
 
-                    return ApiResponse::new(Body::from_stream(
-                        tokio_util::io::ReaderStream::with_capacity(reader, crate::BUFFER_SIZE),
-                    ))
-                    .with_headers(headers)
-                    .ok();
+                    let status = if headers.contains_key("Content-Range") {
+                        StatusCode::PARTIAL_CONTENT
+                    } else {
+                        StatusCode::OK
+                    };
+
+                    return ApiResponse::new_stream(reader)
+                        .with_headers(headers)
+                        .with_status(status)
+                        .ok();
                 }
                 Err(err) => {
                     tracing::error!(
@@ -161,7 +172,6 @@ mod get {
         };
 
         let mut headers = HeaderMap::new();
-        headers.insert("Content-Length", metadata.len().into());
         headers.insert(
             "Content-Disposition",
             format!(
@@ -171,12 +181,44 @@ mod get {
             .parse()?,
         );
         headers.insert("Content-Type", "application/octet-stream".parse()?);
+        headers.insert("Accept-Ranges", "bytes".parse()?);
 
-        ApiResponse::new(Body::from_stream(
-            tokio_util::io::ReaderStream::with_capacity(file, crate::BUFFER_SIZE),
-        ))
-        .with_headers(headers)
-        .ok()
+        if let Ok(modified) = metadata.modified() {
+            let modified = chrono::DateTime::from_timestamp(
+                modified
+                    .into_std()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64,
+                0,
+            )
+            .unwrap_or_default();
+
+            headers.insert("Last-Modified", modified.to_rfc2822().parse()?);
+        }
+
+        if let Some(range) = range
+            && let Some(range_bounds) = range.satisfiable_ranges(metadata.len()).next()
+        {
+            let reader = AsyncRangeReader::new(file, range_bounds, metadata.len()).await?;
+
+            headers.insert("Content-Length", reader.len().into());
+            headers.extend(
+                TypedHeader(ContentRange::bytes(range_bounds, Some(metadata.len()))?)
+                    .into_response()
+                    .headers_mut()
+                    .drain(),
+            );
+
+            ApiResponse::new_stream(reader)
+                .with_headers(headers)
+                .with_status(StatusCode::PARTIAL_CONTENT)
+                .ok()
+        } else {
+            headers.insert("Content-Length", metadata.len().into());
+
+            ApiResponse::new_stream(file).with_headers(headers).ok()
+        }
     }
 }
 

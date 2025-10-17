@@ -59,18 +59,19 @@ impl BasePayload {
     }
 }
 
-type CountingMap = HashMap<String, (u8, chrono::DateTime<chrono::Utc>)>;
+type CountingMap = HashMap<String, (usize, chrono::DateTime<chrono::Utc>)>;
 
 pub struct JwtClient {
     pub key: hmac::Hmac<sha2::Sha256>,
     pub boot_time: chrono::DateTime<chrono::Utc>,
+    pub max_jwt_uses: usize,
 
     pub denied_jtokens: Arc<RwLock<HashMap<String, chrono::DateTime<chrono::Utc>>>>,
     pub seen_jtoken_ids: Arc<RwLock<CountingMap>>,
 }
 
 impl JwtClient {
-    pub fn new(key: &str) -> Self {
+    pub fn new(config: &crate::config::InnerConfig) -> Self {
         let denied_jtokens = Arc::new(RwLock::new(HashMap::new()));
         let seen_jtoken_ids = Arc::new(RwLock::new(HashMap::new()));
 
@@ -98,29 +99,33 @@ impl JwtClient {
         });
 
         Self {
-            key: hmac::Hmac::new_from_slice(key.as_bytes()).unwrap(),
+            key: hmac::Hmac::new_from_slice(config.token.as_bytes()).unwrap(),
             boot_time: chrono::Utc::now(),
+            max_jwt_uses: config.api.max_jwt_uses,
 
             denied_jtokens,
             seen_jtoken_ids,
         }
     }
 
+    #[inline]
     pub fn verify<T: DeserializeOwned>(&self, token: &str) -> Result<T, jwt::Error> {
         token.verify_with_key(&self.key)
     }
 
-    pub async fn one_time_id(&self, id: &str) -> bool {
+    pub async fn limited_jwt_id(&self, id: &str) -> bool {
         let seen = self.seen_jtoken_ids.read().await;
         if let Some((count, _)) = seen.get(id) {
-            if *count >= 2 {
+            if *count >= self.max_jwt_uses {
                 return false;
             } else {
                 drop(seen);
 
-                let mut seen = self.seen_jtoken_ids.write().await;
-                if let Some((count, _)) = seen.get_mut(id) {
-                    *count += 1;
+                if self.max_jwt_uses != 0 {
+                    let mut seen = self.seen_jtoken_ids.write().await;
+                    if let Some((count, _)) = seen.get_mut(id) {
+                        *count += 1;
+                    }
                 }
             }
         } else {

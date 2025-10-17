@@ -18,14 +18,17 @@ pub struct CapFilesystem {
 
 impl CapFilesystem {
     pub async fn new(base_path: PathBuf) -> Result<Self, std::io::Error> {
+        let base_path = Arc::new(base_path);
+
         let inner = tokio::task::spawn_blocking({
             let base_path = base_path.clone();
-            move || cap_std::fs::Dir::open_ambient_dir(&base_path, cap_std::ambient_authority())
+
+            move || cap_std::fs::Dir::open_ambient_dir(&*base_path, cap_std::ambient_authority())
         })
         .await??;
 
         Ok(Self {
-            base_path: Arc::new(base_path),
+            base_path,
             inner: Arc::new(RwLock::new(Some(Arc::new(inner)))),
         })
     }

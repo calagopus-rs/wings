@@ -20,6 +20,18 @@ impl ApiResponse {
     }
 
     #[inline]
+    pub fn new_stream(stream: impl tokio::io::AsyncRead + Send + 'static) -> Self {
+        Self {
+            body: axum::body::Body::from_stream(tokio_util::io::ReaderStream::with_capacity(
+                stream,
+                crate::BUFFER_SIZE,
+            )),
+            status: axum::http::StatusCode::OK,
+            headers: axum::http::HeaderMap::new(),
+        }
+    }
+
+    #[inline]
     pub fn json(body: impl serde::Serialize) -> Self {
         Self {
             body: axum::body::Body::from(serde_json::to_string(&body).unwrap()),

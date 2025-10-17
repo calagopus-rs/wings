@@ -8,7 +8,6 @@ mod get {
         server::filesystem::archive::StreamableArchiveFormat,
     };
     use axum::{
-        body::Body,
         extract::Query,
         http::{HeaderMap, StatusCode},
     };
@@ -62,7 +61,7 @@ mod get {
                 .ok();
         }
 
-        if !state.config.jwt.one_time_id(&payload.unique_id).await {
+        if !state.config.jwt.limited_jwt_id(&payload.unique_id).await {
             return ApiResponse::error("token has already been used")
                 .with_status(StatusCode::UNAUTHORIZED)
                 .ok();
@@ -140,11 +139,7 @@ mod get {
                 .await
             {
                 Ok(reader) => {
-                    return ApiResponse::new(Body::from_stream(
-                        tokio_util::io::ReaderStream::with_capacity(reader, crate::BUFFER_SIZE),
-                    ))
-                    .with_headers(headers)
-                    .ok();
+                    return ApiResponse::new_stream(reader).with_headers(headers).ok();
                 }
                 Err(err) => {
                     tracing::error!(
@@ -229,11 +224,7 @@ mod get {
             }
         });
 
-        ApiResponse::new(Body::from_stream(
-            tokio_util::io::ReaderStream::with_capacity(reader, crate::BUFFER_SIZE),
-        ))
-        .with_headers(headers)
-        .ok()
+        ApiResponse::new_stream(reader).with_headers(headers).ok()
     }
 }
 

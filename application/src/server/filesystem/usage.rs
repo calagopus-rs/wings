@@ -15,10 +15,7 @@ impl DiskUsage {
         let mut current = self;
         for component in path.components() {
             let name = component.as_os_str().to_str()?;
-            match current.entries.get(name) {
-                Some(usage) => current = usage,
-                None => return None,
-            }
+            current = current.entries.get(name)?;
         }
 
         Some(current.size)
@@ -31,46 +28,30 @@ impl DiskUsage {
 
         let mut current = self;
         for component in path.components() {
-            current = {
-                if crate::likely(
-                    current
-                        .entries
-                        .contains_key(component.as_os_str().to_str().unwrap()),
-                ) {
-                    // this is perfectly safe, we have a mutable reference to `current`
-                    // and we know the entry exists (using check above)
-                    let entry = current
-                        .entries
-                        .get_mut(component.as_os_str().to_str().unwrap_or_default())
-                        .unwrap();
+            let key = component.as_os_str().to_str().unwrap_or_default();
 
-                    if delta >= 0 {
-                        entry.size = entry.size.saturating_add(delta as u64);
-                    } else {
-                        entry.size = entry.size.saturating_sub(delta.unsigned_abs());
-                    }
+            current = if current.entries.contains_key(key) {
+                // this is perfectly safe, we have a mutable reference to `current`
+                // and we know the entry exists (using check above)
+                let entry = unsafe { current.entries.get_mut(key).unwrap_unchecked() };
 
-                    entry
+                if delta >= 0 {
+                    entry.size = entry.size.saturating_add(delta as u64);
                 } else {
-                    let entry = current
-                        .entries
-                        .entry(
-                            component
-                                .as_os_str()
-                                .to_str()
-                                .unwrap_or_default()
-                                .to_string(),
-                        )
-                        .or_default();
-
-                    if delta >= 0 {
-                        entry.size = entry.size.saturating_add(delta as u64);
-                    } else {
-                        entry.size = entry.size.saturating_sub(delta.unsigned_abs());
-                    }
-
-                    entry
+                    entry.size = entry.size.saturating_sub(delta.unsigned_abs());
                 }
+
+                entry
+            } else {
+                let entry = current.entries.entry(key.to_string()).or_default();
+
+                if delta >= 0 {
+                    entry.size = entry.size.saturating_add(delta as u64);
+                } else {
+                    entry.size = entry.size.saturating_sub(delta.unsigned_abs());
+                }
+
+                entry
             }
         }
     }
@@ -82,30 +63,28 @@ impl DiskUsage {
 
         let mut current = self;
         for component in path {
-            current = {
-                if current.entries.contains_key(component) {
-                    // this is perfectly safe, we have a mutable reference to `current`
-                    // and we know the entry exists (using check above)
-                    let entry = current.entries.get_mut(component).unwrap();
+            current = if current.entries.contains_key(component) {
+                // this is perfectly safe, we have a mutable reference to `current`
+                // and we know the entry exists (using check above)
+                let entry = unsafe { current.entries.get_mut(component).unwrap_unchecked() };
 
-                    if delta >= 0 {
-                        entry.size = entry.size.saturating_add(delta as u64);
-                    } else {
-                        entry.size = entry.size.saturating_sub(delta.unsigned_abs());
-                    }
-
-                    entry
+                if delta >= 0 {
+                    entry.size = entry.size.saturating_add(delta as u64);
                 } else {
-                    let entry = current.entries.entry(component.clone()).or_default();
-
-                    if delta >= 0 {
-                        entry.size = entry.size.saturating_add(delta as u64);
-                    } else {
-                        entry.size = entry.size.saturating_sub(delta.unsigned_abs());
-                    }
-
-                    entry
+                    entry.size = entry.size.saturating_sub(delta.unsigned_abs());
                 }
+
+                entry
+            } else {
+                let entry = current.entries.entry(component.clone()).or_default();
+
+                if delta >= 0 {
+                    entry.size = entry.size.saturating_add(delta as u64);
+                } else {
+                    entry.size = entry.size.saturating_sub(delta.unsigned_abs());
+                }
+
+                entry
             }
         }
     }
@@ -126,11 +105,7 @@ impl DiskUsage {
     fn recursive_remove(&mut self, path: &[String]) -> Option<DiskUsage> {
         let name = &path[0];
         if path.len() == 1 {
-            if let Some(removed) = self.entries.remove(name) {
-                return Some(removed);
-            }
-
-            return None;
+            return self.entries.remove(name);
         }
 
         if let Some(usage) = self.entries.get_mut(name)
@@ -144,6 +119,7 @@ impl DiskUsage {
         None
     }
 
+    #[inline]
     pub fn clear(&mut self) {
         self.entries.clear();
     }
@@ -157,10 +133,19 @@ impl DiskUsage {
 
         let mut current = self;
         for component in parents {
-            let entry = current.entries.entry(component.clone()).or_default();
+            current = if current.entries.contains_key(component) {
+                // this is perfectly safe, we have a mutable reference to `current`
+                // and we know the entry exists (using check above)
+                let entry = unsafe { current.entries.get_mut(component).unwrap_unchecked() };
 
-            current.size = current.size.saturating_add(source_dir.size);
-            current = entry;
+                current.size = current.size.saturating_add(source_dir.size);
+                entry
+            } else {
+                let entry = current.entries.entry(component.clone()).or_default();
+
+                current.size = current.size.saturating_add(source_dir.size);
+                entry
+            }
         }
 
         current.size = current.size.saturating_add(source_dir.size);

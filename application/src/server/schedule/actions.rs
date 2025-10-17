@@ -959,9 +959,9 @@ impl ScheduleAction {
                 )
                 .await
                 {
-                    Some(archive) => archive,
-                    None => {
-                        return Err("failed to open archive".into());
+                    Ok(archive) => archive,
+                    Err(err) => {
+                        return Err(format!("failed to open archive: {err}"));
                     }
                 };
 

@@ -75,8 +75,7 @@ impl ArchiveFormat {
             ArchiveFormat::TarBz2 => CompressionType::Bz2,
             ArchiveFormat::TarLz4 => CompressionType::Lz4,
             ArchiveFormat::TarZstd => CompressionType::Zstd,
-            ArchiveFormat::Zip => CompressionType::None,
-            ArchiveFormat::SevenZip => CompressionType::None,
+            _ => CompressionType::None,
         }
     }
 
@@ -215,44 +214,46 @@ pub struct Archive {
 }
 
 impl Archive {
-    pub async fn open(server: crate::server::Server, path: PathBuf) -> Option<Self> {
-        let mut file = server.filesystem.async_open(&path).await.ok()?;
+    pub async fn open(server: crate::server::Server, path: PathBuf) -> Result<Self, anyhow::Error> {
+        let mut file = server.filesystem.async_open(&path).await?;
 
         let mut header = [0; 16];
         #[allow(clippy::unused_io_amount)]
-        file.read(&mut header).await.ok()?;
+        file.read(&mut header).await?;
+
+        let get_archive_format = || -> ArchiveType {
+            match path.extension() {
+                Some(ext)
+                    if ["tar", "tgz", "tbz", "tbz2", "txz", "tlz", "tlz4", "tzst"]
+                        .contains(&ext.to_str().unwrap_or_default()) =>
+                {
+                    ArchiveType::Tar
+                }
+                Some(ext) if ext == "ddup" => ArchiveType::Ddup,
+                _ => path.file_stem().map_or(ArchiveType::None, |stem| {
+                    if stem.to_str().is_some_and(|s| s.ends_with(".tar")) {
+                        ArchiveType::Tar
+                    } else {
+                        ArchiveType::None
+                    }
+                }),
+            }
+        };
 
         let inferred = infer::get(&header);
-        let compression_format = match inferred.map(|f| f.mime_type()) {
-            Some("application/gzip") => CompressionType::Gz,
-            Some("application/x-bzip2") => CompressionType::Bz2,
-            Some("application/x-xz") => CompressionType::Xz,
-            Some("application/x-lz4") => CompressionType::Lz4,
-            Some("application/zstd") => CompressionType::Zstd,
-            _ => CompressionType::None,
+        let (compression_format, archive_format) = match inferred.map(|f| f.mime_type()) {
+            Some("application/gzip") => (CompressionType::Gz, get_archive_format()),
+            Some("application/x-bzip2") => (CompressionType::Bz2, get_archive_format()),
+            Some("application/x-xz") => (CompressionType::Xz, get_archive_format()),
+            Some("application/x-lz4") => (CompressionType::Lz4, get_archive_format()),
+            Some("application/zstd") => (CompressionType::Zstd, get_archive_format()),
+            Some("application/zip") => (CompressionType::None, ArchiveType::Zip),
+            Some("application/vnd.rar") => (CompressionType::None, ArchiveType::Rar),
+            Some("application/x-7z-compressed") => (CompressionType::None, ArchiveType::SevenZip),
+            _ => (CompressionType::None, get_archive_format()),
         };
 
-        let archive_format = match path.extension() {
-            Some(ext)
-                if ["tar", "tgz", "tbz", "tbz2", "txz", "tlz", "tlz4", "tzst"]
-                    .contains(&ext.to_str().unwrap_or_default()) =>
-            {
-                ArchiveType::Tar
-            }
-            Some(ext) if ext == "zip" => ArchiveType::Zip,
-            Some(ext) if ext == "rar" => ArchiveType::Rar,
-            Some(ext) if ext == "7z" => ArchiveType::SevenZip,
-            Some(ext) if ext == "ddup" => ArchiveType::Ddup,
-            _ => path.file_stem().map_or(ArchiveType::None, |stem| {
-                if stem.to_str().is_some_and(|s| s.ends_with(".tar")) {
-                    ArchiveType::Tar
-                } else {
-                    ArchiveType::None
-                }
-            }),
-        };
-
-        Some(Self {
+        Ok(Self {
             compression: compression_format,
             archive: archive_format,
             server,

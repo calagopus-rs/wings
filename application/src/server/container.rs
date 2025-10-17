@@ -13,14 +13,14 @@ pub struct Container {
         Option<
             tokio::sync::mpsc::Receiver<(
                 bollard::models::ContainerState,
-                crate::server::resources::ResourceUsage,
+                super::resources::ResourceUsage,
             )>,
         >,
     >,
 
     state_reciever: tokio::task::JoinHandle<()>,
 
-    pub resource_usage: Arc<RwLock<crate::server::resources::ResourceUsage>>,
+    pub resource_usage: Arc<RwLock<super::resources::ResourceUsage>>,
     resource_usage_reciever: tokio::task::JoinHandle<()>,
 
     pub stdin: tokio::sync::mpsc::Sender<String>,

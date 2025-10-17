@@ -11,7 +11,8 @@ use crate::{
         filesystem::archive::StreamableArchiveFormat,
     },
 };
-use axum::{body::Body, http::HeaderMap};
+use axum::http::HeaderMap;
+use axum_extra::{TypedHeader, headers::Range};
 use chrono::{Datelike, Timelike};
 use human_bytes::human_bytes;
 use serde::Deserialize;
@@ -555,6 +556,7 @@ impl BackupExt for ResticBackup {
         &self,
         config: &Arc<crate::config::Config>,
         archive_format: StreamableArchiveFormat,
+        _range: Option<TypedHeader<Range>>,
     ) -> Result<crate::response::ApiResponse, anyhow::Error> {
         let compression_level = config.system.backups.compression_level;
         let (reader, writer) = tokio::io::duplex(crate::BUFFER_SIZE);
@@ -671,10 +673,7 @@ impl BackupExt for ResticBackup {
         );
         headers.insert("Content-Type", archive_format.mime_type().parse()?);
 
-        Ok(ApiResponse::new(Body::from_stream(
-            tokio_util::io::ReaderStream::with_capacity(reader, crate::BUFFER_SIZE),
-        ))
-        .with_headers(headers))
+        Ok(ApiResponse::new_stream(reader).with_headers(headers))
     }
 
     async fn restore(
@@ -964,7 +963,8 @@ impl BackupBrowseExt for BrowseResticBackup {
     async fn read_file(
         &self,
         path: PathBuf,
-    ) -> Result<(u64, Box<dyn tokio::io::AsyncRead + Unpin + Send>), anyhow::Error> {
+        _range: Option<TypedHeader<Range>>,
+    ) -> Result<(HeaderMap, Box<dyn tokio::io::AsyncRead + Unpin + Send>), anyhow::Error> {
         let entry = self
             .entries
             .iter()
@@ -992,7 +992,10 @@ impl BackupBrowseExt for BrowseResticBackup {
             .stderr(std::process::Stdio::null())
             .spawn()?;
 
-        Ok((entry.size.unwrap_or(0), Box::new(child.stdout.unwrap())))
+        let mut headers = HeaderMap::new();
+        headers.insert("Content-Length", entry.size.unwrap_or_default().into());
+
+        Ok((headers, Box::new(child.stdout.unwrap())))
     }
 
     async fn read_directory_archive(

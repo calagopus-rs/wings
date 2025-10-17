@@ -43,11 +43,9 @@ mod get {
             Box::new(file)
         };
 
-        ApiResponse::new(axum::body::Body::from_stream(
-            tokio_util::io::ReaderStream::with_capacity(reader, crate::BUFFER_SIZE),
-        ))
-        .with_header("Content-Type", "text/plain")
-        .ok()
+        ApiResponse::new_stream(reader)
+            .with_header("Content-Type", "text/plain")
+            .ok()
     }
 }
 

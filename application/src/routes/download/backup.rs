@@ -8,6 +8,7 @@ mod get {
         server::filesystem::archive::StreamableArchiveFormat,
     };
     use axum::{extract::Query, http::StatusCode};
+    use axum_extra::{TypedHeader, headers::Range};
     use serde::Deserialize;
     use utoipa::ToSchema;
 
@@ -40,7 +41,11 @@ mod get {
             description = "The JWT token to use for authentication",
         ),
     ))]
-    pub async fn route(state: GetState, Query(data): Query<Params>) -> ApiResponseResult {
+    pub async fn route(
+        state: GetState,
+        Query(data): Query<Params>,
+        range: Option<TypedHeader<Range>>,
+    ) -> ApiResponseResult {
         let payload: BackupJwtPayload = match state.config.jwt.verify(&data.token) {
             Ok(payload) => payload,
             Err(_) => {
@@ -56,7 +61,7 @@ mod get {
                 .ok();
         }
 
-        if !state.config.jwt.one_time_id(&payload.unique_id).await {
+        if !state.config.jwt.limited_jwt_id(&payload.unique_id).await {
             return ApiResponse::error("token has already been used")
                 .with_status(StatusCode::UNAUTHORIZED)
                 .ok();
@@ -85,7 +90,10 @@ mod get {
             }
         };
 
-        match backup.download(&state.config, data.archive_format).await {
+        match backup
+            .download(&state.config, data.archive_format, range)
+            .await
+        {
             Ok(response) => response,
             Err(err) => {
                 tracing::error!("failed to download backup: {:#?}", err);

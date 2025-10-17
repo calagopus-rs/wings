@@ -7,12 +7,12 @@ mod get {
         routes::{ApiError, GetState, api::servers::_server_::GetServer},
     };
     use axum::{
-        body::Body,
         extract::Query,
         http::{HeaderMap, StatusCode},
     };
     use serde::Deserialize;
     use std::path::PathBuf;
+    use std::str::FromStr;
     use utoipa::ToSchema;
 
     #[derive(ToSchema, Deserialize)]
@@ -73,13 +73,12 @@ mod get {
             .backup_fs(&server, &state.backup_manager, &path)
             .await
         {
-            match backup.read_file(path.clone()).await {
-                Ok((size, reader)) => {
+            match backup.read_file(path.clone(), None).await {
+                Ok((headers, reader)) => {
+                    let size = u64::from_str(headers.get("Content-Length").unwrap().to_str()?)?;
                     let mut headers = HeaderMap::new();
 
-                    if let Some(max_size) = data.max_size
-                        && size > max_size
-                    {
+                    if data.max_size.is_some_and(|s| size > s) {
                         return ApiResponse::error("file size exceeds maximum allowed size")
                             .with_status(StatusCode::PAYLOAD_TOO_LARGE)
                             .ok();
@@ -98,11 +97,7 @@ mod get {
                         headers.insert("Content-Type", "application/octet-stream".parse()?);
                     }
 
-                    return ApiResponse::new(Body::from_stream(
-                        tokio_util::io::ReaderStream::with_capacity(reader, crate::BUFFER_SIZE),
-                    ))
-                    .with_headers(headers)
-                    .ok();
+                    return ApiResponse::new_stream(reader).with_headers(headers).ok();
                 }
                 Err(err) => {
                     tracing::error!(
@@ -138,9 +133,7 @@ mod get {
             }
         };
 
-        if let Some(max_size) = data.max_size
-            && metadata.len() > max_size
-        {
+        if data.max_size.is_some_and(|s| metadata.len() > s) {
             return ApiResponse::error("file size exceeds maximum allowed size")
                 .with_status(StatusCode::PAYLOAD_TOO_LARGE)
                 .ok();
@@ -150,8 +143,8 @@ mod get {
             match crate::server::filesystem::archive::Archive::open(server.0.clone(), path.clone())
                 .await
             {
-                Some(file) => file,
-                None => {
+                Ok(file) => file,
+                Err(_) => {
                     return ApiResponse::error("file not found")
                         .with_status(StatusCode::NOT_FOUND)
                         .ok();
@@ -198,11 +191,7 @@ mod get {
             headers.insert("Content-Type", "application/octet-stream".parse()?);
         }
 
-        ApiResponse::new(Body::from_stream(
-            tokio_util::io::ReaderStream::with_capacity(reader, crate::BUFFER_SIZE),
-        ))
-        .with_headers(headers)
-        .ok()
+        ApiResponse::new_stream(reader).with_headers(headers).ok()
     }
 }
 

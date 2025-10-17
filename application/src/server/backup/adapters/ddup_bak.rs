@@ -15,7 +15,8 @@ use crate::{
         filesystem::archive::StreamableArchiveFormat,
     },
 };
-use axum::{body::Body, http::HeaderMap};
+use axum::http::HeaderMap;
+use axum_extra::{TypedHeader, headers::Range};
 use cap_std::fs::Permissions;
 use chrono::{Datelike, Timelike};
 use ddup_bak::archive::entries::Entry;
@@ -399,6 +400,7 @@ impl BackupExt for DdupBakBackup {
         &self,
         config: &Arc<crate::config::Config>,
         archive_format: StreamableArchiveFormat,
+        _range: Option<TypedHeader<Range>>,
     ) -> Result<ApiResponse, anyhow::Error> {
         let repository = get_repository(config).await;
 
@@ -467,10 +469,7 @@ impl BackupExt for DdupBakBackup {
         );
         headers.insert("Content-Type", archive_format.mime_type().parse()?);
 
-        Ok(ApiResponse::new(Body::from_stream(
-            tokio_util::io::ReaderStream::with_capacity(reader, crate::BUFFER_SIZE),
-        ))
-        .with_headers(headers))
+        Ok(ApiResponse::new_stream(reader).with_headers(headers))
     }
 
     async fn restore(
@@ -867,7 +866,8 @@ impl BackupBrowseExt for BrowseDdupBakBackup {
     async fn read_file(
         &self,
         path: PathBuf,
-    ) -> Result<(u64, Box<dyn tokio::io::AsyncRead + Unpin + Send>), anyhow::Error> {
+        _range: Option<TypedHeader<Range>>,
+    ) -> Result<(HeaderMap, Box<dyn tokio::io::AsyncRead + Unpin + Send>), anyhow::Error> {
         let archive = self.archive.clone();
 
         let entry = match archive.find_archive_entry(&path) {
@@ -912,7 +912,10 @@ impl BackupBrowseExt for BrowseDdupBakBackup {
             }
         });
 
-        Ok((size, Box::new(reader)))
+        let mut headers = HeaderMap::new();
+        headers.insert("Content-Length", size.into());
+
+        Ok((headers, Box::new(reader)))
     }
 
     async fn read_directory_archive(

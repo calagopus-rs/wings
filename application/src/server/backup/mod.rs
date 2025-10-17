@@ -2,6 +2,8 @@ use crate::{
     models::DirectoryEntry, remote::backups::RawServerBackup, response::ApiResponse,
     server::filesystem::archive::StreamableArchiveFormat,
 };
+use axum::http::HeaderMap;
+use axum_extra::{TypedHeader, headers::Range};
 use std::{
     path::PathBuf,
     sync::{Arc, atomic::AtomicU64},
@@ -48,14 +50,15 @@ impl Backup {
         &self,
         config: &Arc<crate::config::Config>,
         archive_format: StreamableArchiveFormat,
+        range: Option<TypedHeader<Range>>,
     ) -> Result<ApiResponse, anyhow::Error> {
         match self {
-            Backup::Wings(backup) => backup.download(config, archive_format).await,
-            Backup::S3(backup) => backup.download(config, archive_format).await,
-            Backup::DdupBak(backup) => backup.download(config, archive_format).await,
-            Backup::Btrfs(backup) => backup.download(config, archive_format).await,
-            Backup::Zfs(backup) => backup.download(config, archive_format).await,
-            Backup::Restic(backup) => backup.download(config, archive_format).await,
+            Backup::Wings(backup) => backup.download(config, archive_format, range).await,
+            Backup::S3(backup) => backup.download(config, archive_format, range).await,
+            Backup::DdupBak(backup) => backup.download(config, archive_format, range).await,
+            Backup::Btrfs(backup) => backup.download(config, archive_format, range).await,
+            Backup::Zfs(backup) => backup.download(config, archive_format, range).await,
+            Backup::Restic(backup) => backup.download(config, archive_format, range).await,
         }
     }
 
@@ -129,13 +132,14 @@ impl BrowseBackup {
     pub async fn read_file(
         &'_ self,
         path: PathBuf,
-    ) -> Result<(u64, Box<dyn AsyncRead + Unpin + Send>), anyhow::Error> {
+        range: Option<TypedHeader<Range>>,
+    ) -> Result<(HeaderMap, Box<dyn AsyncRead + Unpin + Send>), anyhow::Error> {
         match self {
-            BrowseBackup::Wings(backup) => backup.read_file(path).await,
-            BrowseBackup::DdupBak(backup) => backup.read_file(path).await,
-            BrowseBackup::Btrfs(backup) => backup.read_file(path).await,
-            BrowseBackup::Zfs(backup) => backup.read_file(path).await,
-            BrowseBackup::Restic(backup) => backup.read_file(path).await,
+            BrowseBackup::Wings(backup) => backup.read_file(path, range).await,
+            BrowseBackup::DdupBak(backup) => backup.read_file(path, range).await,
+            BrowseBackup::Btrfs(backup) => backup.read_file(path, range).await,
+            BrowseBackup::Zfs(backup) => backup.read_file(path, range).await,
+            BrowseBackup::Restic(backup) => backup.read_file(path, range).await,
         }
     }
 
@@ -229,6 +233,7 @@ pub trait BackupExt {
         &self,
         config: &Arc<crate::config::Config>,
         archive_format: StreamableArchiveFormat,
+        range: Option<TypedHeader<Range>>,
     ) -> Result<ApiResponse, anyhow::Error>;
 
     async fn restore(
@@ -260,7 +265,8 @@ pub trait BackupBrowseExt {
     async fn read_file(
         &self,
         path: PathBuf,
-    ) -> Result<(u64, Box<dyn AsyncRead + Unpin + Send>), anyhow::Error>;
+        range: Option<TypedHeader<Range>>,
+    ) -> Result<(HeaderMap, Box<dyn AsyncRead + Unpin + Send>), anyhow::Error>;
 
     async fn read_directory_archive(
         &self,

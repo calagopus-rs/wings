@@ -36,7 +36,7 @@ impl From<u8> for ServerState {
             1 => ServerState::Starting,
             2 => ServerState::Stopping,
             3 => ServerState::Running,
-            _ => panic!("Invalid server state"),
+            _ => ServerState::Offline,
         }
     }
 }

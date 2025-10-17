@@ -1,5 +1,5 @@
 use crate::{
-    io::counting_reader::AsyncCountingReader,
+    io::{counting_reader::AsyncCountingReader, range_reader::AsyncRangeReader},
     remote::backups::RawServerBackup,
     response::ApiResponse,
     server::{
@@ -10,7 +10,11 @@ use crate::{
         filesystem::archive::StreamableArchiveFormat,
     },
 };
-use axum::{body::Body, http::HeaderMap};
+use axum::{http::HeaderMap, response::IntoResponse};
+use axum_extra::{
+    TypedHeader,
+    headers::{ContentRange, Range},
+};
 use std::{
     path::{Path, PathBuf},
     sync::{
@@ -219,6 +223,7 @@ impl BackupExt for ZfsBackup {
         &self,
         config: &Arc<crate::config::Config>,
         archive_format: StreamableArchiveFormat,
+        _range: Option<TypedHeader<Range>>,
     ) -> Result<ApiResponse, anyhow::Error> {
         let snapshot_path = Self::get_snapshot_path(config, self.server_uuid, self.uuid);
 
@@ -301,10 +306,7 @@ impl BackupExt for ZfsBackup {
         );
         headers.insert("Content-Type", archive_format.mime_type().parse()?);
 
-        Ok(ApiResponse::new(Body::from_stream(
-            tokio_util::io::ReaderStream::with_capacity(reader, crate::BUFFER_SIZE),
-        ))
-        .with_headers(headers))
+        Ok(ApiResponse::new_stream(reader).with_headers(headers))
     }
 
     async fn restore(
@@ -612,7 +614,8 @@ impl BackupBrowseExt for BrowseZfsBackup {
     async fn read_file(
         &self,
         path: PathBuf,
-    ) -> Result<(u64, Box<dyn tokio::io::AsyncRead + Unpin + Send>), anyhow::Error> {
+        range: Option<TypedHeader<Range>>,
+    ) -> Result<(HeaderMap, Box<dyn tokio::io::AsyncRead + Unpin + Send>), anyhow::Error> {
         if self.ignore.matched(&path, false).is_ignore() {
             return Err(anyhow::anyhow!(std::io::Error::from(
                 rustix::io::Errno::NOENT
@@ -622,7 +625,28 @@ impl BackupBrowseExt for BrowseZfsBackup {
         let metadata = self.filesystem.async_symlink_metadata(&path).await?;
         let file = self.filesystem.async_open(path).await?;
 
-        Ok((metadata.len(), Box::new(file)))
+        let mut headers = HeaderMap::new();
+        headers.insert("Accept-Ranges", "bytes".parse()?);
+
+        if let Some(range) = range
+            && let Some(range_bounds) = range.satisfiable_ranges(metadata.len()).next()
+        {
+            let reader = AsyncRangeReader::new(file, range_bounds, metadata.len()).await?;
+
+            headers.insert("Content-Length", reader.len().into());
+            headers.extend(
+                TypedHeader(ContentRange::bytes(range_bounds, Some(metadata.len()))?)
+                    .into_response()
+                    .headers_mut()
+                    .drain(),
+            );
+
+            Ok((headers, Box::new(reader)))
+        } else {
+            headers.insert("Content-Length", metadata.len().into());
+
+            Ok((headers, Box::new(file)))
+        }
     }
 
     async fn read_directory_archive(

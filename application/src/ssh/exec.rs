@@ -74,10 +74,7 @@ impl ExecSession {
                                 self.server.clone(),
                                 PathBuf::from(path.trim()),
                             )
-                            .await
-                            .ok_or_else(|| {
-                                anyhow::anyhow!("Failed to open archive at path: {}", path)
-                            })?;
+                            .await?;
 
                             self.server
                                 .activity
