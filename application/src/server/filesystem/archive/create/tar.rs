@@ -179,3 +179,101 @@ pub async fn create_tar(
 
     Ok(())
 }
+
+pub async fn create_tar_distributed(
+    filesystem: crate::server::filesystem::cap::CapFilesystem,
+    destination: impl Write + Send + 'static,
+    base: &Path,
+    sources: async_channel::Receiver<PathBuf>,
+    bytes_archived: Option<Arc<AtomicU64>>,
+    ignored: Vec<ignore::gitignore::Gitignore>,
+    options: CreateTarOptions,
+) -> Result<(), anyhow::Error> {
+    let base = filesystem.relative_path(base);
+    let (_guard, listener) = AbortGuard::new();
+
+    tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
+        let writer = CompressionWriter::new(
+            destination,
+            options.compression_type,
+            options.compression_level,
+            options.threads,
+        );
+        let writer = AbortWriter::new(writer, listener);
+        let mut archive = tar::Builder::new(writer);
+
+        while let Ok(source) = sources.recv_blocking() {
+            let relative = source;
+            let source = base.join(&relative);
+
+            let source_metadata = match filesystem.symlink_metadata(&source) {
+                Ok(metadata) => metadata,
+                Err(_) => continue,
+            };
+
+            if ignored
+                .iter()
+                .any(|i| i.matched(&source, source_metadata.is_dir()).is_ignore())
+            {
+                continue;
+            }
+
+            let mut header = tar::Header::new_gnu();
+            header.set_size(0);
+            header.set_mode(source_metadata.permissions().mode());
+            header.set_mtime(
+                source_metadata
+                    .modified()
+                    .map(|t| {
+                        t.into_std()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                    })
+                    .unwrap_or_default()
+                    .as_secs(),
+            );
+
+            if source_metadata.is_dir() {
+                header.set_entry_type(tar::EntryType::Directory);
+
+                archive.append_data(&mut header, relative, std::io::empty())?;
+                if let Some(bytes_archived) = &bytes_archived {
+                    bytes_archived.fetch_add(source_metadata.len(), Ordering::SeqCst);
+                }
+            } else if source_metadata.is_file() {
+                let file = filesystem.open(&source)?;
+                let reader: Box<dyn Read> = match &bytes_archived {
+                    Some(bytes_archived) => Box::new(CountingReader::new_with_bytes_read(
+                        file,
+                        Arc::clone(bytes_archived),
+                    )),
+                    None => Box::new(file),
+                };
+                let reader =
+                    FixedReader::new_with_fixed_bytes(reader, source_metadata.len() as usize);
+
+                header.set_size(source_metadata.len());
+                header.set_entry_type(tar::EntryType::Regular);
+
+                archive.append_data(&mut header, relative, reader)?;
+            } else if let Ok(link_target) = filesystem.read_link_contents(&source) {
+                header.set_entry_type(tar::EntryType::Symlink);
+
+                if header.set_link_name(link_target).is_ok() {
+                    archive.append_data(&mut header, relative, std::io::empty())?;
+                    if let Some(bytes_archived) = &bytes_archived {
+                        bytes_archived.fetch_add(source_metadata.len(), Ordering::SeqCst);
+                    }
+                }
+            }
+        }
+
+        let inner = archive.into_inner()?;
+        inner.into_inner().finish()?;
+
+        Ok(())
+    })
+    .await??;
+
+    Ok(())
+}

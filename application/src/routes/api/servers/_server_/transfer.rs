@@ -27,6 +27,8 @@ mod post {
         backups: Vec<uuid::Uuid>,
         #[serde(default)]
         delete_backups: bool,
+        #[serde(default)]
+        multiplex_streams: usize,
     }
 
     #[derive(ToSchema, Serialize)]
@@ -70,6 +72,7 @@ mod post {
                 data.token,
                 data.backups,
                 data.delete_backups,
+                data.multiplex_streams,
             )
             .is_ok()
         {

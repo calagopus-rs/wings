@@ -224,6 +224,7 @@ impl Manager {
         });
     }
 
+    #[inline]
     pub async fn get_servers(&self) -> tokio::sync::RwLockReadGuard<'_, Vec<Server>> {
         self.servers.read().await
     }

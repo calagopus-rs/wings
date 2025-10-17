@@ -9,6 +9,7 @@ use serde::Deserialize;
 use sha2::Digest;
 use std::{
     path::{Path, PathBuf},
+    pin::Pin,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -17,6 +18,7 @@ use std::{
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     sync::Mutex,
+    task::{AbortHandle, JoinHandle},
 };
 use utoipa::ToSchema;
 
@@ -134,6 +136,7 @@ impl OutgoingServerTransfer {
         token: String,
         backups: Vec<uuid::Uuid>,
         delete_backups: bool,
+        multiplex_streams: usize,
     ) -> Result<(), anyhow::Error> {
         let backup_manager = Arc::clone(backup_manager);
         let bytes_archived = Arc::clone(&self.bytes_archived);
@@ -171,39 +174,51 @@ impl OutgoingServerTransfer {
                 ))
                 .ok();
 
+            let (files_sender, files_receiver) = async_channel::bounded(1024);
+
             let (checksum_sender, checksum_receiver) = tokio::sync::oneshot::channel();
             let (checksummed_writer, mut checksummed_reader) = tokio::io::duplex(crate::BUFFER_SIZE);
             let (mut writer, reader) = tokio::io::duplex(crate::BUFFER_SIZE);
-            let archive_task = Box::pin({
-                let bytes_archived = Arc::clone(&bytes_archived);
-                let server = server.clone();
 
-                async move {
-                    let sources = server.filesystem.async_read_dir_all("").await?;
-
-                    crate::server::filesystem::archive::create::create_tar(
+            fn get_archive_task(
+                files_receiver: async_channel::Receiver<PathBuf>,
+                bytes_archived: Arc<AtomicU64>,
+                server: super::Server,
+                writer: impl std::io::Write + Send + 'static,
+                options: crate::server::filesystem::archive::create::CreateTarOptions
+            ) -> Pin<Box<impl Future<Output = Result<(), anyhow::Error>>>> {
+                Box::pin(async move {
+                    crate::server::filesystem::archive::create::create_tar_distributed(
                         server.filesystem.clone(),
-                        tokio_util::io::SyncIoBridge::new(checksummed_writer),
+                        writer,
                         Path::new(""),
-                        sources.into_iter().map(PathBuf::from).collect(),
+                        files_receiver,
                         Some(Arc::clone(&bytes_archived)),
                         vec![],
-                        crate::server::filesystem::archive::create::CreateTarOptions {
-                            compression_type: match archive_format {
-                                TransferArchiveFormat::Tar => CompressionType::None,
-                                TransferArchiveFormat::TarGz => CompressionType::Gz,
-                                TransferArchiveFormat::TarXz => CompressionType::Xz,
-                                TransferArchiveFormat::TarBz2 => CompressionType::Bz2,
-                                TransferArchiveFormat::TarLz4 => CompressionType::Lz4,
-                                TransferArchiveFormat::TarZstd => CompressionType::Zstd,
-                            },
-                            compression_level,
-                            threads: server.app_state.config.api.file_compression_threads,
-                        }
+                        options,
                     )
                     .await
-                }
-            });
+                })
+            }
+
+            let archive_task = get_archive_task(
+                files_receiver.clone(),
+                Arc::clone(&bytes_archived),
+                server.clone(),
+                tokio_util::io::SyncIoBridge::new(checksummed_writer),
+                crate::server::filesystem::archive::create::CreateTarOptions {
+                    compression_type: match archive_format {
+                        TransferArchiveFormat::Tar => CompressionType::None,
+                        TransferArchiveFormat::TarGz => CompressionType::Gz,
+                        TransferArchiveFormat::TarXz => CompressionType::Xz,
+                        TransferArchiveFormat::TarBz2 => CompressionType::Bz2,
+                        TransferArchiveFormat::TarLz4 => CompressionType::Lz4,
+                        TransferArchiveFormat::TarZstd => CompressionType::Zstd,
+                    },
+                    compression_level,
+                    threads: server.app_state.config.api.file_compression_threads,
+                },
+            );
 
             let checksum_task = Box::pin(async move {
                 let mut hasher = sha2::Sha256::new();
@@ -223,6 +238,19 @@ impl OutgoingServerTransfer {
                 writer.flush().await?;
 
                 Ok::<_, anyhow::Error>(())
+            });
+
+            let file_collector_task = Box::pin({
+                let server = server.clone();
+
+                async move {
+                    let mut walker = server.filesystem.async_walk_dir("").await?;
+                    while let Some(Ok((_, entry))) = walker.next_entry().await {
+                        files_sender.send(entry).await?;
+                    }
+
+                    Ok::<_, anyhow::Error>(())
+                }
             });
 
             let mut form = reqwest::multipart::Form::new()
@@ -330,6 +358,7 @@ impl OutgoingServerTransfer {
             }
 
             let progress_task = tokio::spawn({
+                let bytes_archived = Arc::clone(&bytes_archived);
                 let server = server.clone();
 
                 async move {
@@ -377,38 +406,119 @@ impl OutgoingServerTransfer {
             });
 
             let client = reqwest::Client::new();
+
             let response = client
-                .post(url)
-                .header("Authorization", token)
+                .post(&url)
+                .header("Authorization", &token)
+                .header("Multiplex-Stream-Count", multiplex_streams)
                 .multipart(form)
                 .send();
+            let mut multiplex_responses = Vec::new();
+            multiplex_responses.reserve_exact(multiplex_streams);
+
+            type MultiplexTaskResult = Box<dyn Future<Output = Result<(), anyhow::Error>> + Send>;
+            let mut multiplex_tasks: Vec<Pin<MultiplexTaskResult>> = Vec::new();
+            multiplex_tasks.reserve_exact(multiplex_streams * 2);
+
+            for i in 0..multiplex_streams {
+                let (checksum_sender, checksum_receiver) = tokio::sync::oneshot::channel();
+                let (checksummed_writer, mut checksummed_reader) = tokio::io::duplex(crate::BUFFER_SIZE);
+                let (mut writer, reader) = tokio::io::duplex(crate::BUFFER_SIZE);
+
+                let archive_task = get_archive_task(
+                    files_receiver.clone(),
+                    Arc::clone(&bytes_archived),
+                    server.clone(),
+                    tokio_util::io::SyncIoBridge::new(checksummed_writer),
+                    crate::server::filesystem::archive::create::CreateTarOptions {
+                        compression_type: match archive_format {
+                            TransferArchiveFormat::Tar => CompressionType::None,
+                            TransferArchiveFormat::TarGz => CompressionType::Gz,
+                            TransferArchiveFormat::TarXz => CompressionType::Xz,
+                            TransferArchiveFormat::TarBz2 => CompressionType::Bz2,
+                            TransferArchiveFormat::TarLz4 => CompressionType::Lz4,
+                            TransferArchiveFormat::TarZstd => CompressionType::Zstd,
+                        },
+                        compression_level,
+                        threads: server.app_state.config.api.file_compression_threads,
+                    },
+                );
+
+                let checksum_task = Box::pin(async move {
+                    let mut hasher = sha2::Sha256::new();
+
+                    let mut buffer = vec![0; crate::BUFFER_SIZE];
+                    loop {
+                        let bytes_read = checksummed_reader.read(&mut buffer).await?;
+                        if crate::unlikely(bytes_read == 0) {
+                            break;
+                        }
+
+                        hasher.update(&buffer[..bytes_read]);
+                        writer.write_all(&buffer[..bytes_read]).await?;
+                    }
+
+                    checksum_sender.send(format!("{:x}", hasher.finalize())).ok();
+                    writer.flush().await?;
+
+                    Ok::<_, anyhow::Error>(())
+                });
+
+                let form = reqwest::multipart::Form::new()
+                    .part(
+                        "archive",
+                        reqwest::multipart::Part::stream(reqwest::Body::wrap_stream(
+                            tokio_util::io::ReaderStream::with_capacity(reader, crate::BUFFER_SIZE),
+                        ))
+                        .file_name(format!("archive.{}", archive_format.extension()))
+                        .mime_str("application/x-tar")
+                        .unwrap(),
+                    )
+                    .part(
+                        "checksum",
+                        reqwest::multipart::Part::stream(reqwest::Body::wrap_stream(
+                            checksum_receiver.into_stream()
+                        ))
+                        .file_name("checksum")
+                        .mime_str("text/plain")
+                        .unwrap(),
+                    );
+
+                multiplex_responses.push(
+                    client
+                        .post(&url)
+                        .header("Authorization", &token)
+                        .header("Multiplex-Stream", i)
+                        .multipart(form)
+                        .send()
+                );
+                multiplex_tasks.push(archive_task);
+                multiplex_tasks.push(checksum_task);
+            }
 
             Self::log(&server, "Streaming archive to destination...");
 
-            let (archive, checksum, _) = tokio::join!(archive_task, checksum_task, response);
+            if let Err(err) = tokio::try_join!(
+                archive_task,
+                checksum_task,
+                file_collector_task,
+                futures_util::future::try_join_all(multiplex_tasks),
+                async { Ok(response.await?) },
+                async { Ok(futures_util::future::try_join_all(multiplex_responses).await?) }
+            ) {
+                progress_task.abort();
+
+                tracing::error!(
+                    server = %server.uuid,
+                    "failed to transfer server: {}",
+                    err
+                );
+
+                Self::transfer_failure(&server).await;
+                return;
+            }
+
             progress_task.abort();
-
-            if let Err(err) = archive {
-                tracing::error!(
-                    server = %server.uuid,
-                    "failed to create transfer archive (join error): {}",
-                    err
-                );
-
-                Self::transfer_failure(&server).await;
-                return;
-            }
-
-            if let Err(err) = checksum {
-                tracing::error!(
-                    server = %server.uuid,
-                    "failed to create transfer checksum: {}",
-                    err
-                );
-
-                Self::transfer_failure(&server).await;
-                return;
-            }
 
             Self::log(&server, "Finished streaming archive to destination.");
 
@@ -482,6 +592,40 @@ impl Drop for OutgoingServerTransfer {
     fn drop(&mut self) {
         if let Some(task) = self.task.take() {
             task.abort();
+        }
+    }
+}
+
+pub struct IncomingServerTransfer {
+    pub main_handle: AbortHandle,
+
+    pub multiplex_handles: Vec<(
+        AbortHandle,
+        tokio::sync::oneshot::Receiver<Result<(), anyhow::Error>>,
+    )>,
+}
+
+impl IncomingServerTransfer {
+    pub async fn try_join_handles(
+        &mut self,
+        main: JoinHandle<Result<Vec<uuid::Uuid>, anyhow::Error>>,
+    ) -> Result<Vec<uuid::Uuid>, anyhow::Error> {
+        let (backups, _) = tokio::try_join!(async { main.await? }, async {
+            Ok(futures_util::future::try_join_all(
+                self.multiplex_handles.drain(..).map(|h| h.1),
+            ))
+        })?;
+
+        Ok(backups)
+    }
+}
+
+impl Drop for IncomingServerTransfer {
+    fn drop(&mut self) {
+        self.main_handle.abort();
+
+        for handle in self.multiplex_handles.iter() {
+            handle.0.abort();
         }
     }
 }

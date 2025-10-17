@@ -44,9 +44,7 @@ mod delete {
         server
             .transferring
             .store(false, std::sync::atomic::Ordering::SeqCst);
-        if let Some(handle) = server.incoming_transfer.write().await.take() {
-            handle.abort();
-        }
+        server.incoming_transfer.write().await.take();
 
         ApiResponse::json(Response {}).ok()
     }
