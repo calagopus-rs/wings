@@ -489,16 +489,7 @@ impl OutgoingServerTransfer {
                 }
             });
 
-            let client = reqwest::Client::builder()
-                .no_brotli()
-                .no_deflate()
-                .no_gzip()
-                .no_zstd()
-                .pool_max_idle_per_host(0)
-                .build()
-                .unwrap();
-
-            let response = client
+            let response = reqwest::Client::new()
                 .post(&url)
                 .header("Authorization", &token)
                 .header("Multiplex-Stream-Count", multiplex_streams)
@@ -581,7 +572,7 @@ impl OutgoingServerTransfer {
                     );
 
                 multiplex_responses.push(
-                    client
+                    reqwest::Client::new()
                         .post(&url)
                         .header("Authorization", &token)
                         .header("Multiplex-Stream", i)
