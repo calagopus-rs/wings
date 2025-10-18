@@ -14,6 +14,7 @@ use std::{
         Arc,
         atomic::{AtomicU64, Ordering},
     },
+    time::Instant,
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -72,6 +73,7 @@ impl std::str::FromStr for TransferArchiveFormat {
 
 pub struct OutgoingServerTransfer {
     pub bytes_archived: Arc<AtomicU64>,
+    pub bytes_sent: Arc<AtomicU64>,
 
     server: super::Server,
     archive_format: TransferArchiveFormat,
@@ -87,6 +89,7 @@ impl OutgoingServerTransfer {
     ) -> Self {
         Self {
             bytes_archived: Arc::new(AtomicU64::new(0)),
+            bytes_sent: Arc::new(AtomicU64::new(0)),
             server: server.clone(),
             archive_format,
             compression_level,
@@ -140,6 +143,7 @@ impl OutgoingServerTransfer {
     ) -> Result<(), anyhow::Error> {
         let backup_manager = Arc::clone(backup_manager);
         let bytes_archived = Arc::clone(&self.bytes_archived);
+        let bytes_sent = Arc::clone(&self.bytes_sent);
         let archive_format = self.archive_format;
         let compression_level = self.compression_level;
         let server = self.server.clone();
@@ -220,24 +224,29 @@ impl OutgoingServerTransfer {
                 },
             );
 
-            let checksum_task = Box::pin(async move {
-                let mut hasher = sha2::Sha256::new();
+            let checksum_task = Box::pin({
+                let bytes_sent = Arc::clone(&bytes_sent);
 
-                let mut buffer = vec![0; crate::BUFFER_SIZE];
-                loop {
-                    let bytes_read = checksummed_reader.read(&mut buffer).await?;
-                    if crate::unlikely(bytes_read == 0) {
-                        break;
+                async move {
+                    let mut hasher = sha2::Sha256::new();
+
+                    let mut buffer = vec![0; crate::BUFFER_SIZE];
+                    loop {
+                        let bytes_read = checksummed_reader.read(&mut buffer).await?;
+                        if crate::unlikely(bytes_read == 0) {
+                            break;
+                        }
+
+                        hasher.update(&buffer[..bytes_read]);
+                        writer.write_all(&buffer[..bytes_read]).await?;
+                        bytes_sent.fetch_add(bytes_read as u64, Ordering::Relaxed);
                     }
 
-                    hasher.update(&buffer[..bytes_read]);
-                    writer.write_all(&buffer[..bytes_read]).await?;
+                    checksum_sender.send(format!("{:x}", hasher.finalize())).ok();
+                    writer.flush().await?;
+
+                    Ok::<_, anyhow::Error>(())
                 }
-
-                checksum_sender.send(format!("{:x}", hasher.finalize())).ok();
-                writer.flush().await?;
-
-                Ok::<_, anyhow::Error>(())
             });
 
             let file_collector_task = Box::pin({
@@ -308,6 +317,10 @@ impl OutgoingServerTransfer {
                                 },
                                 Arc::clone(&bytes_archived),
                             );
+                            let reader = AsyncCountingReader::new_with_bytes_read(
+                                reader,
+                                Arc::clone(&bytes_sent),
+                            );
                             let reader = AsyncHashReader::new_with_hasher(reader, Arc::clone(&hasher)).await;
 
                             let (checksum_sender, checksum_receiver) = tokio::sync::oneshot::channel();
@@ -357,47 +370,118 @@ impl OutgoingServerTransfer {
                 }
             }
 
-            let progress_task = tokio::spawn({
+            let progress_task = Box::pin({
                 let bytes_archived = Arc::clone(&bytes_archived);
+                let bytes_sent = Arc::clone(&bytes_sent);
                 let server = server.clone();
 
                 async move {
-                    let formatted_total_bytes = human_bytes(total_bytes as f64);
-                    let mut total_n_bytes_archived = 0.0;
+                    let mut last_bytes_archived = 0;
+                    let mut last_bytes_sent = 0;
+                    let mut last_update_time = Instant::now();
+                    let start_time = Instant::now();
 
                     loop {
-                        if !server.transferring.load(Ordering::SeqCst) {
-                            tracing::info!(
-                                server = %server.uuid,
-                                "transfer aborted, stopping progress task"
-                            );
-                            break;
-                        }
+                        let now = Instant::now();
+                        let elapsed_secs = now.duration_since(last_update_time).as_secs_f64();
+                        let total_elapsed_secs = now.duration_since(start_time).as_secs_f64();
+                        last_update_time = now;
 
-                        let bytes_archived = bytes_archived.load(Ordering::SeqCst);
-                        total_n_bytes_archived += 1.0;
+                        let current_bytes_archived = bytes_archived.load(Ordering::SeqCst);
+                        let current_bytes_sent = bytes_sent.load(Ordering::SeqCst);
 
-                        let formatted_bytes_archived = human_bytes(bytes_archived as f64);
-                        let formatted_diff =
-                            human_bytes(bytes_archived as f64 / total_n_bytes_archived);
-                        let formatted_percentage = format!(
-                            "{:.2}%",
-                            (bytes_archived as f64 / total_bytes as f64) * 100.0
+                        let archive_rate = if elapsed_secs > 0.0 {
+                            (current_bytes_archived - last_bytes_archived) as f64 / elapsed_secs
+                        } else {
+                            0.0
+                        };
+
+                        let network_rate = if elapsed_secs > 0.0 {
+                            (current_bytes_sent - last_bytes_sent) as f64 / elapsed_secs
+                        } else {
+                            0.0
+                        };
+
+                        last_bytes_archived = current_bytes_archived;
+                        last_bytes_sent = current_bytes_sent;
+
+                        let total_bytes = total_bytes.max(current_bytes_archived);
+
+                        let formatted_bytes_archived = human_bytes(current_bytes_archived as f64);
+                        let formatted_total_bytes = human_bytes(total_bytes as f64);
+                        let formatted_archive_rate = human_bytes(archive_rate);
+                        let formatted_bytes_sent = human_bytes(current_bytes_sent as f64);
+                        let formatted_network_rate = human_bytes(network_rate);
+
+                        let archive_percentage = (current_bytes_archived as f64 / total_bytes as f64) * 100.0;
+                        let formatted_archive_percentage = format!("{:.2}%", archive_percentage);
+
+                        let time_estimate = if archive_rate > 0.0 {
+                            let remaining_bytes = total_bytes as f64 - current_bytes_archived as f64;
+                            let remaining_seconds = remaining_bytes / archive_rate;
+
+                            if remaining_seconds < 60.0 {
+                                format!("{:.0}s", remaining_seconds)
+                            } else if remaining_seconds < 3600.0 {
+                                format!("{:.0}m {:.0}s", remaining_seconds / 60.0, remaining_seconds % 60.0)
+                            } else {
+                                format!("{:.1}h {:.0}m", 
+                                    remaining_seconds / 3600.0,
+                                    (remaining_seconds % 3600.0) / 60.0
+                                )
+                            }
+                        } else {
+                            "unknown".to_string()
+                        };
+
+                        const BAR_WIDTH: usize = 30;
+                        let completed_width = std::cmp::min((archive_percentage / 100.0 * BAR_WIDTH as f64).round() as usize, BAR_WIDTH);
+                        let remaining_width = BAR_WIDTH.saturating_sub(completed_width);
+                        let progress_bar = format!(
+                            "[{}>{}] {} - ETA: {}",
+                            "=".repeat(completed_width),
+                            " ".repeat(if completed_width == 0 { remaining_width.saturating_sub(1) } else { remaining_width }),
+                            formatted_archive_percentage,
+                            time_estimate
                         );
 
-                        Self::log(
-                            &server,
-                            &format!(
-                                "Transferred {formatted_bytes_archived} of {formatted_total_bytes} ({formatted_diff}/s, {formatted_percentage})"
-                            ),
-                        );
-                        tracing::debug!(
-                            server = %server.uuid,
-                            "transferred {} of {} ({}/s, {})",
+                        let elapsed_time = if total_elapsed_secs < 60.0 {
+                            format!("{:.0}s", total_elapsed_secs)
+                        } else if total_elapsed_secs < 3600.0 {
+                            format!("{:.0}m {:.0}s", 
+                                total_elapsed_secs / 60.0,
+                                total_elapsed_secs % 60.0
+                            )
+                        } else {
+                            format!("{:.1}h {:.0}m", 
+                                total_elapsed_secs / 3600.0,
+                                (total_elapsed_secs % 3600.0) / 60.0
+                            )
+                        };
+
+                        let progress_log = format!(
+                            "{}\nArchive: {} of {} ({}/s) - Elapsed: {}\nNetwork: {} sent ({}/s)",
+                            progress_bar,
                             formatted_bytes_archived,
                             formatted_total_bytes,
-                            formatted_diff,
-                            formatted_percentage
+                            formatted_archive_rate,
+                            elapsed_time,
+                            formatted_bytes_sent,
+                            formatted_network_rate
+                        );
+
+                        Self::log(&server, &progress_log);
+
+                        tracing::debug!(
+                            server = %server.uuid,
+                            "Progress: {}, Archive: {} of {} ({}/s), Network: {} ({}/s), ETA: {}",
+                            formatted_archive_percentage,
+                            formatted_bytes_archived,
+                            formatted_total_bytes,
+                            formatted_archive_rate,
+                            formatted_bytes_sent,
+                            formatted_network_rate,
+                            time_estimate
                         );
 
                         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -444,24 +528,29 @@ impl OutgoingServerTransfer {
                     },
                 );
 
-                let checksum_task = Box::pin(async move {
-                    let mut hasher = sha2::Sha256::new();
+                let checksum_task = Box::pin({
+                    let bytes_sent = Arc::clone(&bytes_sent);
 
-                    let mut buffer = vec![0; crate::BUFFER_SIZE];
-                    loop {
-                        let bytes_read = checksummed_reader.read(&mut buffer).await?;
-                        if crate::unlikely(bytes_read == 0) {
-                            break;
+                    async move {
+                        let mut hasher = sha2::Sha256::new();
+
+                        let mut buffer = vec![0; crate::BUFFER_SIZE];
+                        loop {
+                            let bytes_read = checksummed_reader.read(&mut buffer).await?;
+                            if crate::unlikely(bytes_read == 0) {
+                                break;
+                            }
+
+                            hasher.update(&buffer[..bytes_read]);
+                            writer.write_all(&buffer[..bytes_read]).await?;
+                            bytes_sent.fetch_add(bytes_read as u64, Ordering::Relaxed);
                         }
 
-                        hasher.update(&buffer[..bytes_read]);
-                        writer.write_all(&buffer[..bytes_read]).await?;
+                        checksum_sender.send(format!("{:x}", hasher.finalize())).ok();
+                        writer.flush().await?;
+
+                        Ok::<_, anyhow::Error>(())
                     }
-
-                    checksum_sender.send(format!("{:x}", hasher.finalize())).ok();
-                    writer.flush().await?;
-
-                    Ok::<_, anyhow::Error>(())
                 });
 
                 let form = reqwest::multipart::Form::new()
@@ -498,27 +587,30 @@ impl OutgoingServerTransfer {
 
             Self::log(&server, "Streaming archive to destination...");
 
-            if let Err(err) = tokio::try_join!(
-                archive_task,
-                checksum_task,
-                file_collector_task,
-                futures_util::future::try_join_all(multiplex_tasks),
-                async { Ok(response.await?) },
-                async { Ok(futures_util::future::try_join_all(multiplex_responses).await?) }
-            ) {
-                progress_task.abort();
+            tokio::select! {
+                result = async {
+                    tokio::try_join!(
+                        archive_task,
+                        checksum_task,
+                        file_collector_task,
+                        futures_util::future::try_join_all(multiplex_tasks),
+                        async { Ok(response.await?) },
+                        async { Ok(futures_util::future::try_join_all(multiplex_responses).await?) }
+                    )
+                } => {
+                    if let Err(err) = result {
+                        tracing::error!(
+                            server = %server.uuid,
+                            "failed to transfer server: {}",
+                            err
+                        );
 
-                tracing::error!(
-                    server = %server.uuid,
-                    "failed to transfer server: {}",
-                    err
-                );
-
-                Self::transfer_failure(&server).await;
-                return;
-            }
-
-            progress_task.abort();
+                        Self::transfer_failure(&server).await;
+                        return;
+                    }
+                }
+                _ = progress_task => {}
+            };
 
             Self::log(&server, "Finished streaming archive to destination.");
 

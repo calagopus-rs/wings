@@ -59,6 +59,7 @@ impl OperationManager {
         }
     }
 
+    #[inline]
     pub async fn operations(&self) -> RwLockReadGuard<'_, HashMap<uuid::Uuid, Operation>> {
         self.operations.read().await
     }
