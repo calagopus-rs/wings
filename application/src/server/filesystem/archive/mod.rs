@@ -224,8 +224,10 @@ impl Archive {
         let get_archive_format = || -> ArchiveType {
             match path.extension() {
                 Some(ext)
-                    if ["tar", "tgz", "tbz", "tbz2", "txz", "tlz", "tlz4", "tzst"]
-                        .contains(&ext.to_str().unwrap_or_default()) =>
+                    if [
+                        "tar", "tgz", "tbz", "tbz2", "txz", "tlz", "tlzf", "tlz4", "tzst",
+                    ]
+                    .contains(&ext.to_str().unwrap_or_default()) =>
                 {
                     ArchiveType::Tar
                 }

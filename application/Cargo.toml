@@ -65,11 +65,11 @@ chrono-tz = "0.10.4"
 gzp = "2.0.0"
 lzma-rust2 = { version = "0.14.0", features = ["optimization"] }
 bzip2 = "0.6.0"
-lz4 = "1.28.1"
 zstd = { version = "0.13.3", features = ["zstdmt"] }
 base64 = "0.22.1"
 chunked_vec = "=0.3.4"
 async-channel = "2.5.0"
+lzzzz = "2.0.0"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 tikv-jemallocator = "0.6.0"

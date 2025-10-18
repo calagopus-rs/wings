@@ -12,7 +12,7 @@ pub enum CompressionWriter<'a, W: Write + Send + 'static> {
     Gz(gzp::par::compress::ParCompress<'a, gzp::deflate::Gzip, W>),
     Xz(usize, Box<lzma_rust2::XzWriterMt<W>>),
     Bz2(bzip2::write::BzEncoder<W>),
-    Lz4(lz4::Encoder<W>),
+    Lz4(lzzzz::lz4f::WriteCompressor<W>),
     Zstd(usize, bool, zstd::Encoder<'a, W>),
 }
 
@@ -55,9 +55,15 @@ impl<'a, W: Write + Send + 'static> CompressionWriter<'a, W> {
                 writer,
                 bzip2::Compression::new(compression_level.to_bz2_level()),
             )),
-            CompressionType::Lz4 => {
-                CompressionWriter::Lz4(lz4::EncoderBuilder::new().build(writer).unwrap())
-            }
+            CompressionType::Lz4 => CompressionWriter::Lz4(
+                lzzzz::lz4f::WriteCompressor::new(
+                    writer,
+                    lzzzz::lz4f::PreferencesBuilder::new()
+                        .compression_level(compression_level.to_lz4_level())
+                        .build(),
+                )
+                .unwrap(),
+            ),
             CompressionType::Zstd => CompressionWriter::Zstd(0, threads > 1, {
                 let mut encoder =
                     zstd::Encoder::new(writer, compression_level.to_zstd_level()).unwrap();
@@ -85,10 +91,9 @@ impl<'a, W: Write + Send + 'static> CompressionWriter<'a, W> {
                 writer.finish()?;
                 Ok(())
             }
-            CompressionWriter::Lz4(writer) => {
-                let (_, result) = writer.finish();
-
-                result?;
+            CompressionWriter::Lz4(mut writer) => {
+                writer.flush()?;
+                writer.into_inner();
                 Ok(())
             }
             CompressionWriter::Zstd(_, _, writer) => {

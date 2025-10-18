@@ -75,4 +75,14 @@ impl CompressionLevel {
             CompressionLevel::BestCompression => 9,
         }
     }
+
+    #[inline]
+    pub const fn to_lz4_level(self) -> i32 {
+        match self {
+            CompressionLevel::BestSpeed => 1,
+            CompressionLevel::GoodSpeed => 5,
+            CompressionLevel::GoodCompression => 8,
+            CompressionLevel::BestCompression => 12,
+        }
+    }
 }

@@ -11,7 +11,7 @@ pub enum CompressionReader<'a, R: Read> {
     Gz(flate2::read::MultiGzDecoder<R>),
     Xz(Box<lzma_rust2::XzReader<R>>),
     Bz2(bzip2::read::MultiBzDecoder<R>),
-    Lz4(lz4::Decoder<R>),
+    Lz4(lzzzz::lz4f::ReadDecompressor<'a, R>),
     Zstd(zstd::Decoder<'a, std::io::BufReader<R>>),
 }
 
@@ -26,7 +26,9 @@ impl<'a, R: Read> CompressionReader<'a, R> {
             CompressionType::Bz2 => {
                 CompressionReader::Bz2(bzip2::read::MultiBzDecoder::new(reader))
             }
-            CompressionType::Lz4 => CompressionReader::Lz4(lz4::Decoder::new(reader).unwrap()),
+            CompressionType::Lz4 => {
+                CompressionReader::Lz4(lzzzz::lz4f::ReadDecompressor::new(reader).unwrap())
+            }
             CompressionType::Zstd => CompressionReader::Zstd(zstd::Decoder::new(reader).unwrap()),
         }
     }
@@ -37,7 +39,7 @@ impl<'a, R: Read> CompressionReader<'a, R> {
             CompressionReader::Gz(decoder) => decoder.into_inner(),
             CompressionReader::Xz(decoder) => decoder.into_inner(),
             CompressionReader::Bz2(decoder) => decoder.into_inner(),
-            CompressionReader::Lz4(decoder) => decoder.finish().0,
+            CompressionReader::Lz4(decoder) => decoder.into_inner(),
             CompressionReader::Zstd(decoder) => decoder.finish().into_inner(),
         }
     }
