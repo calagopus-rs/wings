@@ -489,7 +489,14 @@ impl OutgoingServerTransfer {
                 }
             });
 
-            let client = reqwest::Client::new();
+            let client = reqwest::Client::builder()
+                .no_brotli()
+                .no_deflate()
+                .no_gzip()
+                .no_zstd()
+                .pool_max_idle_per_host(0)
+                .build()
+                .unwrap();
 
             let response = client
                 .post(&url)
