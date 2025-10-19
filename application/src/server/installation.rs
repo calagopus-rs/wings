@@ -826,6 +826,7 @@ pub async fn attach_install_container(
     }
 
     unset_installing(true).await?;
+    server.filesystem.rerun_disk_checker();
 
     Ok(())
 }

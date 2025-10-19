@@ -25,6 +25,7 @@ pub mod writer;
 
 pub struct Filesystem {
     uuid: uuid::Uuid,
+    disk_checker_rescan: Arc<tokio::sync::Notify>,
     disk_checker: tokio::task::JoinHandle<()>,
     config: Arc<crate::config::Config>,
 
@@ -58,9 +59,11 @@ impl Filesystem {
         }
 
         let cap_filesystem = cap::CapFilesystem::new_uninitialized(base_path.clone());
+        let disk_checker_rescan = Arc::new(tokio::sync::Notify::new());
 
         Self {
             uuid,
+            disk_checker_rescan: Arc::clone(&disk_checker_rescan),
             disk_checker: tokio::task::spawn({
                 let config = Arc::clone(&config);
                 let disk_usage = Arc::clone(&disk_usage);
@@ -162,10 +165,12 @@ impl Filesystem {
                             }
                         }
 
-                        tokio::time::sleep(std::time::Duration::from_secs(
-                            config.system.disk_check_interval,
-                        ))
-                        .await;
+                        tokio::select! {
+                            _ = tokio::time::sleep(std::time::Duration::from_secs(
+                                config.system.disk_check_interval,
+                            )) => {},
+                            _ = disk_checker_rescan.notified() => {}
+                        }
                     }
                 }
             }),
@@ -182,6 +187,11 @@ impl Filesystem {
             pulls: RwLock::new(HashMap::new()),
             operations: operations::OperationManager::new(sender),
         }
+    }
+
+    #[inline]
+    pub fn rerun_disk_checker(&self) {
+        self.disk_checker_rescan.notify_one();
     }
 
     pub async fn update_ignored(&self, deny_list: &[String]) {

@@ -261,7 +261,8 @@ mod post {
                                                             )
                                                         })
                                                         .ok(),
-                                                )?;
+                                                )?
+                                                .ignorant();
 
                                             crate::io::copy_shared(
                                                 &mut read_buffer,

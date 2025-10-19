@@ -733,6 +733,8 @@ impl BackupExt for ResticBackup {
             }
         }
 
+        server.filesystem.rerun_disk_checker();
+
         Ok(())
     }
 
