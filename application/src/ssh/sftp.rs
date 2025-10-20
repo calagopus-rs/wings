@@ -207,13 +207,22 @@ impl russh_sftp::server::Handler for SftpSession {
             });
         }
 
-        if let Ok(path) = self.server.filesystem.async_canonicalize(path).await {
+        if let Ok(path) = self.server.filesystem.async_canonicalize(&path).await {
             Ok(Name {
                 id,
                 files: vec![File::dummy(format!("/{}", path.display()))],
             })
         } else {
-            Err(StatusCode::NoSuchFile)
+            Ok(Name {
+                id,
+                files: vec![File::dummy(format!(
+                    "/{}",
+                    self.server
+                        .filesystem
+                        .relative_path(Path::new(&path))
+                        .display()
+                ))],
+            })
         }
     }
 
