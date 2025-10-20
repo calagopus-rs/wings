@@ -21,6 +21,9 @@ pub struct WebsocketJwtPayload {
     pub user_uuid: uuid::Uuid,
     pub server_uuid: uuid::Uuid,
     pub permissions: Permissions,
+
+    #[serde(default)]
+    pub use_console_read_permission: bool,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]

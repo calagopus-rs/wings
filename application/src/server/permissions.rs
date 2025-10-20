@@ -17,6 +17,8 @@ pub enum Permission {
 
     #[serde(rename = "websocket.connect")]
     WebsocketConnect,
+    #[serde(rename = "control.read-console")]
+    ControlReadConsole,
     #[serde(rename = "control.console")]
     ControlConsole,
     #[serde(rename = "control.start")]

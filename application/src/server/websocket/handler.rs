@@ -232,6 +232,20 @@ pub async fn handle_ws(
 
                 Box::pin(async move {
                     loop {
+                        {
+                            let socket_jwt = socket_jwt.read().await;
+
+                            if let Some(jwt) = socket_jwt.as_ref()
+                                && jwt.base.validate(&state.config.jwt).await
+                                && jwt.use_console_read_permission
+                                && !jwt.permissions.has_permission(Permission::ControlReadConsole)
+                            {
+                                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+
+                                continue;
+                            }
+                        }
+
                         if let Some(mut stdout) = server.container_stdout().await {
                             loop {
                                 match stdout.recv().await {
@@ -241,6 +255,12 @@ pub async fn handle_ws(
                                         if let Some(jwt) = socket_jwt.as_ref()
                                             && jwt.base.validate(&state.config.jwt).await
                                         {
+                                            if jwt.use_console_read_permission
+                                                && !jwt.permissions.has_permission(Permission::ControlReadConsole)
+                                            {
+                                                break;
+                                            }
+
                                             super::send_message(
                                                 &sender,
                                                 websocket::WebsocketMessage::new(

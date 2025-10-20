@@ -35,6 +35,14 @@ pub async fn handle_message(
             if server.state.get_state() != crate::server::state::ServerState::Offline
                 || state.config.api.send_offline_server_logs
             {
+                if socket_jwt.use_console_read_permission
+                    && !socket_jwt
+                        .permissions
+                        .has_permission(Permission::ControlReadConsole)
+                {
+                    return Ok(());
+                }
+
                 let logs = server
                     .read_log(&state.docker, state.config.system.websocket_log_count)
                     .await
