@@ -345,7 +345,7 @@ mod post {
                                 {
                                     Some(uuid) => uuid,
                                     None => {
-                                        if field.name().is_some_and(|n| n.ends_with("checksum")) {
+                                        if field.name().is_some_and(|n| n.contains("checksum")) {
                                             let backup_checksum = match backup_checksum.take() {
                                                 Some(checksum) => format!("{:x}", checksum),
                                                 None => {
@@ -618,6 +618,67 @@ mod post {
                     }
 
                     break;
+                }
+            } else {
+                match handle.await {
+                    Ok(Ok(backups)) => {
+                        tracing::info!(
+                            server = %server.uuid,
+                            "server transfer completed successfully"
+                        );
+
+                        state
+                            .config
+                            .client
+                            .set_server_transfer(subject, true, backups)
+                            .await?;
+                        server
+                            .transferring
+                            .store(false, std::sync::atomic::Ordering::SeqCst);
+                        server
+                            .websocket
+                            .send(crate::server::websocket::WebsocketMessage::new(
+                                crate::server::websocket::WebsocketEvent::ServerTransferStatus,
+                                ["completed".to_string()].into(),
+                            ))
+                            .ok();
+                    }
+                    Ok(Err(err)) => {
+                        tracing::error!(
+                            server = %server.uuid,
+                            "failed to complete server transfer: {:#?}",
+                            err
+                        );
+
+                        state
+                            .config
+                            .client
+                            .set_server_transfer(subject, false, vec![])
+                            .await
+                            .unwrap_or_default();
+
+                        return ApiResponse::error("failed to complete server transfer")
+                            .with_status(StatusCode::EXPECTATION_FAILED)
+                            .ok();
+                    }
+                    Err(err) => {
+                        tracing::error!(
+                            server = %server.uuid,
+                            "failed to complete server transfer: {:#?}",
+                            err
+                        );
+
+                        state
+                            .config
+                            .client
+                            .set_server_transfer(subject, false, vec![])
+                            .await
+                            .unwrap_or_default();
+
+                        return ApiResponse::error("failed to complete server transfer")
+                            .with_status(StatusCode::EXPECTATION_FAILED)
+                            .ok();
+                    }
                 }
             }
         }
