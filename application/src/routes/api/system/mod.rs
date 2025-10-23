@@ -3,6 +3,7 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod logs;
 mod upgrade;
+mod config;
 
 mod get {
     use crate::{
@@ -49,5 +50,6 @@ pub fn router(state: &State) -> OpenApiRouter<State> {
         .routes(routes!(get::route))
         .nest("/logs", logs::router(state))
         .nest("/upgrade", upgrade::router(state))
+        .nest("/config", config::router(state))
         .with_state(state.clone())
 }
