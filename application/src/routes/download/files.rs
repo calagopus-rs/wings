@@ -117,13 +117,9 @@ mod get {
                 "attachment; filename={}",
                 serde_json::Value::String(folder_ascii)
             )
-            .parse()
-            .unwrap(),
+            .parse()?,
         );
-        headers.insert(
-            "Content-Type",
-            data.archive_format.mime_type().parse().unwrap(),
-        );
+        headers.insert("Content-Type", data.archive_format.mime_type().parse()?);
 
         if let Some((backup, path)) = server
             .filesystem

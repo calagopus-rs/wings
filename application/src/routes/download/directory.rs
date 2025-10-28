@@ -116,7 +116,7 @@ mod get {
             )
             .parse()?,
         );
-        headers.insert("Content-Type", "application/gzip".parse()?);
+        headers.insert("Content-Type", data.archive_format.mime_type().parse()?);
 
         if let Some((backup, path)) = server
             .filesystem
