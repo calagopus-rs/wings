@@ -133,20 +133,22 @@ impl SftpSession {
 
     #[inline]
     async fn is_ignored(&self, path: &Path, is_dir: bool) -> bool {
-        Self::is_ignored_server(&self.server, path, is_dir).await
+        Self::is_ignored_server(&self.server, self.user_uuid, path, is_dir).await
     }
 
     #[inline]
-    async fn is_ignored_server(server: &crate::server::Server, path: &Path, is_dir: bool) -> bool {
+    async fn is_ignored_server(
+        server: &crate::server::Server,
+        user: uuid::Uuid,
+        path: &Path,
+        is_dir: bool,
+    ) -> bool {
         if path == Path::new("/") || path == Path::new("") {
             return false;
         }
 
         server.filesystem.is_ignored(path, is_dir).await
-            || server
-                .user_permissions
-                .is_ignored(uuid::Uuid::nil(), path, is_dir)
-                .await
+            || server.user_permissions.is_ignored(user, path, is_dir).await
     }
 
     #[inline]
@@ -301,7 +303,8 @@ impl russh_sftp::server::Handler for SftpSession {
                 Err(_) => continue,
             };
 
-            if Self::is_ignored_server(&self.server, &path, metadata.is_dir()).await {
+            if Self::is_ignored_server(&self.server, self.user_uuid, &path, metadata.is_dir()).await
+            {
                 continue;
             }
 
