@@ -1,9 +1,9 @@
 use super::State;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
+mod config;
 mod logs;
 mod upgrade;
-mod config;
 
 mod get {
     use crate::{

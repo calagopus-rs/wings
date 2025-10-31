@@ -90,6 +90,22 @@ impl ServerConfigurationFile {
                                         );
                                     }
                                 },
+                                "env" if parts.len() >= 4 => {
+                                    let env_var = parts[3];
+                                    if let Some(value) = config.environment.get(env_var) {
+                                        return if let Some(value_str) = value.as_str() {
+                                            Some(value_str.to_string())
+                                        } else {
+                                            Some(value.to_string())
+                                        };
+                                    } else {
+                                        tracing::error!(
+                                            server = %server.uuid,
+                                            "environment variable not found: {}",
+                                            env_var
+                                        );
+                                    }
+                                }
                                 _ => {
                                     tracing::error!(
                                         server = %server.uuid,
@@ -144,6 +160,52 @@ impl ServerConfigurationFile {
         );
 
         Some(value.to_string())
+    }
+
+    async fn replace_all_placeholders(
+        server: &crate::server::Server,
+        input: &serde_json::Value,
+    ) -> String {
+        let input = match input.as_str() {
+            Some(s) => s,
+            None => return input.to_string(),
+        };
+
+        let mut result = String::new();
+        let mut chars = input.chars().peekable();
+
+        while let Some(ch) = chars.next() {
+            if ch == '{' && chars.peek() == Some(&'{') {
+                chars.next();
+                let mut placeholder = String::from("{{");
+                let mut found_end = false;
+
+                while let Some(ch) = chars.next() {
+                    placeholder.push(ch);
+                    if ch == '}' && chars.peek() == Some(&'}') {
+                        chars.next();
+                        placeholder.push('}');
+                        found_end = true;
+                        break;
+                    }
+                }
+
+                if found_end {
+                    let value = serde_json::Value::String(placeholder.clone());
+                    if let Some(replacement) = Self::lookup_value(server, &value).await {
+                        result.push_str(&replacement);
+                    } else {
+                        result.push_str(&placeholder);
+                    }
+                } else {
+                    result.push_str(&placeholder);
+                }
+            } else {
+                result.push(ch);
+            }
+        }
+
+        result
     }
 }
 
@@ -475,18 +537,20 @@ async fn process_properties_file(
                     continue;
                 }
 
-                if let Some(value) =
-                    ServerConfigurationFile::lookup_value(server, &replacement.replace_with).await
-                {
-                    tracing::debug!(
-                        server = %server.uuid,
-                        "replacing value for key '{}': '{}' -> '{}'",
-                        key, original_value, value
-                    );
+                let value = ServerConfigurationFile::replace_all_placeholders(
+                    server,
+                    &replacement.replace_with,
+                )
+                .await;
 
-                    updated_line = format!("{key}={value}");
-                    break;
-                }
+                tracing::debug!(
+                    server = %server.uuid,
+                    "replacing value for key '{}': '{}' -> '{}'",
+                    key, original_value, value
+                );
+
+                updated_line = format!("{key}={value}");
+                break;
             }
         }
 
@@ -501,16 +565,18 @@ async fn process_properties_file(
                 replacement.r#match
             );
 
-            if let Some(value) =
-                ServerConfigurationFile::lookup_value(server, &replacement.replace_with).await
-            {
-                tracing::debug!(
-                    server = %server.uuid,
-                    "adding new key-value pair: '{}={}'",
-                    replacement.r#match, value
-                );
-                result.push(format!("{}={}", replacement.r#match, value));
-            }
+            let value = ServerConfigurationFile::replace_all_placeholders(
+                server,
+                &replacement.replace_with,
+            )
+            .await;
+
+            tracing::debug!(
+                server = %server.uuid,
+                "adding new key-value pair: '{}={}'",
+                replacement.r#match, value
+            );
+            result.push(format!("{}={}", replacement.r#match, value));
         }
     }
 
@@ -577,16 +643,16 @@ async fn process_json_file(
             replacement.r#match
         );
 
-        if let Some(value) =
-            ServerConfigurationFile::lookup_value(server, &replacement.replace_with).await
-        {
-            tracing::debug!(
-                server = %server.uuid,
-                "updating json value at path '{}' with value '{}'",
-                replacement.r#match, value
-            );
-            update_json_value(&mut json, &path_parts, value, server);
-        }
+        let value =
+            ServerConfigurationFile::replace_all_placeholders(server, &replacement.replace_with)
+                .await;
+
+        tracing::debug!(
+            server = %server.uuid,
+            "updating json value at path '{}' with value '{}'",
+            replacement.r#match, value
+        );
+        update_json_value(&mut json, &path_parts, value, server);
     }
 
     match serde_json::to_string_pretty(&json) {
@@ -797,16 +863,16 @@ async fn process_yaml_file(
             replacement.r#match
         );
 
-        if let Some(value) =
-            ServerConfigurationFile::lookup_value(server, &replacement.replace_with).await
-        {
-            tracing::debug!(
-                server = %server.uuid,
-                "updating yaml value at path '{}' with value '{}'",
-                replacement.r#match, value
-            );
-            update_json_value(&mut json, &path_parts, value, server);
-        }
+        let value =
+            ServerConfigurationFile::replace_all_placeholders(server, &replacement.replace_with)
+                .await;
+
+        tracing::debug!(
+            server = %server.uuid,
+            "updating yaml value at path '{}' with value '{}'",
+            replacement.r#match, value
+        );
+        update_json_value(&mut json, &path_parts, value, server);
     }
 
     match serde_json::to_string_pretty(&json) {
@@ -869,56 +935,56 @@ async fn process_ini_file(
     for replacement in &config.replace {
         let parts: Vec<&str> = replacement.r#match.splitn(2, '.').collect();
 
-        if let Some(value) =
-            ServerConfigurationFile::lookup_value(server, &replacement.replace_with).await
-        {
-            if parts.len() == 2 {
-                let section = parts[0];
-                let key = parts[1];
-                let full_key = replacement.r#match.clone();
+        let value =
+            ServerConfigurationFile::replace_all_placeholders(server, &replacement.replace_with)
+                .await;
 
-                if let Some(line_idx) = processed_keys.get(&full_key) {
-                    tracing::debug!(
-                        server = %server.uuid,
-                        "updating existing key '{}' in section '{}'",
-                        key, section
-                    );
-                    lines[*line_idx] = format!("{key}={value}");
-                } else {
-                    if !sections.contains_key(section) {
-                        tracing::debug!(
-                            server = %server.uuid,
-                            "adding new section: [{}]",
-                            section
-                        );
-                        sections.insert(section.to_string(), true);
-                        lines.push(format!("[{section}]"));
-                    }
-                    tracing::debug!(
-                        server = %server.uuid,
-                        "adding new key '{}' to section '{}'",
-                        key, section
-                    );
-                    lines.push(format!("{key}={value}"));
-                }
+        if parts.len() == 2 {
+            let section = parts[0];
+            let key = parts[1];
+            let full_key = replacement.r#match.clone();
+
+            if let Some(line_idx) = processed_keys.get(&full_key) {
+                tracing::debug!(
+                    server = %server.uuid,
+                    "updating existing key '{}' in section '{}'",
+                    key, section
+                );
+                lines[*line_idx] = format!("{key}={value}");
             } else {
-                let key = parts[0];
-
-                if let Some(line_idx) = processed_keys.get(key) {
+                if !sections.contains_key(section) {
                     tracing::debug!(
                         server = %server.uuid,
-                        "updating existing key '{}' in root section",
-                        key
+                        "adding new section: [{}]",
+                        section
                     );
-                    lines[*line_idx] = format!("{key}={value}");
-                } else {
-                    tracing::debug!(
-                        server = %server.uuid,
-                        "adding new key '{}' to root section",
-                        key
-                    );
-                    lines.push(format!("{key}={value}"));
+                    sections.insert(section.to_string(), true);
+                    lines.push(format!("[{section}]"));
                 }
+                tracing::debug!(
+                    server = %server.uuid,
+                    "adding new key '{}' to section '{}'",
+                    key, section
+                );
+                lines.push(format!("{key}={value}"));
+            }
+        } else {
+            let key = parts[0];
+
+            if let Some(line_idx) = processed_keys.get(key) {
+                tracing::debug!(
+                    server = %server.uuid,
+                    "updating existing key '{}' in root section",
+                    key
+                );
+                lines[*line_idx] = format!("{key}={value}");
+            } else {
+                tracing::debug!(
+                    server = %server.uuid,
+                    "adding new key '{}' to root section",
+                    key
+                );
+                lines.push(format!("{key}={value}"));
             }
         }
     }
@@ -944,44 +1010,44 @@ async fn process_xml_file(
     };
 
     for replacement in &config.replace {
-        if let Some(value) =
-            ServerConfigurationFile::lookup_value(server, &replacement.replace_with).await
-        {
-            let parts: Vec<&str> = replacement
-                .r#match
-                .split('/')
-                .filter(|p| !p.is_empty())
-                .collect();
-            if parts.is_empty() {
-                continue;
-            }
+        let value =
+            ServerConfigurationFile::replace_all_placeholders(server, &replacement.replace_with)
+                .await;
 
-            let tag_name = parts.last().unwrap();
-            let start_tag = format!("<{tag_name}>");
-            let end_tag = format!("</{tag_name}>");
+        let parts: Vec<&str> = replacement
+            .r#match
+            .split('/')
+            .filter(|p| !p.is_empty())
+            .collect();
+        if parts.is_empty() {
+            continue;
+        }
 
-            if xml_content.contains(&start_tag) && xml_content.contains(&end_tag) {
-                if let Some(start_pos) = xml_content.find(&start_tag) {
-                    let tag_end = start_pos + start_tag.len();
-                    if let Some(end_pos) = xml_content[tag_end..].find(&end_tag) {
-                        let full_end = tag_end + end_pos;
-                        xml_content = format!(
-                            "{}{}{}{}",
-                            &xml_content[..tag_end],
-                            value,
-                            &xml_content[full_end..full_end],
-                            &xml_content[full_end..]
-                        );
-                    }
+        let tag_name = parts.last().unwrap();
+        let start_tag = format!("<{tag_name}>");
+        let end_tag = format!("</{tag_name}>");
+
+        if xml_content.contains(&start_tag) && xml_content.contains(&end_tag) {
+            if let Some(start_pos) = xml_content.find(&start_tag) {
+                let tag_end = start_pos + start_tag.len();
+                if let Some(end_pos) = xml_content[tag_end..].find(&end_tag) {
+                    let full_end = tag_end + end_pos;
+                    xml_content = format!(
+                        "{}{}{}{}",
+                        &xml_content[..tag_end],
+                        value,
+                        &xml_content[full_end..full_end],
+                        &xml_content[full_end..]
+                    );
                 }
-            } else if parts.len() == 1
-                && let Some(root_end_idx) = xml_content.rfind("</root>")
-            {
-                xml_content.insert_str(
-                    root_end_idx,
-                    &format!("\n  <{tag_name}>{value}</{tag_name}>\n"),
-                );
             }
+        } else if parts.len() == 1
+            && let Some(root_end_idx) = xml_content.rfind("</root>")
+        {
+            xml_content.insert_str(
+                root_end_idx,
+                &format!("\n  <{tag_name}>{value}</{tag_name}>\n"),
+            );
         }
     }
 
@@ -1009,12 +1075,14 @@ async fn process_plain_file(
                     continue;
                 }
 
-                if let Some(value) =
-                    ServerConfigurationFile::lookup_value(server, &replacement.replace_with).await
-                {
-                    updated_line = value;
-                    break;
-                }
+                let value = ServerConfigurationFile::replace_all_placeholders(
+                    server,
+                    &replacement.replace_with,
+                )
+                .await;
+
+                updated_line = value;
+                break;
             }
         }
 
@@ -1022,10 +1090,13 @@ async fn process_plain_file(
     }
 
     for replacement in &config.replace {
-        if !processed_matches.contains_key(&replacement.r#match)
-            && let Some(value) =
-                ServerConfigurationFile::lookup_value(server, &replacement.replace_with).await
-        {
+        if !processed_matches.contains_key(&replacement.r#match) {
+            let value = ServerConfigurationFile::replace_all_placeholders(
+                server,
+                &replacement.replace_with,
+            )
+            .await;
+
             result.push(value);
         }
     }

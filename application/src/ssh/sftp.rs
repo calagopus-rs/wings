@@ -139,7 +139,7 @@ impl SftpSession {
     #[inline]
     async fn is_ignored_server(
         server: &crate::server::Server,
-        user: uuid::Uuid,
+        user_uuid: uuid::Uuid,
         path: &Path,
         is_dir: bool,
     ) -> bool {
@@ -148,7 +148,10 @@ impl SftpSession {
         }
 
         server.filesystem.is_ignored(path, is_dir).await
-            || server.user_permissions.is_ignored(user, path, is_dir).await
+            || server
+                .user_permissions
+                .is_ignored(user_uuid, path, is_dir)
+                .await
     }
 
     #[inline]
