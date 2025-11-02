@@ -8,6 +8,7 @@ pub mod response;
 pub mod routes;
 pub mod server;
 pub mod ssh;
+pub mod stats;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const GIT_COMMIT: &str = env!("CARGO_GIT_COMMIT");

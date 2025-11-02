@@ -611,7 +611,7 @@ impl Filesystem {
             let base_path = self.base_path.clone();
 
             move || {
-                if crate::unlikely(path == PathBuf::from("") || path == PathBuf::from("/")) {
+                if crate::unlikely(path == Path::new("") || path == Path::new("/")) {
                     Ok::<_, anyhow::Error>(std::os::unix::fs::chown(
                         base_path,
                         Some(owner_uid.as_raw()),

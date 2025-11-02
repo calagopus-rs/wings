@@ -14,6 +14,7 @@ pub struct AppState {
     pub version: String,
 
     pub docker: Arc<Docker>,
+    pub stats_manager: Arc<crate::stats::StatsManager>,
     pub server_manager: Arc<crate::server::manager::Manager>,
     pub backup_manager: Arc<crate::server::backup::manager::BackupManager>,
 }

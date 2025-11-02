@@ -341,6 +341,7 @@ async fn main() {
         version: format!("{}:{}", wings_rs::VERSION, wings_rs::GIT_COMMIT),
 
         docker: Arc::clone(&docker),
+        stats_manager: Arc::new(wings_rs::stats::StatsManager::default()),
         server_manager: Arc::new(wings_rs::server::manager::Manager::new(&servers)),
         backup_manager: Arc::new(wings_rs::server::backup::manager::BackupManager::new(
             Arc::clone(&config),
