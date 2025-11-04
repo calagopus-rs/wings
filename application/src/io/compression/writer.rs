@@ -76,30 +76,19 @@ impl<'a, W: Write + Send + 'static> CompressionWriter<'a, W> {
         }
     }
 
-    pub fn finish(self) -> std::io::Result<()> {
+    pub fn finish(self) -> std::io::Result<W> {
         match self {
-            CompressionWriter::None(mut writer) => writer.flush(),
+            CompressionWriter::None(writer) => Ok(writer),
             CompressionWriter::Gz(mut writer) => {
-                writer.finish().map_err(std::io::Error::other)?;
-                Ok(())
+                Ok(writer.finish().map_err(std::io::Error::other)?)
             }
-            CompressionWriter::Xz(_, writer) => {
-                writer.finish()?;
-                Ok(())
-            }
-            CompressionWriter::Bz2(writer) => {
-                writer.finish()?;
-                Ok(())
-            }
+            CompressionWriter::Xz(_, writer) => Ok(writer.finish()?),
+            CompressionWriter::Bz2(writer) => Ok(writer.finish()?),
             CompressionWriter::Lz4(mut writer) => {
                 writer.flush()?;
-                writer.into_inner();
-                Ok(())
+                Ok(writer.into_inner())
             }
-            CompressionWriter::Zstd(_, _, writer) => {
-                writer.finish()?;
-                Ok(())
-            }
+            CompressionWriter::Zstd(_, _, writer) => Ok(writer.finish()?),
         }
     }
 }

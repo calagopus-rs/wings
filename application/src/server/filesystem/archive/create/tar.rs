@@ -20,19 +20,19 @@ pub struct CreateTarOptions {
     pub threads: usize,
 }
 
-pub async fn create_tar(
+pub async fn create_tar<W: Write + Send + 'static>(
     filesystem: crate::server::filesystem::cap::CapFilesystem,
-    destination: impl Write + Send + 'static,
+    destination: W,
     base: &Path,
     sources: Vec<PathBuf>,
     bytes_archived: Option<Arc<AtomicU64>>,
     ignored: Vec<ignore::gitignore::Gitignore>,
     options: CreateTarOptions,
-) -> Result<(), anyhow::Error> {
+) -> Result<W, anyhow::Error> {
     let base = filesystem.relative_path(base);
     let (_guard, listener) = AbortGuard::new();
 
-    tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
+    tokio::task::spawn_blocking(move || {
         let writer = CompressionWriter::new(
             destination,
             options.compression_type,
@@ -170,29 +170,27 @@ pub async fn create_tar(
             }
         }
 
-        let inner = archive.into_inner()?;
-        inner.into_inner().finish()?;
+        let mut inner = archive.into_inner()?.into_inner().finish()?;
+        inner.flush()?;
 
-        Ok(())
+        Ok(inner)
     })
-    .await??;
-
-    Ok(())
+    .await?
 }
 
-pub async fn create_tar_distributed(
+pub async fn create_tar_distributed<W: Write + Send + 'static>(
     filesystem: crate::server::filesystem::cap::CapFilesystem,
-    destination: impl Write + Send + 'static,
+    destination: W,
     base: &Path,
     sources: async_channel::Receiver<PathBuf>,
     bytes_archived: Option<Arc<AtomicU64>>,
     ignored: Vec<ignore::gitignore::Gitignore>,
     options: CreateTarOptions,
-) -> Result<(), anyhow::Error> {
+) -> Result<W, anyhow::Error> {
     let base = filesystem.relative_path(base);
     let (_guard, listener) = AbortGuard::new();
 
-    tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
+    tokio::task::spawn_blocking(move || {
         let writer = CompressionWriter::new(
             destination,
             options.compression_type,
@@ -268,12 +266,10 @@ pub async fn create_tar_distributed(
             }
         }
 
-        let inner = archive.into_inner()?;
-        inner.into_inner().finish()?;
+        let mut inner = archive.into_inner()?.into_inner().finish()?;
+        inner.flush()?;
 
-        Ok(())
+        Ok(inner)
     })
-    .await??;
-
-    Ok(())
+    .await?
 }

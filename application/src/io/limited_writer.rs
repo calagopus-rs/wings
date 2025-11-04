@@ -23,6 +23,11 @@ impl<W: Write> LimitedWriter<W> {
             bytes_written_since_last_check: 0,
         }
     }
+
+    #[inline]
+    pub fn into_inner(self) -> W {
+        self.inner
+    }
 }
 
 impl<W: Write> Write for LimitedWriter<W> {

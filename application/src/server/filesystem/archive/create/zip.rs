@@ -18,19 +18,19 @@ pub struct CreateZipOptions {
     pub compression_level: CompressionLevel,
 }
 
-pub async fn create_zip(
+pub async fn create_zip<W: Write + Seek + Send + 'static>(
     filesystem: crate::server::filesystem::cap::CapFilesystem,
-    destination: impl Write + Seek + Send + 'static,
+    destination: W,
     base: &Path,
     sources: Vec<PathBuf>,
     bytes_archived: Option<Arc<AtomicU64>>,
     ignored: Vec<ignore::gitignore::Gitignore>,
     options: CreateZipOptions,
-) -> Result<(), anyhow::Error> {
+) -> Result<W, anyhow::Error> {
     let base = filesystem.relative_path(base);
     let (_guard, listener) = AbortGuard::new();
 
-    tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
+    tokio::task::spawn_blocking(move || {
         let writer = AbortWriter::new(destination, listener);
         let mut archive = zip::ZipWriter::new(writer);
 
@@ -166,29 +166,27 @@ pub async fn create_zip(
             }
         }
 
-        let mut inner = archive.finish()?;
+        let mut inner = archive.finish()?.into_inner();
         inner.flush()?;
 
-        Ok(())
+        Ok(inner)
     })
-    .await??;
-
-    Ok(())
+    .await?
 }
 
-pub async fn create_zip_streaming(
+pub async fn create_zip_streaming<W: Write + Send + 'static>(
     filesystem: crate::server::filesystem::cap::CapFilesystem,
-    destination: impl Write + Send + 'static,
+    destination: W,
     base: &Path,
     sources: Vec<PathBuf>,
     bytes_archived: Option<Arc<AtomicU64>>,
     ignored: Vec<ignore::gitignore::Gitignore>,
     options: CreateZipOptions,
-) -> Result<(), anyhow::Error> {
+) -> Result<W, anyhow::Error> {
     let base = filesystem.relative_path(base);
     let (_guard, listener) = AbortGuard::new();
 
-    tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
+    tokio::task::spawn_blocking(move || {
         let writer = AbortWriter::new(destination, listener);
         let mut archive = zip::ZipWriter::new_stream(writer);
 
@@ -324,12 +322,10 @@ pub async fn create_zip_streaming(
             }
         }
 
-        let mut inner = archive.finish()?;
+        let mut inner = archive.finish()?.into_inner().into_inner();
         inner.flush()?;
 
-        Ok(())
+        Ok(inner)
     })
-    .await??;
-
-    Ok(())
+    .await?
 }

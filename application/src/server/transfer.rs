@@ -201,7 +201,9 @@ impl OutgoingServerTransfer {
                         vec![],
                         options,
                     )
-                    .await
+                    .await?;
+
+                    Ok(())
                 })
             }
 

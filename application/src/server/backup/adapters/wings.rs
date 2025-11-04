@@ -162,7 +162,7 @@ impl BackupCreateExt for WingsBackup {
                 server.app_state.config.system.backups.write_limit * 1024 * 1024,
             );
 
-            match server.app_state.config.system.backups.wings.archive_format {
+            let file = match server.app_state.config.system.backups.wings.archive_format {
                 ArchiveFormat::Tar
                 | ArchiveFormat::TarGz
                 | ArchiveFormat::TarXz
@@ -235,7 +235,11 @@ impl BackupCreateExt for WingsBackup {
                     )
                     .await
                 }
-            }
+            }?;
+
+            file.into_inner().sync_all()?;
+
+            Ok(())
         };
 
         let (total_files, _) = tokio::try_join!(total_task, archive_task)?;
@@ -251,10 +255,18 @@ impl BackupCreateExt for WingsBackup {
             }
         }
 
+        let size = tokio::fs::metadata(file_name).await?.len();
+
+        if size == 0 {
+            return Err(anyhow::anyhow!(
+                "backup file is 0 bytes, this should not be possible"
+            ));
+        }
+
         Ok(RawServerBackup {
             checksum: format!("{:x}", checksum_writer.finalize()),
             checksum_type: "sha1".to_string(),
-            size: tokio::fs::metadata(file_name).await?.len(),
+            size,
             files: total_files,
             successful: true,
             browsable: matches!(

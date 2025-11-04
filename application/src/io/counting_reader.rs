@@ -17,6 +17,11 @@ impl<R: std::io::Read> CountingReader<R> {
     pub fn new_with_bytes_read(inner: R, bytes_read: Arc<AtomicU64>) -> Self {
         Self { inner, bytes_read }
     }
+
+    #[inline]
+    pub fn into_inner(self) -> R {
+        self.inner
+    }
 }
 
 impl<R: std::io::Read> std::io::Read for CountingReader<R> {

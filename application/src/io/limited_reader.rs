@@ -22,6 +22,11 @@ impl<R: Read> LimitedReader<R> {
             bytes_read_since_last_check: 0,
         }
     }
+
+    #[inline]
+    pub fn into_inner(self) -> R {
+        self.inner
+    }
 }
 
 impl<R: Read> Read for LimitedReader<R> {

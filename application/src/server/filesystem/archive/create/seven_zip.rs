@@ -21,19 +21,19 @@ pub struct Create7zOptions {
     pub threads: usize,
 }
 
-pub async fn create_7z(
+pub async fn create_7z<W: Write + Seek + Send + 'static>(
     filesystem: crate::server::filesystem::cap::CapFilesystem,
-    destination: impl Write + Seek + Send + 'static,
+    destination: W,
     base: &Path,
     sources: Vec<PathBuf>,
     bytes_archived: Option<Arc<AtomicU64>>,
     ignored: Vec<ignore::gitignore::Gitignore>,
     options: Create7zOptions,
-) -> Result<(), anyhow::Error> {
+) -> Result<W, anyhow::Error> {
     let base = filesystem.relative_path(base);
     let (_guard, listener) = AbortGuard::new();
 
-    tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
+    tokio::task::spawn_blocking(move || {
         let writer = AbortWriter::new(destination, listener);
         let mut archive = sevenz_rust2::ArchiveWriter::new(writer)?;
 
@@ -149,12 +149,10 @@ pub async fn create_7z(
             archive.push_archive_entry(entry, None::<&[u8]>)?;
         }
 
-        let mut inner = archive.finish()?;
+        let mut inner = archive.finish()?.into_inner();
         inner.flush()?;
 
-        Ok(())
+        Ok(inner)
     })
-    .await??;
-
-    Ok(())
+    .await?
 }
