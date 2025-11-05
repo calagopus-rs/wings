@@ -149,6 +149,8 @@ docker:
     # how long in seconds to wait until an install container is considered failed, 0 means no limit
     timeout: 1800
 
+remote_headers: {}
+
 remote_query:
   # how often to attempt retrying some important api requests (exponential backoff)
   retry_limit: 10

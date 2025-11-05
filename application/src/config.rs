@@ -701,6 +701,9 @@ nestify::nest! {
         pub remote: String,
         #[serde(default)]
         #[schema(inline)]
+        pub remote_headers: BTreeMap<String, String>,
+        #[serde(default)]
+        #[schema(inline)]
         pub remote_query: #[derive(ToSchema, Clone, Copy, Deserialize, Serialize, DefaultFromSerde)] #[serde(default)] pub struct RemoteQuery {
             #[serde(default = "remote_query_timeout")]
             pub timeout: u64,

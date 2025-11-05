@@ -2,7 +2,7 @@ use crate::server::{
     activity::ApiActivity, backup::adapters::BackupAdapter, installation::InstallationScript,
     permissions::Permissions, schedule::ApiScheduleCompletionStatus,
 };
-use axum::http::HeaderMap;
+use axum::http::{HeaderMap, HeaderName};
 use std::fmt::Debug;
 
 pub struct Client {
@@ -35,6 +35,14 @@ impl Client {
                 .parse()
                 .unwrap(),
         );
+
+        for (key, value) in config.remote_headers.iter() {
+            if let Ok(key) = HeaderName::try_from(key)
+                && let Ok(value) = value.parse()
+            {
+                headers.insert(key, value);
+            }
+        }
 
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(15))
