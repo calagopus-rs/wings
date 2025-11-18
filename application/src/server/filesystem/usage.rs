@@ -129,7 +129,9 @@ impl DiskUsage {
             return false;
         }
 
-        let (leaf, parents) = target_path.split_last().unwrap();
+        let Some((leaf, parents)) = target_path.split_last() else {
+            return false;
+        };
 
         let mut current = self;
         for component in parents {

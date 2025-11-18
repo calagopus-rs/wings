@@ -386,11 +386,16 @@ impl BackupExt for S3Backup {
         total: Arc<AtomicU64>,
         download_url: Option<String>,
     ) -> Result<(), anyhow::Error> {
-        let response = get_client(server)
-            .await
-            .get(download_url.unwrap())
-            .send()
-            .await?;
+        let download_url = match download_url {
+            Some(download_url) => download_url,
+            None => {
+                return Err(anyhow::anyhow!(
+                    "unable to extract download_url from s3 backup restore request"
+                ));
+            }
+        };
+
+        let response = get_client(server).await.get(download_url).send().await?;
         if let Some(content_length) = response.content_length() {
             total.store(content_length, Ordering::SeqCst);
         }

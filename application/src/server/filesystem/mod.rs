@@ -2,6 +2,7 @@ use crate::server::backup::BrowseBackup;
 use cap_std::fs::{Metadata, PermissionsExt};
 use std::{
     collections::HashMap,
+    hint::unreachable_unchecked,
     ops::Deref,
     os::fd::AsFd,
     path::{Path, PathBuf},
@@ -22,6 +23,38 @@ pub mod operations;
 pub mod pull;
 pub mod usage;
 pub mod writer;
+
+#[inline]
+pub fn encode_mode(mode: u32) -> String {
+    let mut mode_str = String::new();
+
+    mode_str.reserve_exact(10);
+    mode_str.push(match rustix::fs::FileType::from_raw_mode(mode) {
+        rustix::fs::FileType::RegularFile => '-',
+        rustix::fs::FileType::Directory => 'd',
+        rustix::fs::FileType::Symlink => 'l',
+        rustix::fs::FileType::BlockDevice => 'b',
+        rustix::fs::FileType::CharacterDevice => 'c',
+        rustix::fs::FileType::Socket => 's',
+        rustix::fs::FileType::Fifo => 'p',
+        rustix::fs::FileType::Unknown => '?',
+    });
+
+    for i in 0u8..9 {
+        if mode & (1 << (8 - i)) != 0 {
+            mode_str.push(match i.rem_euclid(3) {
+                0 => 'r',
+                1 => 'w',
+                2 => 'x',
+                _ => unsafe { unreachable_unchecked() },
+            });
+        } else {
+            mode_str.push('-');
+        }
+    }
+
+    mode_str
+}
 
 pub struct Filesystem {
     uuid: uuid::Uuid,
@@ -806,30 +839,6 @@ impl Filesystem {
             "application/octet-stream"
         };
 
-        let mut mode_str = String::new();
-        let mode = metadata.permissions().mode();
-
-        mode_str.reserve_exact(10);
-        mode_str.push(match rustix::fs::FileType::from_raw_mode(mode) {
-            rustix::fs::FileType::RegularFile => '-',
-            rustix::fs::FileType::Directory => 'd',
-            rustix::fs::FileType::Symlink => 'l',
-            rustix::fs::FileType::BlockDevice => 'b',
-            rustix::fs::FileType::CharacterDevice => 'c',
-            rustix::fs::FileType::Socket => 's',
-            rustix::fs::FileType::Fifo => 'p',
-            rustix::fs::FileType::Unknown => '?',
-        });
-
-        const RWX: &str = "rwxrwxrwx";
-        for i in 0..9 {
-            if mode & (1 << (8 - i)) != 0 {
-                mode_str.push(RWX.chars().nth(i).unwrap());
-            } else {
-                mode_str.push('-');
-            }
-        }
-
         crate::models::DirectoryEntry {
             name: path
                 .file_name()
@@ -862,7 +871,7 @@ impl Filesystem {
                 0,
             )
             .unwrap_or_default(),
-            mode: mode_str,
+            mode: encode_mode(metadata.permissions().mode()),
             mode_bits: format!("{:o}", metadata.permissions().mode() & 0o777),
             size,
             directory: real_metadata.is_dir(),

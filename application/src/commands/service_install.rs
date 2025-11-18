@@ -6,26 +6,26 @@ use tokio::process::Command;
 pub async fn service_install(
     matches: &ArgMatches,
     config: Option<&Arc<crate::config::Config>>,
-) -> i32 {
+) -> Result<i32, anyhow::Error> {
     let r#override = *matches.get_one::<bool>("override").unwrap();
 
     let binary = match std::env::current_exe() {
         Ok(path) => path,
         Err(_) => {
             eprintln!("{}", "failed to get current executable path".red());
-            return 1;
+            return Ok(1);
         }
     };
 
     if tokio::fs::metadata("/etc/systemd/system").await.is_err() {
         eprintln!("{}", "systemd directory does not exist".red());
-        return 1;
+        return Ok(1);
     }
 
     let service_path = Path::new("/etc/systemd/system/wings.service");
     if tokio::fs::metadata(service_path).await.is_ok() && !r#override {
         eprintln!("{}", "service file already exists".red());
-        return 1;
+        return Ok(1);
     }
 
     let service_content = format!(
@@ -62,7 +62,7 @@ WantedBy=multi-user.target
                 .await
             {
                 eprintln!("{}: {err}", "failed to reload systemd".red());
-                return 1;
+                return Ok(1);
             }
 
             println!("system daemons reloaded successfully");
@@ -79,7 +79,7 @@ WantedBy=multi-user.target
                 .await
             {
                 eprintln!("{}: {err}", "failed to enable service".red());
-                return 1;
+                return Ok(1);
             }
 
             if config.is_some() {
@@ -88,12 +88,12 @@ WantedBy=multi-user.target
                 println!("service file enabled on startup")
             }
 
-            0
+            Ok(0)
         }
         Err(err) => {
             eprintln!("{}: {err}", "failed to write service file".red());
 
-            1
+            Ok(1)
         }
     }
 }

@@ -1,40 +1,36 @@
-use super::{WebsocketEvent, WebsocketJwtPayload, WebsocketMessage};
+use super::{WebsocketEvent, WebsocketMessage};
 use crate::server::{
     activity::{Activity, ActivityEvent},
     permissions::Permission,
 };
 use anyhow::Context;
-use axum::extract::ws::{Message, WebSocket};
-use futures_util::stream::SplitSink;
 use serde_json::json;
 use std::{net::IpAddr, str::FromStr};
-use tokio::sync::Mutex;
 
 pub async fn handle_message(
     state: &crate::routes::AppState,
     user_ip: IpAddr,
     server: &crate::server::Server,
-    sender: &Mutex<SplitSink<WebSocket, Message>>,
-    socket_jwt: &WebsocketJwtPayload,
+    websocket_handler: &super::ServerWebsocketHandler,
     message: super::WebsocketMessage,
 ) -> Result<(), anyhow::Error> {
     let user_ip = Some(user_ip);
 
     match message.event {
         WebsocketEvent::SendStats => {
-            super::send_message(
-                sender,
-                WebsocketMessage::new(
+            websocket_handler
+                .send_message(WebsocketMessage::new(
                     WebsocketEvent::ServerStats,
                     [serde_json::to_string(&server.resource_usage().await)?].into(),
-                ),
-            )
-            .await;
+                ))
+                .await;
         }
         WebsocketEvent::SendServerLogs => {
             if server.state.get_state() != crate::server::state::ServerState::Offline
                 || state.config.api.send_offline_server_logs
             {
+                let socket_jwt = websocket_handler.get_jwt().await?;
+
                 if socket_jwt.use_console_read_permission
                     && !socket_jwt
                         .permissions
@@ -42,6 +38,7 @@ pub async fn handle_message(
                 {
                     return Ok(());
                 }
+                drop(socket_jwt);
 
                 let logs = server
                     .read_log(&state.docker, state.config.system.websocket_log_count)
@@ -49,14 +46,12 @@ pub async fn handle_message(
                     .context("failed to read server logs")?;
 
                 for line in logs.lines() {
-                    super::send_message(
-                        sender,
-                        WebsocketMessage::new(
+                    websocket_handler
+                        .send_message(WebsocketMessage::new(
                             WebsocketEvent::ServerConsoleOutput,
                             [line.trim().to_string()].into(),
-                        ),
-                    )
-                    .await;
+                        ))
+                        .await;
                 }
             }
         }
@@ -67,6 +62,8 @@ pub async fn handle_message(
 
             match power_state {
                 crate::models::ServerPowerAction::Start => {
+                    let socket_jwt = websocket_handler.get_jwt().await?;
+
                     if !socket_jwt
                         .permissions
                         .has_permission(Permission::ControlStart)
@@ -79,13 +76,12 @@ pub async fn handle_message(
 
                         return Ok(());
                     }
+                    drop(socket_jwt);
 
                     if server.state.get_state() != crate::server::state::ServerState::Offline {
-                        super::send_message(
-                            sender,
-                            server.get_daemon_error("Server is already running or starting."),
-                        )
-                        .await;
+                        websocket_handler
+                            .send_error("Server is already running or starting.")
+                            .await;
 
                         return Ok(());
                     }
@@ -93,7 +89,7 @@ pub async fn handle_message(
                     if let Err(err) = server.start(None, false).await {
                         match err.downcast::<&str>() {
                             Ok(message) => {
-                                super::send_message(sender, server.get_daemon_error(message)).await;
+                                websocket_handler.send_error(message).await;
                             }
                             Err(err) => {
                                 tracing::error!(
@@ -102,8 +98,7 @@ pub async fn handle_message(
                                     err,
                                 );
 
-                                server.log_daemon_error("An unexpected error occurred while starting the server. Please contact an Administrator.")
-                                    .await;
+                                websocket_handler.send_admin_error(err).await;
                             }
                         }
                     } else {
@@ -111,7 +106,7 @@ pub async fn handle_message(
                             .activity
                             .log_activity(Activity {
                                 event: ActivityEvent::PowerStart,
-                                user: Some(socket_jwt.user_uuid),
+                                user: Some(websocket_handler.get_jwt().await?.user_uuid),
                                 ip: user_ip,
                                 metadata: None,
                                 timestamp: chrono::Utc::now(),
@@ -120,6 +115,8 @@ pub async fn handle_message(
                     }
                 }
                 crate::models::ServerPowerAction::Restart => {
+                    let socket_jwt = websocket_handler.get_jwt().await?;
+
                     if !socket_jwt
                         .permissions
                         .has_permission(Permission::ControlRestart)
@@ -132,13 +129,12 @@ pub async fn handle_message(
 
                         return Ok(());
                     }
+                    drop(socket_jwt);
 
                     if server.restarting.load(std::sync::atomic::Ordering::SeqCst) {
-                        super::send_message(
-                            sender,
-                            server.get_daemon_error("Server is already restarting."),
-                        )
-                        .await;
+                        websocket_handler
+                            .send_error("Server is already restarting.")
+                            .await;
 
                         return Ok(());
                     }
@@ -156,7 +152,7 @@ pub async fn handle_message(
                     } {
                         match err.downcast::<&str>() {
                             Ok(message) => {
-                                super::send_message(sender, server.get_daemon_error(message)).await;
+                                websocket_handler.send_error(message).await;
                             }
                             Err(err) => {
                                 tracing::error!(
@@ -165,11 +161,7 @@ pub async fn handle_message(
                                     err
                                 );
 
-                                super::send_message(
-                                    sender,
-                                    server.get_daemon_error("An unexpected error occurred while restarting the server. Please contact an Administrator.")
-                                )
-                                .await;
+                                websocket_handler.send_admin_error(err).await;
                             }
                         }
                     } else {
@@ -177,7 +169,7 @@ pub async fn handle_message(
                             .activity
                             .log_activity(Activity {
                                 event: ActivityEvent::PowerRestart,
-                                user: Some(socket_jwt.user_uuid),
+                                user: Some(websocket_handler.get_jwt().await?.user_uuid),
                                 ip: user_ip,
                                 metadata: None,
                                 timestamp: chrono::Utc::now(),
@@ -186,6 +178,8 @@ pub async fn handle_message(
                     }
                 }
                 crate::models::ServerPowerAction::Stop => {
+                    let socket_jwt = websocket_handler.get_jwt().await?;
+
                     if !socket_jwt
                         .permissions
                         .has_permission(Permission::ControlStop)
@@ -198,17 +192,16 @@ pub async fn handle_message(
 
                         return Ok(());
                     }
+                    drop(socket_jwt);
 
                     if matches!(
                         server.state.get_state(),
                         crate::server::state::ServerState::Offline
                             | crate::server::state::ServerState::Stopping
                     ) {
-                        super::send_message(
-                            sender,
-                            server.get_daemon_error("Server is already offline or stopping."),
-                        )
-                        .await;
+                        websocket_handler
+                            .send_error("Server is already offline or stopping.")
+                            .await;
 
                         return Ok(());
                     }
@@ -226,7 +219,7 @@ pub async fn handle_message(
                     } {
                         match err.downcast::<&str>() {
                             Ok(message) => {
-                                super::send_message(sender, server.get_daemon_error(message)).await;
+                                websocket_handler.send_error(message).await;
                             }
                             Err(err) => {
                                 tracing::error!(
@@ -235,11 +228,7 @@ pub async fn handle_message(
                                     err
                                 );
 
-                                super::send_message(
-                                    sender,
-                                    server.get_daemon_error("An unexpected error occurred while stopping the server. Please contact an Administrator.")
-                                )
-                                .await;
+                                websocket_handler.send_admin_error(err).await;
                             }
                         }
                     } else {
@@ -247,7 +236,7 @@ pub async fn handle_message(
                             .activity
                             .log_activity(Activity {
                                 event: ActivityEvent::PowerStop,
-                                user: Some(socket_jwt.user_uuid),
+                                user: Some(websocket_handler.get_jwt().await?.user_uuid),
                                 ip: user_ip,
                                 metadata: None,
                                 timestamp: chrono::Utc::now(),
@@ -256,6 +245,8 @@ pub async fn handle_message(
                     }
                 }
                 crate::models::ServerPowerAction::Kill => {
+                    let socket_jwt = websocket_handler.get_jwt().await?;
+
                     if !socket_jwt
                         .permissions
                         .has_permission(Permission::ControlStop)
@@ -268,13 +259,12 @@ pub async fn handle_message(
 
                         return Ok(());
                     }
+                    drop(socket_jwt);
 
                     if server.state.get_state() == crate::server::state::ServerState::Offline {
-                        super::send_message(
-                            sender,
-                            server.get_daemon_error("Server is already offline."),
-                        )
-                        .await;
+                        websocket_handler
+                            .send_error("Server is already offline.")
+                            .await;
 
                         return Ok(());
                     }
@@ -286,17 +276,13 @@ pub async fn handle_message(
                             err
                         );
 
-                        super::send_message(
-                            sender,
-                            server.get_daemon_error("An unexpected error occurred while killing the server. Please contact an Administrator.")
-                        )
-                        .await;
+                        websocket_handler.send_admin_error(err).await;
                     } else {
                         server
                             .activity
                             .log_activity(Activity {
                                 event: ActivityEvent::PowerKill,
-                                user: Some(socket_jwt.user_uuid),
+                                user: Some(websocket_handler.get_jwt().await?.user_uuid),
                                 ip: user_ip,
                                 metadata: None,
                                 timestamp: chrono::Utc::now(),
@@ -307,6 +293,8 @@ pub async fn handle_message(
             }
         }
         WebsocketEvent::SendCommand => {
+            let socket_jwt = websocket_handler.get_jwt().await?;
+
             if !socket_jwt
                 .permissions
                 .has_permission(Permission::ControlConsole)
@@ -319,6 +307,7 @@ pub async fn handle_message(
 
                 return Ok(());
             }
+            drop(socket_jwt);
 
             let raw_command = message.args.first().map_or("", |v| v.as_str());
             if let Some(stdin) = server.container_stdin().await {
@@ -336,7 +325,7 @@ pub async fn handle_message(
                         .activity
                         .log_activity(Activity {
                             event: ActivityEvent::ConsoleCommand,
-                            user: Some(socket_jwt.user_uuid),
+                            user: Some(websocket_handler.get_jwt().await?.user_uuid),
                             ip: user_ip,
                             metadata: Some(json!({
                                 "command": raw_command,

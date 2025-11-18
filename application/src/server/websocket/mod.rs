@@ -6,8 +6,8 @@ use serde::{
     de::{SeqAccess, Visitor},
     ser::SerializeSeq,
 };
-use std::{marker::PhantomData, sync::Arc};
-use tokio::sync::Mutex;
+use std::{borrow::Cow, marker::PhantomData, sync::Arc};
+use tokio::sync::{Mutex, RwLock};
 
 pub mod handler;
 mod jwt;
@@ -156,13 +156,89 @@ impl WebsocketMessage {
     }
 }
 
-#[inline]
-async fn send_message(sender: &Mutex<SplitSink<WebSocket, Message>>, message: WebsocketMessage) {
-    let message = serde_json::to_string(&message).unwrap();
-    let message = Message::Text(message.into());
+pub struct ServerWebsocketHandler {
+    sender: Arc<Mutex<SplitSink<WebSocket, Message>>>,
+    socket_jwt: Arc<RwLock<Option<Arc<WebsocketJwtPayload>>>>,
+}
 
-    let mut sender = sender.lock().await;
-    if let Err(err) = sender.send(message).await {
-        tracing::error!("failed to send websocket message: {:#?}", err);
+impl ServerWebsocketHandler {
+    async fn get_jwt(&self) -> Result<Arc<WebsocketJwtPayload>, anyhow::Error> {
+        if let Some(socket_jwt) = &*self.socket_jwt.read().await {
+            Ok(Arc::clone(socket_jwt))
+        } else {
+            Err(anyhow::anyhow!("unable to aquire socket jwt"))
+        }
+    }
+
+    async fn send_message(&self, message: WebsocketMessage) {
+        let message = match serde_json::to_string(&message) {
+            Ok(message) => message,
+            Err(err) => {
+                tracing::error!("failed to serialize websocket message: {:#?}", err);
+                return;
+            }
+        };
+        let message = Message::Text(message.into());
+
+        if let Err(err) = self.sender.lock().await.send(message).await {
+            tracing::error!("failed to send websocket message: {:#?}", err);
+        }
+    }
+
+    async fn send_error(&self, message: impl Into<Cow<'_, str>>) {
+        let message = WebsocketMessage::new(
+            WebsocketEvent::ServerDaemonMessage,
+            [ansi_term::Style::new()
+                .bold()
+                .on(ansi_term::Color::Red)
+                .paint(message.into())
+                .to_string()]
+            .into(),
+        );
+        let message = match serde_json::to_string(&message) {
+            Ok(message) => message,
+            Err(err) => {
+                tracing::error!("failed to serialize websocket message: {:#?}", err);
+                return;
+            }
+        };
+        let message = Message::Text(message.into());
+
+        if let Err(err) = self.sender.lock().await.send(message).await {
+            tracing::error!("failed to send websocket message: {:#?}", err);
+        }
+    }
+
+    async fn send_admin_error(&self, message: impl Into<anyhow::Error>) {
+        let message = if self.socket_jwt.read().await.as_ref().is_some_and(|j| {
+            j.permissions
+                .has_permission(super::permissions::Permission::AdminWebsocketErrors)
+        }) {
+            format!("{}", message.into())
+        } else {
+            "An unexpected error occurred while starting the server. Please contact an Administrator.".into()
+        };
+
+        let message = WebsocketMessage::new(
+            WebsocketEvent::ServerDaemonMessage,
+            [ansi_term::Style::new()
+                .bold()
+                .on(ansi_term::Color::Red)
+                .paint(message)
+                .to_string()]
+            .into(),
+        );
+        let message = match serde_json::to_string(&message) {
+            Ok(message) => message,
+            Err(err) => {
+                tracing::error!("failed to serialize websocket message: {:#?}", err);
+                return;
+            }
+        };
+        let message = Message::Text(message.into());
+
+        if let Err(err) = self.sender.lock().await.send(message).await {
+            tracing::error!("failed to send websocket message: {:#?}", err);
+        }
     }
 }

@@ -329,23 +329,30 @@ impl ShellSession {
         match byte {
             b'A' => {
                 if !command_history.is_empty() {
-                    if history_index.is_none() {
+                    let history_index = if let Some(history_index) = history_index
+                        && *history_index > 0
+                    {
+                        *history_index -= 1;
+
+                        *history_index
+                    } else if history_index.is_none() {
                         if !current_line.is_empty() {
                             if command_history.len() >= 20 {
                                 command_history.remove(0);
                             }
                             command_history.push(current_line.clone());
                         }
-                        *history_index = Some(command_history.len() - 1);
-                    } else if history_index.unwrap() > 0 {
-                        *history_index = Some(history_index.unwrap() - 1);
+                        let new_history_index = command_history.len() - 1;
+                        *history_index = Some(new_history_index);
+
+                        new_history_index
                     } else {
                         data_writer.write_all(b"\x07").await.unwrap_or_default();
                         data_writer.flush().await.unwrap_or_default();
                         return;
-                    }
+                    };
 
-                    let history_cmd = &command_history[history_index.unwrap()];
+                    let history_cmd = &command_history[history_index];
 
                     data_writer.write_all(b"\r").await.unwrap_or_default();
                     let mut output = Vec::with_capacity(history_cmd.len() + 3);
@@ -363,10 +370,10 @@ impl ShellSession {
                 }
             }
             b'B' => {
-                if let Some(idx) = *history_index {
-                    if idx < command_history.len() - 1 {
-                        *history_index = Some(idx + 1);
-                        let history_cmd = &command_history[history_index.unwrap()];
+                if let Some(inner_history_index) = history_index {
+                    if *inner_history_index < command_history.len() - 1 {
+                        *inner_history_index += 1;
+                        let history_cmd = &command_history[*inner_history_index];
 
                         data_writer.write_all(b"\r").await.unwrap_or_default();
                         let mut output = Vec::with_capacity(history_cmd.len() + 3);
@@ -433,9 +440,7 @@ impl ShellSession {
                 if !current_line.is_empty() {
                     let line = String::from_utf8_lossy(current_line);
 
-                    if !command_history.is_empty()
-                        && command_history.last().unwrap() != current_line
-                    {
+                    if !command_history.is_empty() && command_history.last() != Some(current_line) {
                         if command_history.len() >= 16 {
                             command_history.remove(0);
                         }
@@ -649,7 +654,7 @@ impl ShellSession {
                     .make_writer()
                     .write_all(logs.as_bytes())
                     .await
-                    .unwrap();
+                    .unwrap_or_default();
             }
 
             let mut futures: Vec<Pin<Box<dyn futures_util::Future<Output = ()> + Send>>> =

@@ -1,3 +1,4 @@
+use anyhow::Context;
 use hmac::digest::KeyInit;
 use jwt::VerifyWithKey;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -99,7 +100,9 @@ impl JwtClient {
         });
 
         Self {
-            key: hmac::Hmac::new_from_slice(config.token.as_bytes()).unwrap(),
+            key: hmac::Hmac::new_from_slice(config.token.as_bytes())
+                .context("invalid token while constructing jwt client")
+                .unwrap(),
             boot_time: chrono::Utc::now(),
             max_jwt_uses: config.api.max_jwt_uses,
 

@@ -168,7 +168,9 @@ async fn cleanup_container(
     let log_path = Path::new(&server.app_state.config.system.log_directory)
         .join("install")
         .join(format!("{}.log", server.uuid));
-    tokio::fs::create_dir_all(log_path.parent().unwrap()).await?;
+    if let Some(parent) = log_path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
 
     let mut file = tokio::io::BufWriter::new(tokio::fs::File::create(&log_path).await?);
     file.write_all(

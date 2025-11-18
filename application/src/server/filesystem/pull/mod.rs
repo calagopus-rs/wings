@@ -161,14 +161,20 @@ impl Download {
 
     pub async fn start(
         &mut self,
-    ) -> (
-        uuid::Uuid,
-        tokio::task::JoinHandle<Option<Result<(), anyhow::Error>>>,
-    ) {
+    ) -> Result<
+        (
+            uuid::Uuid,
+            tokio::task::JoinHandle<Option<Result<(), anyhow::Error>>>,
+        ),
+        anyhow::Error,
+    > {
         let progress = Arc::clone(&self.progress);
         let destination = self.destination.clone();
         let server = self.server.clone();
-        let mut response = self.response.take().unwrap();
+        let mut response = self
+            .response
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("response already taken"))?;
 
         let (identifier, task) = self
             .server
@@ -225,7 +231,7 @@ impl Download {
 
         self.identifier = identifier;
 
-        (identifier, task)
+        Ok((identifier, task))
     }
 
     #[inline]

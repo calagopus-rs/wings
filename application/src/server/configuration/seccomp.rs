@@ -2,8 +2,10 @@ use serde::{Deserialize, Serialize};
 use std::sync::LazyLock;
 
 const RAW_BASE_SECCOMP: &str = include_str!("../../../seccomp.min.json");
-static BASE_SECCOMP: LazyLock<Seccomp> =
-    LazyLock::new(|| serde_json::from_str(RAW_BASE_SECCOMP).unwrap());
+static BASE_SECCOMP: LazyLock<Seccomp> = LazyLock::new(|| {
+    serde_json::from_str(RAW_BASE_SECCOMP)
+        .expect("unable to deserialize base seccomp... how did you achieve this?")
+});
 
 #[derive(Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
 pub enum Action {

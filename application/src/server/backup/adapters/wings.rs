@@ -14,9 +14,12 @@ use crate::{
             Backup, BackupBrowseExt, BackupCleanExt, BackupCreateExt, BackupExt, BackupFindExt,
             BrowseBackup,
         },
-        filesystem::archive::{
-            ArchiveFormat, StreamableArchiveFormat, multi_reader::MultiReader,
-            zip_entry_get_modified_time,
+        filesystem::{
+            archive::{
+                ArchiveFormat, StreamableArchiveFormat, multi_reader::MultiReader,
+                zip_entry_get_modified_time,
+            },
+            encode_mode,
         },
     },
 };
@@ -641,8 +644,7 @@ impl BackupExt for WingsBackup {
 
                     let pool = rayon::ThreadPoolBuilder::new()
                         .num_threads(server.app_state.config.system.backups.wings.restore_threads)
-                        .build()
-                        .unwrap();
+                        .build()?;
 
                     let error = Arc::new(RwLock::new(None));
 
@@ -885,29 +887,9 @@ impl BrowseWingsBackup {
             "application/octet-stream"
         };
 
-        let mut mode_str = String::new();
-        let mode = entry.unix_mode().unwrap_or(0o644);
-
-        mode_str.reserve_exact(10);
-        mode_str.push(match rustix::fs::FileType::from_raw_mode(mode) {
-            rustix::fs::FileType::RegularFile => '-',
-            rustix::fs::FileType::Directory => 'd',
-            rustix::fs::FileType::Symlink => 'l',
-            rustix::fs::FileType::BlockDevice => 'b',
-            rustix::fs::FileType::CharacterDevice => 'c',
-            rustix::fs::FileType::Socket => 's',
-            rustix::fs::FileType::Fifo => 'p',
-            rustix::fs::FileType::Unknown => '?',
-        });
-
-        const RWX: &str = "rwxrwxrwx";
-        for i in 0..9 {
-            if mode & (1 << (8 - i)) != 0 {
-                mode_str.push(RWX.chars().nth(i).unwrap());
-            } else {
-                mode_str.push('-');
-            }
-        }
+        let mode = entry
+            .unix_mode()
+            .unwrap_or(if entry.is_dir() { 0o755 } else { 0o644 });
 
         DirectoryEntry {
             name: path
@@ -915,12 +897,12 @@ impl BrowseWingsBackup {
                 .unwrap_or_default()
                 .to_string_lossy()
                 .to_string(),
-            created: chrono::DateTime::from_timestamp(0, 0).unwrap(),
+            created: chrono::DateTime::default(),
             modified: crate::server::filesystem::archive::zip_entry_get_modified_time(&entry)
                 .map(|dt| dt.into_std().into())
                 .unwrap_or_default(),
-            mode: mode_str,
-            mode_bits: format!("{:o}", entry.unix_mode().unwrap_or(0x644) & 0o777),
+            mode: encode_mode(mode),
+            mode_bits: format!("{:o}", mode & 0o777),
             size,
             directory: entry.is_dir(),
             file: entry.is_file(),
@@ -968,20 +950,7 @@ impl BrowseWingsBackup {
             "application/octet-stream"
         };
 
-        let mut mode_str = String::new();
         let mode = if entry.is_directory() { 0o755 } else { 0o644 };
-
-        mode_str.reserve_exact(10);
-        mode_str.push(if entry.is_directory() { 'd' } else { '-' });
-
-        const RWX: &str = "rwxrwxrwx";
-        for i in 0..9 {
-            if mode & (1 << (8 - i)) != 0 {
-                mode_str.push(RWX.chars().nth(i).unwrap());
-            } else {
-                mode_str.push('-');
-            }
-        }
 
         DirectoryEntry {
             name: path
@@ -999,7 +968,7 @@ impl BrowseWingsBackup {
             } else {
                 Default::default()
             },
-            mode: mode_str,
+            mode: encode_mode(mode),
             mode_bits: format!("{:o}", mode),
             size,
             directory: entry.is_directory(),

@@ -89,10 +89,7 @@ async fn container_config(
                 ),
             )])),
             log_config: Some(bollard::secret::HostConfigLogConfig {
-                typ: serde_json::to_value(&server.app_state.config.docker.log_config.r#type)
-                    .unwrap()
-                    .as_str()
-                    .map(|s| s.to_string()),
+                typ: Some(server.app_state.config.docker.log_config.r#type.clone()),
                 config: Some(
                     server
                         .app_state

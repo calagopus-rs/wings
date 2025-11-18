@@ -865,8 +865,7 @@ impl Archive {
 
                     let pool = rayon::ThreadPoolBuilder::new()
                         .num_threads(self.server.app_state.config.api.file_decompression_threads)
-                        .build()
-                        .unwrap();
+                        .build()?;
 
                     let error = Arc::new(RwLock::new(None));
 
@@ -1029,8 +1028,7 @@ impl Archive {
 
                     let pool = rayon::ThreadPoolBuilder::new()
                         .num_threads(self.server.app_state.config.api.file_decompression_threads)
-                        .build()
-                        .unwrap();
+                        .build()?;
 
                     fn recursive_traverse(
                         scope: &rayon::Scope,

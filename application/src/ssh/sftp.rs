@@ -1411,7 +1411,7 @@ impl russh_sftp::server::Handler for SftpSession {
                     .server
                     .filesystem
                     .async_allocate_in_path(
-                        destination_path.parent().unwrap(),
+                        destination_path.parent().ok_or(StatusCode::NoSuchFile)?,
                         metadata.len() as i64,
                         false,
                     )

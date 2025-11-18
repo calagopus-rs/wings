@@ -2,7 +2,7 @@ use anyhow::Context;
 use axum::{
     body::Body,
     extract::Request,
-    http::{HeaderMap, Method, Response, StatusCode},
+    http::{HeaderMap, HeaderValue, Method, Response, StatusCode},
     middleware::Next,
 };
 use clap::{Arg, Command};
@@ -171,28 +171,34 @@ async fn handle_cors(
     let method = req.method().clone();
     let mut headers = HeaderMap::new();
 
-    headers.insert("Access-Control-Allow-Credentials", "true".parse().unwrap());
+    headers.insert(
+        "Access-Control-Allow-Credentials",
+        HeaderValue::from_static("true"),
+    );
     headers.insert(
         "Access-Control-Allow-Methods",
-        "GET, POST, PATCH, PUT, DELETE, OPTIONS".parse().unwrap(),
+        HeaderValue::from_static("GET, POST, PATCH, PUT, DELETE, OPTIONS"),
     );
-    headers.insert("Access-Control-Allow-Headers", "Accept, Accept-Encoding, Authorization, Cache-Control, Content-Type, Content-Length, Origin, X-Real-IP, X-CSRF-Token".parse().unwrap());
+    headers.insert("Access-Control-Allow-Headers", HeaderValue::from_static("Accept, Accept-Encoding, Authorization, Cache-Control, Content-Type, Content-Length, Origin, X-Real-IP, X-CSRF-Token"));
 
     if state.config.allow_cors_private_network {
         headers.insert(
             "Access-Control-Request-Private-Network",
-            "true".parse().unwrap(),
+            HeaderValue::from_static("true"),
         );
     }
 
-    headers.insert("Access-Control-Max-Age", "7200".parse().unwrap());
+    headers.insert("Access-Control-Max-Age", HeaderValue::from_static("7200"));
 
     if let Some(origin) = req.headers().get("Origin")
         && origin.to_str().ok() != Some(state.config.remote.as_str())
     {
         for o in state.config.allowed_origins.iter() {
             if o == "*" || origin.to_str().ok() == Some(o.as_str()) {
-                headers.insert("Access-Control-Allow-Origin", o.parse().unwrap());
+                if let Ok(o) = o.parse() {
+                    headers.insert("Access-Control-Allow-Origin", o);
+                }
+
                 break;
             }
         }
@@ -238,29 +244,60 @@ async fn main() {
 
     match matches.subcommand() {
         Some(("version", sub_matches)) => std::process::exit(
-            wings_rs::commands::version::version(sub_matches, config.as_ref().ok().map(|c| &c.0))
-                .await,
+            match wings_rs::commands::version::version(
+                sub_matches,
+                config.as_ref().ok().map(|c| &c.0),
+            )
+            .await
+            {
+                Ok(exit_code) => exit_code,
+                Err(err) => {
+                    eprintln!("{}: {:#?}", "error while executing command".red(), err);
+                    1
+                }
+            },
         ),
         Some(("service-install", sub_matches)) => std::process::exit(
-            wings_rs::commands::service_install::service_install(
+            match wings_rs::commands::service_install::service_install(
                 sub_matches,
                 config.as_ref().ok().map(|c| &c.0),
             )
-            .await,
+            .await
+            {
+                Ok(exit_code) => exit_code,
+                Err(err) => {
+                    eprintln!("{}: {:#?}", "error while executing command".red(), err);
+                    1
+                }
+            },
         ),
         Some(("configure", sub_matches)) => std::process::exit(
-            wings_rs::commands::configure::configure(
+            match wings_rs::commands::configure::configure(
                 sub_matches,
                 config.as_ref().ok().map(|c| &c.0),
             )
-            .await,
+            .await
+            {
+                Ok(exit_code) => exit_code,
+                Err(err) => {
+                    eprintln!("{}: {:#?}", "error while executing command".red(), err);
+                    1
+                }
+            },
         ),
         Some(("diagnostics", sub_matches)) => std::process::exit(
-            wings_rs::commands::diagnostics::diagnostics(
+            match wings_rs::commands::diagnostics::diagnostics(
                 sub_matches,
                 config.as_ref().ok().map(|c| &c.0),
             )
-            .await,
+            .await
+            {
+                Ok(exit_code) => exit_code,
+                Err(err) => {
+                    eprintln!("{}: {:#?}", "error while executing command".red(), err);
+                    1
+                }
+            },
         ),
         None => {
             tracing::info!(" __      ___ _ __   __ _ ___        ");
@@ -434,10 +471,12 @@ async fn main() {
                     )
                     .unwrap();
 
-                    tokio::fs::create_dir_all(key_file.parent().unwrap())
-                        .await
-                        .context("failed to create sftp host key directory")
-                        .unwrap();
+                    if let Some(parent) = key_file.parent() {
+                        tokio::fs::create_dir_all(parent)
+                            .await
+                            .context("failed to create sftp host key directory")
+                            .unwrap();
+                    }
                     tokio::fs::write(
                         key_file,
                         key.to_openssh(russh::keys::ssh_key::LineEnding::LF)

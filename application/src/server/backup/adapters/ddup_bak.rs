@@ -12,7 +12,7 @@ use crate::{
             Backup, BackupBrowseExt, BackupCleanExt, BackupCreateExt, BackupExt, BackupFindExt,
             BrowseBackup,
         },
-        filesystem::archive::StreamableArchiveFormat,
+        filesystem::{archive::StreamableArchiveFormat, encode_mode},
     },
 };
 use axum::http::HeaderMap;
@@ -670,30 +670,6 @@ impl BrowseDdupBakBackup {
                 .unwrap_or("application/octet-stream")
         };
 
-        let mut mode_str = String::new();
-        let mode = entry.mode().bits();
-
-        mode_str.reserve_exact(10);
-        mode_str.push(match rustix::fs::FileType::from_raw_mode(mode) {
-            rustix::fs::FileType::RegularFile => '-',
-            rustix::fs::FileType::Directory => 'd',
-            rustix::fs::FileType::Symlink => 'l',
-            rustix::fs::FileType::BlockDevice => 'b',
-            rustix::fs::FileType::CharacterDevice => 'c',
-            rustix::fs::FileType::Socket => 's',
-            rustix::fs::FileType::Fifo => 'p',
-            rustix::fs::FileType::Unknown => '?',
-        });
-
-        const RWX: &str = "rwxrwxrwx";
-        for i in 0..9 {
-            if mode & (1 << (8 - i)) != 0 {
-                mode_str.push(RWX.chars().nth(i).unwrap());
-            } else {
-                mode_str.push('-');
-            }
-        }
-
         DirectoryEntry {
             name: path
                 .file_name()
@@ -710,7 +686,7 @@ impl BrowseDdupBakBackup {
                 0,
             )
             .unwrap_or_default(),
-            mode: mode_str,
+            mode: encode_mode(entry.mode().bits()),
             mode_bits: format!("{:o}", entry.mode().bits() & 0o777),
             size,
             directory: entry.is_directory(),

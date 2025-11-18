@@ -8,7 +8,7 @@ use crate::{
             Backup, BackupBrowseExt, BackupCleanExt, BackupCreateExt, BackupExt, BackupFindExt,
             BrowseBackup,
         },
-        filesystem::archive::StreamableArchiveFormat,
+        filesystem::{archive::StreamableArchiveFormat, encode_mode},
     },
 };
 use axum::http::HeaderMap;
@@ -858,29 +858,6 @@ impl BrowseResticBackup {
                 .unwrap_or("application/octet-stream"),
         };
 
-        let mut mode_str = String::new();
-
-        mode_str.reserve_exact(10);
-        mode_str.push(match rustix::fs::FileType::from_raw_mode(entry.mode) {
-            rustix::fs::FileType::RegularFile => '-',
-            rustix::fs::FileType::Directory => 'd',
-            rustix::fs::FileType::Symlink => 'l',
-            rustix::fs::FileType::BlockDevice => 'b',
-            rustix::fs::FileType::CharacterDevice => 'c',
-            rustix::fs::FileType::Socket => 's',
-            rustix::fs::FileType::Fifo => 'p',
-            rustix::fs::FileType::Unknown => '?',
-        });
-
-        const RWX: &str = "rwxrwxrwx";
-        for i in 0..9 {
-            if entry.mode & (1 << (8 - i)) != 0 {
-                mode_str.push(RWX.chars().nth(i).unwrap());
-            } else {
-                mode_str.push('-');
-            }
-        }
-
         DirectoryEntry {
             name: path
                 .file_name()
@@ -889,7 +866,7 @@ impl BrowseResticBackup {
                 .to_string(),
             created: chrono::DateTime::from_timestamp(0, 0).unwrap_or_default(),
             modified: entry.mtime,
-            mode: mode_str,
+            mode: encode_mode(entry.mode),
             mode_bits: format!("{:o}", entry.mode & 0o777),
             size,
             directory: matches!(entry.r#type, ResticEntryType::Dir),
@@ -1385,7 +1362,10 @@ impl BackupBrowseExt for BrowseResticBackup {
 
                                             match archive.append_data(
                                                 &mut header,
-                                                relative.join(entry.path().unwrap()),
+                                                relative.join(match entry.path() {
+                                                    Ok(path) => path,
+                                                    Err(_) => continue,
+                                                }),
                                                 entry,
                                             ) {
                                                 Ok(_) => {}

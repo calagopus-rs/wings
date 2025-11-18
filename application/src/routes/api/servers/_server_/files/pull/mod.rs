@@ -145,7 +145,7 @@ mod post {
             },
         ));
 
-        let (identifier, task) = download.write().await.start().await;
+        let (identifier, task) = download.write().await.start().await?;
         server
             .filesystem
             .pulls

@@ -2,7 +2,8 @@ use crate::server::{
     activity::ApiActivity, backup::adapters::BackupAdapter, installation::InstallationScript,
     permissions::Permissions, schedule::ApiScheduleCompletionStatus,
 };
-use axum::http::{HeaderMap, HeaderName};
+use anyhow::Context;
+use axum::http::{HeaderMap, HeaderName, HeaderValue};
 use std::fmt::Debug;
 
 pub struct Client {
@@ -23,16 +24,18 @@ impl Client {
                 config.token_id
             )
             .parse()
+            .context("invalid token_id while constructing http client")
             .unwrap(),
         );
         headers.insert(
             "Accept",
-            "application/vnd.pterodactyl.v1+json".parse().unwrap(),
+            HeaderValue::from_static("application/vnd.pterodactyl.v1+json"),
         );
         headers.insert(
             "Authorization",
             format!("Bearer {}.{}", config.token_id, config.token)
                 .parse()
+                .context("invalid token while constructing http client")
                 .unwrap(),
         );
 

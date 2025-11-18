@@ -1,10 +1,7 @@
 use crate::{
     response::ApiResponse,
     routes::GetState,
-    server::{
-        permissions::Permission,
-        websocket::{self, send_message},
-    },
+    server::{permissions::Permission, websocket},
 };
 use axum::{
     body::Bytes,
@@ -47,10 +44,14 @@ pub async fn handle_ws(
         let sender = Arc::new(Mutex::new(sender));
         let socket_jwt = Arc::new(RwLock::new(None));
 
+        let websocket_handler = Arc::new(super::ServerWebsocketHandler {
+            sender: Arc::clone(&sender),
+            socket_jwt: Arc::clone(&socket_jwt)
+        });
+
         let writer = {
             let state = Arc::clone(&state);
-            let socket_jwt = Arc::clone(&socket_jwt);
-            let sender = Arc::clone(&sender);
+            let websocket_handler = Arc::clone(&websocket_handler);
             let server = server.clone();
 
             async move {
@@ -85,12 +86,12 @@ pub async fn handle_ws(
                         continue;
                     }
 
-                    match super::jwt::handle_jwt(&state, &server, &sender, &socket_jwt, ws_data)
+                    match super::jwt::handle_jwt(&state, &server, &websocket_handler, ws_data)
                         .await
                     {
-                        Ok(Some((message, jwt))) => {
+                        Ok(Some(message)) => {
                             match super::message_handler::handle_message(
-                                &state, user_ip, &server, &sender, &jwt, message,
+                                &state, user_ip, &server, &websocket_handler, message,
                             )
                             .await
                             {
@@ -119,8 +120,7 @@ pub async fn handle_ws(
                                 err,
                             );
 
-                            send_message(
-                                &sender,
+                            websocket_handler.send_message(
                                 websocket::WebsocketMessage::new(
                                     websocket::WebsocketEvent::JwtError,
                                     [err.to_string()].into(),
@@ -137,7 +137,7 @@ pub async fn handle_ws(
             // Server Listener
             {
                 let socket_jwt = Arc::clone(&socket_jwt);
-                let sender = Arc::clone(&sender);
+                let websocket_handler = Arc::clone(&websocket_handler);
                 let mut reciever = server.websocket.subscribe();
                 let server = server.clone();
 
@@ -204,7 +204,7 @@ pub async fn handle_ws(
                                     _ => {}
                                 }
 
-                                super::send_message(&sender, message).await
+                                websocket_handler.send_message(message).await
                             }
                             Err(RecvError::Closed) => {
                                 tracing::debug!(
@@ -227,7 +227,7 @@ pub async fn handle_ws(
             {
                 let state = Arc::clone(&state);
                 let socket_jwt = Arc::clone(&socket_jwt);
-                let sender = Arc::clone(&sender);
+                let websocket_handler = Arc::clone(&websocket_handler);
                 let server = server.clone();
 
                 Box::pin(async move {
@@ -261,8 +261,7 @@ pub async fn handle_ws(
                                                 break;
                                             }
 
-                                            super::send_message(
-                                                &sender,
+                                            websocket_handler.send_message(
                                                 websocket::WebsocketMessage::new(
                                                     websocket::WebsocketEvent::ServerConsoleOutput,
                                                     [stdout.to_string()].into(),
@@ -288,11 +287,10 @@ pub async fn handle_ws(
             },
             // Jwt Listener
             {
-                let socket_jwt = Arc::clone(&socket_jwt);
-                let sender = Arc::clone(&sender);
+                let websocket_handler = Arc::clone(&websocket_handler);
 
                 Box::pin(async move {
-                    super::jwt::listen_jwt(&sender, &socket_jwt).await;
+                    super::jwt::listen_jwt(&websocket_handler).await;
                 })
             },
             // Pinger

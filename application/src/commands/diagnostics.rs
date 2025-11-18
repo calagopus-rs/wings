@@ -5,27 +5,28 @@ use serde::Deserialize;
 use std::{collections::VecDeque, fmt::Write, path::Path, sync::Arc};
 use tokio::{fs::File, io::AsyncBufReadExt};
 
-pub async fn diagnostics(matches: &ArgMatches, config: Option<&Arc<crate::config::Config>>) -> i32 {
+pub async fn diagnostics(
+    matches: &ArgMatches,
+    config: Option<&Arc<crate::config::Config>>,
+) -> Result<i32, anyhow::Error> {
     let log_lines = *matches.get_one::<usize>("log_lines").unwrap();
 
     let config = match config {
         Some(config) => config,
         None => {
             eprintln!("{}", "no config found".red());
-            return 1;
+            return Ok(1);
         }
     };
 
     let include_endpoints = Confirm::with_theme(&ColorfulTheme::default())
         .with_prompt("do you want to include endpoints (i.e. the FQDN/IP of your panel)?")
         .default(false)
-        .interact()
-        .unwrap();
+        .interact()?;
     let review_before_upload = Confirm::with_theme(&ColorfulTheme::default())
         .with_prompt("do you want to review the collected data before uploading to pastes.dev?")
         .default(true)
-        .interact()
-        .unwrap();
+        .interact()?;
 
     let versions = bollard::Docker::connect_with_defaults();
     let versions = match versions {
@@ -34,46 +35,46 @@ pub async fn diagnostics(matches: &ArgMatches, config: Option<&Arc<crate::config
     };
 
     let mut output = String::with_capacity(1024);
-    writeln!(output, "wings-rs - diagnostics report").unwrap();
+    writeln!(output, "wings-rs - diagnostics report")?;
 
-    write_header(&mut output, "versions");
+    write_header(&mut output, "versions")?;
     write_line(
         &mut output,
         "wings-rs",
         &format!("{}:{}", crate::VERSION, crate::GIT_COMMIT),
-    );
+    )?;
     write_line(
         &mut output,
         "docker",
         &versions.version.unwrap_or_else(|| "unknown".to_string()),
-    );
+    )?;
     write_line(
         &mut output,
         "kernel",
         &rustix::system::uname().version().to_string_lossy(),
-    );
+    )?;
     write_line(
         &mut output,
         "os",
         &versions.os.unwrap_or_else(|| "unknown".to_string()),
-    );
+    )?;
 
-    write_header(&mut output, "wings-rs configuration");
-    write_line(&mut output, "panel location", &config.remote);
-    writeln!(output).unwrap();
+    write_header(&mut output, "wings-rs configuration")?;
+    write_line(&mut output, "panel location", &config.remote)?;
+    writeln!(output)?;
     write_line(
         &mut output,
         "internal webserver",
         &format!("{} : {}", config.api.host, config.api.port),
-    );
+    )?;
     write_line(
         &mut output,
         "ssl enabled",
         &format!("{}", config.api.ssl.enabled),
-    );
-    write_line(&mut output, "ssl certificate", &config.api.ssl.cert);
-    write_line(&mut output, "ssl key", &config.api.ssl.key);
-    writeln!(output).unwrap();
+    )?;
+    write_line(&mut output, "ssl certificate", &config.api.ssl.cert)?;
+    write_line(&mut output, "ssl key", &config.api.ssl.key)?;
+    writeln!(output)?;
     write_line(
         &mut output,
         "sftp server",
@@ -81,51 +82,51 @@ pub async fn diagnostics(matches: &ArgMatches, config: Option<&Arc<crate::config
             "{} : {}",
             config.system.sftp.bind_address, config.system.sftp.bind_port
         ),
-    );
+    )?;
     write_line(
         &mut output,
         "sftp read-only",
         &format!("{}", config.system.sftp.read_only),
-    );
+    )?;
     write_line(
         &mut output,
         "sftp key algorithm",
         &config.system.sftp.key_algorithm,
-    );
+    )?;
     write_line(
         &mut output,
         "sftp password auth",
         &format!("{}", !config.system.sftp.disable_password_auth),
-    );
-    writeln!(output).unwrap();
-    write_line(&mut output, "root directory", &config.system.root_directory);
-    write_line(&mut output, "logs directory", &config.system.log_directory);
-    write_line(&mut output, "data directory", &config.system.data_directory);
+    )?;
+    writeln!(output)?;
+    write_line(&mut output, "root directory", &config.system.root_directory)?;
+    write_line(&mut output, "logs directory", &config.system.log_directory)?;
+    write_line(&mut output, "data directory", &config.system.data_directory)?;
     write_line(
         &mut output,
         "archive directory",
         &config.system.archive_directory,
-    );
+    )?;
     write_line(
         &mut output,
         "backup directory",
         &config.system.backup_directory,
-    );
-    writeln!(output).unwrap();
-    write_line(&mut output, "username", &config.system.username);
+    )?;
+    writeln!(output)?;
+    write_line(&mut output, "username", &config.system.username)?;
     write_line(
         &mut output,
         "server time",
         &format!("{}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S")),
-    );
+    )?;
     write_line(
         &mut output,
         "timezone",
         &format!("{}", chrono::Local::now().offset()),
-    );
-    write_line(&mut output, "debug mode", &format!("{}", config.debug));
+    )?;
+    write_line(&mut output, "debug mode", &format!("{}", config.debug))?;
 
-    write_header(&mut output, "latest wings-rs logs");
+    write_header(&mut output, "latest wings-rs logs")?;
     match File::open(Path::new(&config.system.log_directory).join("wings.log")).await {
         Ok(file) => {
             let mut reader = tokio::io::BufReader::new(file);
@@ -137,7 +138,7 @@ pub async fn diagnostics(matches: &ArgMatches, config: Option<&Arc<crate::config
                 Ok(n) => n,
                 Err(err) => {
                     eprintln!("{}: {err}", "failed to read wings log file".red());
-                    return 1;
+                    return Ok(1);
                 }
             } > 0
             {
@@ -168,12 +169,12 @@ pub async fn diagnostics(matches: &ArgMatches, config: Option<&Arc<crate::config
                     }
                 }
 
-                write!(output, "{result_line}").unwrap();
+                write!(output, "{result_line}")?;
             }
         }
         Err(err) => {
             eprintln!("{}: {err}", "failed to read wings log file".red());
-            return 1;
+            return Ok(1);
         }
     }
 
@@ -203,11 +204,10 @@ pub async fn diagnostics(matches: &ArgMatches, config: Option<&Arc<crate::config
         let confirm = Confirm::with_theme(&ColorfulTheme::default())
             .with_prompt("do you want to upload the diagnostics report to pastes.dev?")
             .default(true)
-            .interact()
-            .unwrap();
+            .interact()?;
 
         if !confirm {
-            return 0;
+            return Ok(0);
         }
     }
 
@@ -227,7 +227,7 @@ pub async fn diagnostics(matches: &ArgMatches, config: Option<&Arc<crate::config
         Ok(response) => response,
         Err(err) => {
             eprintln!("{}: {err}", "failed to upload diagnostics report".red());
-            return 1;
+            return Ok(1);
         }
     };
     let response: Response = match response.json().await {
@@ -237,7 +237,7 @@ pub async fn diagnostics(matches: &ArgMatches, config: Option<&Arc<crate::config
                 "{}: {err}",
                 "failed to parse response from pastes.dev".red()
             );
-            return 1;
+            return Ok(1);
         }
     };
 
@@ -251,16 +251,16 @@ pub async fn diagnostics(matches: &ArgMatches, config: Option<&Arc<crate::config
         response.key
     );
 
-    0
+    Ok(0)
 }
 
 #[inline]
-fn write_header(output: &mut String, name: &str) {
-    writeln!(output, "\n|\n| {name}").unwrap();
-    writeln!(output, "| ------------------------------").unwrap();
+fn write_header(output: &mut String, name: &str) -> Result<(), std::fmt::Error> {
+    writeln!(output, "\n|\n| {name}")?;
+    writeln!(output, "| ------------------------------")
 }
 
 #[inline]
-fn write_line(output: &mut String, name: &str, value: &str) {
-    writeln!(output, "{name:>20}: {value}").unwrap();
+fn write_line(output: &mut String, name: &str, value: &str) -> Result<(), std::fmt::Error> {
+    writeln!(output, "{name:>20}: {value}")
 }

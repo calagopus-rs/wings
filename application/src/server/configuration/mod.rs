@@ -200,15 +200,19 @@ impl ServerConfiguration {
                     host_port: Some(port.to_string()),
                 };
 
-                let tcp_bindings = map
+                if let Some(tcp_bindings) = map
                     .entry(format!("{port}/tcp"))
-                    .or_insert_with(|| Some(Vec::new()));
-                tcp_bindings.as_mut().unwrap().push(binding.clone());
+                    .or_insert_with(|| Some(Vec::new()))
+                {
+                    tcp_bindings.push(binding.clone());
+                }
 
-                let udp_bindings = map
+                if let Some(udp_bindings) = map
                     .entry(format!("{port}/udp"))
-                    .or_insert_with(|| Some(Vec::new()));
-                udp_bindings.as_mut().unwrap().push(binding);
+                    .or_insert_with(|| Some(Vec::new()))
+                {
+                    udp_bindings.push(binding);
+                }
             }
         }
 

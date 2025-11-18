@@ -842,8 +842,7 @@ impl Config {
                     tracing::Level::INFO
                 })
                 .finish(),
-        )
-        .unwrap();
+        )?;
 
         if config.api.send_offline_server_logs && config.docker.delete_container_on_stop {
             tracing::warn!(
@@ -855,8 +854,10 @@ impl Config {
     }
 
     pub fn save_new(path: &str, config: InnerConfig) -> Result<(), anyhow::Error> {
-        std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap())
-            .context(format!("failed to create config directory {path}"))?;
+        if let Some(parent) = std::path::Path::new(path).parent() {
+            std::fs::create_dir_all(parent)
+                .context(format!("failed to create config directory {path}"))?;
+        }
         let file = File::create(path).context(format!("failed to create config file {path}"))?;
         let writer = std::io::BufWriter::new(file);
         serde_yml::to_writer(writer, &config)
@@ -956,9 +957,11 @@ impl Config {
         if self.system.user.rootless.enabled {
             let user = users::get_current_uid();
             let group = users::get_current_gid();
-            let username = users::get_current_username();
 
-            self.system.username = username.unwrap().into_string().unwrap();
+            if let Some(username) = users::get_current_username() {
+                self.system.username = username.to_string_lossy().to_string();
+            }
+
             self.system.user.uid = user;
             self.system.user.gid = group;
 

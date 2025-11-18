@@ -363,10 +363,7 @@ impl BackupManager {
                 server
                     .log_daemon(format!(
                         "Completed server restoration from {} backup.",
-                        serde_json::to_value(backup.adapter())
-                            .unwrap()
-                            .as_str()
-                            .unwrap()
+                        backup.adapter().to_str()
                     ))
                     .await;
                 server

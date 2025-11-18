@@ -88,11 +88,11 @@ impl FileSystemWriter {
 impl Write for FileSystemWriter {
     #[inline]
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let written = if let Some(writer) = self.writer.as_mut() {
-            writer.write(buf)?
-        } else {
+        let Some(writer) = self.writer.as_mut() else {
             return Err(std::io::Error::other("Writer is not available"));
         };
+
+        let written = writer.write(buf)?;
 
         self.current_position += written as u64;
 
@@ -113,11 +113,11 @@ impl Write for FileSystemWriter {
     fn flush(&mut self) -> std::io::Result<()> {
         self.allocate_accumulated()?;
 
-        if let Some(writer) = self.writer.as_mut() {
-            writer.flush()
-        } else {
-            Err(std::io::Error::other("Writer is not available"))
-        }
+        let Some(writer) = self.writer.as_mut() else {
+            return Err(std::io::Error::other("Writer is not available"));
+        };
+
+        writer.flush()
     }
 }
 
@@ -125,11 +125,11 @@ impl Seek for FileSystemWriter {
     fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
         self.allocate_accumulated()?;
 
-        let new_pos = if let Some(writer) = self.writer.as_mut() {
-            writer.seek(pos)?
-        } else {
+        let Some(writer) = self.writer.as_mut() else {
             return Err(std::io::Error::other("Writer is not available"));
         };
+
+        let new_pos = writer.seek(pos)?;
 
         self.current_position = new_pos;
 
@@ -262,7 +262,11 @@ impl AsyncWrite for AsyncFileSystemWriter {
             Poll::Pending => return Poll::Pending,
         }
 
-        let result = Pin::new(self.writer.as_mut().unwrap()).poll_write(cx, buf);
+        let Some(writer) = self.writer.as_mut() else {
+            return Poll::Ready(Err(std::io::Error::other("Writer is not available")));
+        };
+
+        let result = Pin::new(writer).poll_write(cx, buf);
 
         if let Poll::Ready(Ok(written)) = &result {
             let written = *written as u64;
@@ -305,7 +309,11 @@ impl AsyncWrite for AsyncFileSystemWriter {
             }
         }
 
-        Pin::new(self.writer.as_mut().unwrap()).poll_flush(cx)
+        let Some(writer) = self.writer.as_mut() else {
+            return Poll::Ready(Err(std::io::Error::other("Writer is not available")));
+        };
+
+        Pin::new(writer).poll_flush(cx)
     }
 
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
@@ -325,7 +333,11 @@ impl AsyncWrite for AsyncFileSystemWriter {
             }
         }
 
-        Pin::new(self.writer.as_mut().unwrap()).poll_shutdown(cx)
+        let Some(writer) = self.writer.as_mut() else {
+            return Poll::Ready(Err(std::io::Error::other("Writer is not available")));
+        };
+
+        Pin::new(writer).poll_shutdown(cx)
     }
 }
 
@@ -335,7 +347,11 @@ impl AsyncSeek for AsyncFileSystemWriter {
             self.start_allocation();
         }
 
-        Pin::new(self.writer.as_mut().unwrap()).start_seek(position)
+        let Some(writer) = self.writer.as_mut() else {
+            return Err(std::io::Error::other("Writer is not available"));
+        };
+
+        Pin::new(writer).start_seek(position)
     }
 
     fn poll_complete(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<u64>> {
@@ -345,7 +361,11 @@ impl AsyncSeek for AsyncFileSystemWriter {
             Poll::Pending => return Poll::Pending,
         }
 
-        let result = Pin::new(self.writer.as_mut().unwrap()).poll_complete(cx);
+        let Some(writer) = self.writer.as_mut() else {
+            return Poll::Ready(Err(std::io::Error::other("Writer is not available")));
+        };
+
+        let result = Pin::new(writer).poll_complete(cx);
 
         if let Poll::Ready(Ok(new_pos)) = &result {
             self.current_position = *new_pos;

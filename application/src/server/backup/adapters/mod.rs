@@ -37,6 +37,18 @@ impl BackupAdapter {
             Self::Restic,
         ]
     }
+
+    #[inline]
+    pub fn to_str(self) -> &'static str {
+        match self {
+            Self::Wings => "wings",
+            Self::S3 => "s3",
+            Self::DdupBak => "ddup-bak",
+            Self::Btrfs => "btrfs",
+            Self::Zfs => "zfs",
+            Self::Restic => "restic",
+        }
+    }
 }
 
 impl BackupAdapter {
