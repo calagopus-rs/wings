@@ -62,7 +62,6 @@ impl Manager {
 
             if let Some((reinstall, container_script)) = installing.remove(&server.uuid) {
                 tokio::spawn({
-                    let client = Arc::clone(&app_state.docker);
                     let server = server.clone();
 
                     async move {
@@ -72,20 +71,19 @@ impl Manager {
                             state
                         );
 
-                        if let Err(err) = super::installation::attach_install_container(
-                            &server,
-                            &client,
-                            container_script,
-                            reinstall,
-                        )
-                        .await
-                        {
+                        let mut installer = Arc::new(
+                            super::installation::ServerInstaller::new(&server, reinstall).await,
+                        );
+
+                        if let Err(err) = installer.attach(container_script).await {
                             tracing::error!(
                                 server = %server.uuid,
                                 "failed to attach installation container: {:#?}",
                                 err
                             );
                         }
+
+                        server.installer.write().await.replace(installer);
                     }
                 });
             } else if app_state.config.remote_query.boot_servers_per_page > 0 {
@@ -193,11 +191,13 @@ impl Manager {
                 let mut run_inner = async || -> Result<(), anyhow::Error> {
                     let mut installing = HashMap::new();
                     for server in servers.read().await.iter() {
-                        if let Some((reinstall, installation_script)) =
-                            server.installation_script.read().await.as_ref()
+                        if let Some(installer) = server.installer.read().await.as_ref()
+                            && let Ok(installation_script) = installer.get_installation_script()
                         {
-                            installing
-                                .insert(server.uuid, (*reinstall, installation_script.clone()));
+                            installing.insert(
+                                server.uuid,
+                                (installer.reinstall, (*installation_script).clone()),
+                            );
                         }
                     }
 
@@ -248,35 +248,36 @@ impl Manager {
 
         if install_server {
             tokio::spawn({
-                let client = Arc::clone(&app_state.docker);
                 let server = server.clone();
 
                 async move {
-                    if let Err(err) =
-                        crate::server::installation::install_server(&server, &client, false, true)
-                            .await
-                    {
+                    let mut installer =
+                        Arc::new(super::installation::ServerInstaller::new(&server, true).await);
+
+                    if let Err(err) = installer.start(false).await {
                         tracing::error!(
                             server = %server.uuid,
                             "failed to install server: {:#?}",
                             err
                         );
-                    } else if server
-                        .configuration
-                        .read()
-                        .await
-                        .start_on_completion
-                        .is_some_and(|s| s)
-                        && let Err(err) = server.start(None, false).await
-                    {
-                        tracing::error!(
-                            server = %server.uuid,
-                            "failed to start server on boot: {}",
-                            err
-                        );
                     }
+
+                    server.installer.write().await.replace(installer);
                 }
             });
+        } else if server
+            .configuration
+            .read()
+            .await
+            .start_on_completion
+            .is_some_and(|s| s)
+            && let Err(err) = server.start(None, false).await
+        {
+            tracing::error!(
+                server = %server.uuid,
+                "failed to start server on boot: {}",
+                err
+            );
         }
 
         self.servers.write().await.push(server.clone());

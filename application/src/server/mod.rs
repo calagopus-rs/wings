@@ -46,7 +46,7 @@ pub struct InnerServer {
     pub state: state::ServerStateLock,
     pub outgoing_transfer: RwLock<Option<transfer::OutgoingServerTransfer>>,
     pub incoming_transfer: RwLock<Option<transfer::IncomingServerTransfer>>,
-    pub installation_script: RwLock<Option<(bool, installation::InstallationScript)>>,
+    pub installer: RwLock<Option<Arc<installation::ServerInstaller>>>,
 
     suspended: AtomicBool,
     installing: AtomicBool,
@@ -108,7 +108,7 @@ impl Server {
             state: state::ServerStateLock::new(rx, schedules),
             outgoing_transfer: RwLock::new(None),
             incoming_transfer: RwLock::new(None),
-            installation_script: RwLock::new(None),
+            installer: RwLock::new(None),
 
             suspended: AtomicBool::new(false),
             installing: AtomicBool::new(false),

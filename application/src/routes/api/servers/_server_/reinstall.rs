@@ -4,10 +4,11 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 mod post {
     use crate::{
         response::{ApiResponse, ApiResponseResult},
-        routes::{ApiError, GetState, api::servers::_server_::GetServer},
+        routes::{ApiError, api::servers::_server_::GetServer},
     };
     use axum::{extract::rejection::JsonRejection, http::StatusCode};
     use serde::{Deserialize, Serialize};
+    use std::sync::Arc;
     use utoipa::ToSchema;
 
     #[derive(ToSchema, Deserialize)]
@@ -30,7 +31,6 @@ mod post {
         ),
     ), request_body = inline(Payload))]
     pub async fn route(
-        state: GetState,
         server: GetServer,
         data: Result<axum::Json<Payload>, JsonRejection>,
     ) -> ApiResponseResult {
@@ -52,28 +52,21 @@ mod post {
             .await?;
         server.sync_configuration().await;
 
-        tokio::spawn(async move {
-            if data.truncate_directory
-                && let Err(err) = server.filesystem.truncate_root().await
-            {
-                tracing::error!(
-                    server = %server.uuid,
-                    "failed to truncate root directory before reinstalling server: {:#?}",
-                    err
-                );
-            }
+        if data.truncate_directory
+            && let Err(err) = server.filesystem.truncate_root().await
+        {
+            tracing::error!(
+                server = %server.uuid,
+                "failed to truncate root directory before reinstalling server: {:#?}",
+                err
+            );
+        }
 
-            if let Err(err) =
-                crate::server::installation::install_server(&server, &state.docker, true, false)
-                    .await
-            {
-                tracing::error!(
-                    server = %server.uuid,
-                    "failed to reinstall server: {:#?}",
-                    err
-                );
-            }
-        });
+        let mut installer =
+            Arc::new(crate::server::installation::ServerInstaller::new(&server, true).await);
+
+        installer.start(false).await?;
+        server.installer.write().await.replace(installer);
 
         ApiResponse::json(Response {})
             .with_status(StatusCode::ACCEPTED)
