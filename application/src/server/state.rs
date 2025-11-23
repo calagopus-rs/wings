@@ -134,7 +134,7 @@ impl ServerStateLock {
 
         self.set_state(state).await;
         if let Err(err) = action(aquired).await {
-            tracing::error!("failed to execute power action: {:#?}", err);
+            tracing::error!("failed to execute power action: {:?}", err);
 
             self.set_state(old_state).await;
             self.locked.store(false, Ordering::SeqCst);

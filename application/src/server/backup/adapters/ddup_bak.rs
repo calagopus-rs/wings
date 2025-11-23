@@ -557,7 +557,7 @@ impl BackupExt for DdupBakBackup {
                     }
                     Entry::Symlink(symlink) => {
                         if let Err(err) = server.filesystem.symlink(&symlink.target, &path) {
-                            tracing::debug!(path = %path.display(), "failed to create symlink from backup: {:#?}", err);
+                            tracing::debug!(path = %path.display(), "failed to create symlink from backup: {:?}", err);
                         } else {
                             server.filesystem.set_symlink_permissions(
                                 &path,
@@ -881,7 +881,7 @@ impl BackupBrowseExt for BrowseDdupBakBackup {
                         }
                     }
                     Err(err) => {
-                        tracing::error!("error reading from ddup_bak entry: {:#?}", err);
+                        tracing::error!("error reading from ddup_bak entry: {:?}", err);
                         break;
                     }
                 }

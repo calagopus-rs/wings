@@ -227,7 +227,7 @@ impl BackupFindExt for ResticBackup {
             {
                 Ok(output) => output,
                 Err(err) => {
-                    return Err(anyhow::anyhow!("failed to find restic backup: {:#?}", err));
+                    return Err(anyhow::anyhow!("failed to find restic backup: {:?}", err));
                 }
             };
 
@@ -293,7 +293,7 @@ impl BackupFindExt for ResticBackup {
             {
                 Ok(output) => output,
                 Err(err) => {
-                    return Err(anyhow::anyhow!("failed to find restic backup: {:#?}", err));
+                    return Err(anyhow::anyhow!("failed to find restic backup: {:?}", err));
                 }
             };
 

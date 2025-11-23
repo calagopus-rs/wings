@@ -867,7 +867,7 @@ impl ShellSession {
                                 }
                             }
                             Err(err) => {
-                                tracing::debug!("error reading from SSH session: {:#?}", err);
+                                tracing::debug!("error reading from SSH session: {:?}", err);
                                 break;
                             }
                         }

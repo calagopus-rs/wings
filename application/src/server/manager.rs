@@ -139,7 +139,7 @@ impl Manager {
                 let mut states_file = match File::create(&states_path).await {
                     Ok(file) => file,
                     Err(err) => {
-                        tracing::error!("failed to create states.json file: {:#?}", err);
+                        tracing::error!("failed to create states.json file: {:?}", err);
                         return;
                     }
                 };
@@ -168,7 +168,7 @@ impl Manager {
                     match run_inner().await {
                         Ok(_) => {}
                         Err(err) => {
-                            tracing::error!("failed to write states.json file: {:#?}", err);
+                            tracing::error!("failed to write states.json file: {:?}", err);
                             return;
                         }
                     }
@@ -183,7 +183,7 @@ impl Manager {
                 let mut installing_file = match File::create(&installing_path).await {
                     Ok(file) => file,
                     Err(err) => {
-                        tracing::error!("failed to create installing.json file: {:#?}", err);
+                        tracing::error!("failed to create installing.json file: {:?}", err);
                         return;
                     }
                 };
@@ -218,7 +218,7 @@ impl Manager {
                     match run_inner().await {
                         Ok(_) => {}
                         Err(err) => {
-                            tracing::error!("failed to write installing.json file: {:#?}", err);
+                            tracing::error!("failed to write installing.json file: {:?}", err);
                             return;
                         }
                     }

@@ -174,14 +174,14 @@ impl ServerWebsocketHandler {
         let message = match serde_json::to_string(&message) {
             Ok(message) => message,
             Err(err) => {
-                tracing::error!("failed to serialize websocket message: {:#?}", err);
+                tracing::error!("failed to serialize websocket message: {:?}", err);
                 return;
             }
         };
         let message = Message::Text(message.into());
 
         if let Err(err) = self.sender.lock().await.send(message).await {
-            tracing::error!("failed to send websocket message: {:#?}", err);
+            tracing::error!("failed to send websocket message: {:?}", err);
         }
     }
 
@@ -198,14 +198,14 @@ impl ServerWebsocketHandler {
         let message = match serde_json::to_string(&message) {
             Ok(message) => message,
             Err(err) => {
-                tracing::error!("failed to serialize websocket message: {:#?}", err);
+                tracing::error!("failed to serialize websocket message: {:?}", err);
                 return;
             }
         };
         let message = Message::Text(message.into());
 
         if let Err(err) = self.sender.lock().await.send(message).await {
-            tracing::error!("failed to send websocket message: {:#?}", err);
+            tracing::error!("failed to send websocket message: {:?}", err);
         }
     }
 
@@ -231,14 +231,14 @@ impl ServerWebsocketHandler {
         let message = match serde_json::to_string(&message) {
             Ok(message) => message,
             Err(err) => {
-                tracing::error!("failed to serialize websocket message: {:#?}", err);
+                tracing::error!("failed to serialize websocket message: {:?}", err);
                 return;
             }
         };
         let message = Message::Text(message.into());
 
         if let Err(err) = self.sender.lock().await.send(message).await {
-            tracing::error!("failed to send websocket message: {:#?}", err);
+            tracing::error!("failed to send websocket message: {:?}", err);
         }
     }
 }

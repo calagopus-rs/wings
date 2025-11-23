@@ -53,7 +53,7 @@ static DISK_USAGE: LazyLock<Arc<RwLock<DiskUsageMap>>> = LazyLock::new(|| {
                                 continue;
                             }
                             Err(err) => {
-                                tracing::error!("error executing xfs_quota command: {:#?}", err);
+                                tracing::error!("error executing xfs_quota command: {:?}", err);
                                 continue;
                             }
                         }

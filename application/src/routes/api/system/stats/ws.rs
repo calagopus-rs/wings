@@ -51,7 +51,7 @@ pub async fn handle_ws(ws: WebSocketUpgrade, state: GetState) -> Response {
         ];
 
         if let Err(err) = futures_util::future::try_join_all(futures).await {
-            tracing::debug!("error while serving stats websocket: {:#?}", err);
+            tracing::debug!("error while serving stats websocket: {:?}", err);
         }
     })
 }

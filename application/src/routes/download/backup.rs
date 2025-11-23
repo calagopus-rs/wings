@@ -96,7 +96,7 @@ mod get {
         {
             Ok(response) => response,
             Err(err) => {
-                tracing::error!("failed to download backup: {:#?}", err);
+                tracing::error!("failed to download backup: {:?}", err);
 
                 ApiResponse::error("failed to download backup")
                     .with_status(StatusCode::EXPECTATION_FAILED)

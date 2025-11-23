@@ -127,7 +127,7 @@ mod post {
             };
 
             if let Err(err) = run().await {
-                tracing::error!("error while upgrading binary: {:#?}", err)
+                tracing::error!("error while upgrading binary: {:?}", err)
             }
         });
 

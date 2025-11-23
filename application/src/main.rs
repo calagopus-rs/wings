@@ -359,7 +359,7 @@ async fn main() {
     match config.client.reset_state().await {
         Ok(_) => tracing::info!("remote state reset successfully"),
         Err(err) => {
-            tracing::error!("failed to reset remote state: {:#?}", err);
+            tracing::error!("failed to reset remote state: {:?}", err);
             std::process::exit(1);
         }
     }
@@ -525,7 +525,7 @@ async fn main() {
                     if err.kind() == std::io::ErrorKind::AddrInUse {
                         tracing::error!("failed to start ssh server (address already in use)");
                     } else {
-                        tracing::error!("failed to start ssh server: {:#?}", err);
+                        tracing::error!("failed to start ssh server: {:?}", err);
                     }
 
                     std::process::exit(1);
@@ -572,7 +572,7 @@ async fn main() {
                 if err.kind() == std::io::ErrorKind::AddrInUse {
                     tracing::error!("failed to start https server (address already in use)");
                 } else {
-                    tracing::error!("failed to start https server: {:#?}", err,);
+                    tracing::error!("failed to start https server: {:?}", err,);
                 }
 
                 std::process::exit(1);
@@ -593,7 +593,7 @@ async fn main() {
                         tracing::error!("failed to start http server (address already in use)");
                         std::process::exit(1);
                     } else {
-                        tracing::error!("failed to start http server: {:#?}", err);
+                        tracing::error!("failed to start http server: {:?}", err);
                         std::process::exit(1);
                     }
                 }
@@ -607,7 +607,7 @@ async fn main() {
                 if err.kind() == std::io::ErrorKind::AddrInUse {
                     tracing::error!("failed to start http server (address already in use)");
                 } else {
-                    tracing::error!("failed to start http server: {:#?}", err);
+                    tracing::error!("failed to start http server: {:?}", err);
                 }
 
                 std::process::exit(1);

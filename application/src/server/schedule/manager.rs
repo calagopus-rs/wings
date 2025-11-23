@@ -33,7 +33,7 @@ impl ScheduleManager {
                             .send_schedule_status(schedule_completions)
                             .await
                     {
-                        tracing::error!("failed to send schedule completion statuses: {}", err);
+                        tracing::error!("failed to send schedule completion statuses: {:?}", err);
                     }
                 }
             }),

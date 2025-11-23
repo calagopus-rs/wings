@@ -136,7 +136,7 @@ mod post {
             {
                 Ok(download) => download,
                 Err(err) => {
-                    tracing::error!("failed to create pull: {:#?}", err);
+                    tracing::error!("failed to create pull: {:?}", err);
 
                     return ApiResponse::error(&format!("failed to create pull: {err}"))
                         .with_status(StatusCode::EXPECTATION_FAILED)

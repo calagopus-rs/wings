@@ -349,7 +349,7 @@ impl Filesystem {
             )),
             Ok(None) => None,
             Err(err) => {
-                tracing::error!(server = %server.uuid, backup = %uuid, "failed to find backup: {}", err);
+                tracing::error!(server = %server.uuid, backup = %uuid, "failed to find backup: {:?}", err);
                 None
             }
         }

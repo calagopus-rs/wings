@@ -440,7 +440,7 @@ impl ScheduleAction {
                 }
 
                 if let Err(err) = server.filesystem.async_create_dir_all(&destination).await {
-                    tracing::error!(path = %destination.display(), "failed to create directory: {:#?}", err);
+                    tracing::error!(path = %destination.display(), "failed to create directory: {:?}", err);
 
                     return Err("failed to create directory".into());
                 }
@@ -460,7 +460,7 @@ impl ScheduleAction {
                     .await;
 
                 if let Err(err) = server.filesystem.chown_path(&destination).await {
-                    tracing::error!(path = %destination.display(), "failed to change ownership: {:#?}", err);
+                    tracing::error!(path = %destination.display(), "failed to change ownership: {:?}", err);
 
                     return Err("failed to change ownership".into());
                 }
@@ -511,7 +511,7 @@ impl ScheduleAction {
                 }
 
                 if let Err(err) = server.filesystem.async_create_dir_all(parent).await {
-                    tracing::error!(path = %parent.display(), "failed to create parent directory: {:#?}", err);
+                    tracing::error!(path = %parent.display(), "failed to create parent directory: {:?}", err);
 
                     return Err("failed to create parent directory".into());
                 }
@@ -539,21 +539,21 @@ impl ScheduleAction {
                 let mut file = match server.filesystem.async_open_with(&path, options).await {
                     Ok(file) => file,
                     Err(err) => {
-                        tracing::error!(path = %path.display(), "failed to open file: {:#?}", err);
+                        tracing::error!(path = %path.display(), "failed to open file: {:?}", err);
                         return Err("failed to open file".into());
                     }
                 };
 
                 if let Err(err) = file.write_all(content.as_bytes()).await {
-                    tracing::error!(path = %path.display(), "failed to write file: {:#?}", err);
+                    tracing::error!(path = %path.display(), "failed to write file: {:?}", err);
                     return Err("failed to write file".into());
                 }
                 if let Err(err) = file.flush().await {
-                    tracing::error!(path = %path.display(), "failed to flush file: {:#?}", err);
+                    tracing::error!(path = %path.display(), "failed to flush file: {:?}", err);
                     return Err("failed to flush file".into());
                 }
                 if let Err(err) = file.sync_all().await {
-                    tracing::error!(path = %path.display(), "failed to sync file: {:#?}", err);
+                    tracing::error!(path = %path.display(), "failed to sync file: {:?}", err);
                     return Err("failed to sync file".into());
                 }
 
@@ -571,7 +571,7 @@ impl ScheduleAction {
                     .await;
 
                 if let Err(err) = server.filesystem.chown_path(&path).await {
-                    tracing::error!(path = %path.display(), "failed to change ownership: {:#?}", err);
+                    tracing::error!(path = %path.display(), "failed to change ownership: {:?}", err);
 
                     return Err("failed to change ownership".into());
                 }
@@ -653,7 +653,7 @@ impl ScheduleAction {
                     .await;
 
                 if *foreground && let Ok(Err(err)) = thread.await {
-                    tracing::error!(path = %file_name.display(), "failed to copy file: {:#?}", err);
+                    tracing::error!(path = %file_name.display(), "failed to copy file: {:?}", err);
 
                     return Err("failed to copy file".into());
                 }
@@ -913,7 +913,7 @@ impl ScheduleAction {
                     .await;
 
                 if *foreground && let Ok(Err(err)) = thread.await {
-                    tracing::error!(path = %file_name.display(), "failed to compress files: {:#?}", err);
+                    tracing::error!(path = %file_name.display(), "failed to compress files: {:?}", err);
 
                     return Err("failed to compress files".into());
                 }
@@ -982,7 +982,7 @@ impl ScheduleAction {
                     .await;
 
                 if *foreground && let Ok(Err(err)) = thread.await {
-                    tracing::error!(path = %source.display(), "failed to decompress file: {:#?}", err);
+                    tracing::error!(path = %source.display(), "failed to decompress file: {:?}", err);
 
                     return Err("failed to decompress file".into());
                 }

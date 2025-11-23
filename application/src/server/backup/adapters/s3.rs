@@ -476,7 +476,7 @@ impl BackupExt for S3Backup {
                         let link = entry.link_name().unwrap_or_default().unwrap_or_default();
 
                         if let Err(err) = server.filesystem.symlink(link, path.as_ref()) {
-                            tracing::debug!(path = %path.display(), "failed to create symlink from backup: {:#?}", err);
+                            tracing::debug!(path = %path.display(), "failed to create symlink from backup: {:?}", err);
                         } else if let Ok(modified_time) = header.mtime() {
                             server
                                 .filesystem

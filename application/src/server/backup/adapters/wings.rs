@@ -1262,7 +1262,7 @@ impl BackupBrowseExt for BrowseWingsBackup {
                                 }
                             }
                             Err(err) => {
-                                tracing::error!("error reading from zip entry: {:#?}", err);
+                                tracing::error!("error reading from zip entry: {:?}", err);
                                 break;
                             }
                         }
