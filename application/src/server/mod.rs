@@ -770,7 +770,7 @@ impl Server {
                         if let Some(id) = status.id {
                             match status.status.as_ref().map(|s| s.to_lowercase()).as_deref() {
                                 Some("downloading") => {
-                                    if let Some(progress_detail) = status.progress_detail {
+                                    if let Some(progress_detail) = &status.progress_detail {
                                         self.websocket
                                             .send(websocket::WebsocketMessage::new(
                                                 websocket::WebsocketEvent::ServerImagePullProgress,
@@ -788,7 +788,7 @@ impl Server {
                                     }
                                 }
                                 Some("extracting") => {
-                                    if let Some(progress_detail) = status.progress_detail {
+                                    if let Some(progress_detail) = &status.progress_detail {
                                         self.websocket
                                             .send(websocket::WebsocketMessage::new(
                                                 websocket::WebsocketEvent::ServerImagePullProgress,
@@ -818,9 +818,16 @@ impl Server {
                         }
 
                         if let Some(status_str) = status.status {
-                            if let Some(progress) = status.progress {
-                                self.log_daemon_install(format!("{status_str} {progress}"))
-                                    .await;
+                            if let Some(progress_detail) = status.progress_detail {
+                                self.log_daemon_install(format!(
+                                    "{status_str} {}",
+                                    crate::utils::draw_progress_bar(
+                                        50usize.saturating_sub(status_str.len()),
+                                        progress_detail.current.unwrap_or_default() as f64,
+                                        progress_detail.total.unwrap_or_default() as f64
+                                    )
+                                ))
+                                .await;
                             } else {
                                 self.log_daemon_install(status_str).await;
                             }

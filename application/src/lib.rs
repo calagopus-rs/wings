@@ -9,24 +9,11 @@ pub mod routes;
 pub mod server;
 pub mod ssh;
 pub mod stats;
+pub mod utils;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const GIT_COMMIT: &str = env!("CARGO_GIT_COMMIT");
 pub const BUFFER_SIZE: usize = 32 * 1024;
-
-#[inline]
-pub fn is_valid_utf8_slice(s: &[u8]) -> bool {
-    let mut idx = s.len();
-    while idx > s.len().saturating_sub(4) {
-        if str::from_utf8(&s[..idx]).is_ok() {
-            return true;
-        }
-
-        idx -= 1;
-    }
-
-    false
-}
 
 #[inline(always)]
 #[cold]

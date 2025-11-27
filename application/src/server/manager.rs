@@ -53,8 +53,12 @@ impl Manager {
             app_state.config.remote_query.boot_servers_per_page as usize,
         ));
 
-        for s in raw_servers {
-            let server = Server::new(s.settings, s.process_configuration, app_state.clone());
+        for server in raw_servers {
+            let server = Server::new(
+                server.settings,
+                server.process_configuration,
+                app_state.clone(),
+            );
             let state = states.remove(&server.uuid).unwrap_or_default();
 
             server.initialize_schedules().await;

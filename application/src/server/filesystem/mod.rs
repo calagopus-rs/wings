@@ -830,7 +830,7 @@ impl Filesystem {
                 mime.mime_type()
             } else if let Some(mime) = new_mime_guess::from_path(real_path).iter_raw().next() {
                 mime
-            } else if crate::is_valid_utf8_slice(buffer) || buffer.is_empty() {
+            } else if crate::utils::is_valid_utf8_slice(buffer) || buffer.is_empty() {
                 "text/plain"
             } else {
                 "application/octet-stream"

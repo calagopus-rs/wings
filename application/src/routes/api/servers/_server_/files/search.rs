@@ -131,7 +131,9 @@ mod post {
                                     Err(_) => return Ok(()),
                                 };
 
-                                if !crate::is_valid_utf8_slice(&buffer[..bytes_read.min(128)]) {
+                                if !crate::utils::is_valid_utf8_slice(
+                                    &buffer[..bytes_read.min(128)],
+                                ) {
                                     return Ok(());
                                 }
 
