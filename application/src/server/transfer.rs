@@ -422,7 +422,7 @@ impl OutgoingServerTransfer {
                             let remaining_bytes = total_bytes as f64 - current_bytes_archived as f64;
                             let remaining_seconds = remaining_bytes / archive_rate;
 
-                            if remaining_seconds < 60.0 {
+                            &if remaining_seconds < 60.0 {
                                 format!("{:.0}s", remaining_seconds)
                             } else if remaining_seconds < 3600.0 {
                                 format!("{:.0}m {:.0}s", remaining_seconds / 60.0, remaining_seconds % 60.0)
@@ -433,37 +433,27 @@ impl OutgoingServerTransfer {
                                 )
                             }
                         } else {
-                            "unknown".to_string()
+                            "unknown"
                         };
-
-                        const BAR_WIDTH: usize = 30;
-                        let completed_width = std::cmp::min((archive_percentage / 100.0 * BAR_WIDTH as f64).round() as usize, BAR_WIDTH);
-                        let remaining_width = BAR_WIDTH.saturating_sub(completed_width);
-                        let progress_bar = format!(
-                            "[{}>{}] {} - ETA: {}",
-                            "=".repeat(completed_width),
-                            " ".repeat(if completed_width == 0 { remaining_width.saturating_sub(1) } else { remaining_width }),
-                            formatted_archive_percentage,
-                            time_estimate
-                        );
 
                         let elapsed_time = if total_elapsed_secs < 60.0 {
                             format!("{:.0}s", total_elapsed_secs)
                         } else if total_elapsed_secs < 3600.0 {
-                            format!("{:.0}m {:.0}s", 
+                            format!("{:.0}m {:.0}s",
                                 total_elapsed_secs / 60.0,
                                 total_elapsed_secs % 60.0
                             )
                         } else {
-                            format!("{:.1}h {:.0}m", 
+                            format!("{:.1}h {:.0}m",
                                 total_elapsed_secs / 3600.0,
                                 (total_elapsed_secs % 3600.0) / 60.0
                             )
                         };
 
                         let progress_log = format!(
-                            "{}\nArchive: {} of {} ({}/s) - Elapsed: {}\nNetwork: {} sent ({}/s)",
-                            progress_bar,
+                            "{} - ETA: {}\nArchive: {} of {} ({}/s) - Elapsed: {}\nNetwork: {} sent ({}/s)",
+                            crate::utils::draw_progress_bar(30, current_bytes_archived as f64, total_bytes as f64),
+                            time_estimate,
                             formatted_bytes_archived,
                             formatted_total_bytes,
                             formatted_archive_rate,
