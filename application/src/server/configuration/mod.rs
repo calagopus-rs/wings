@@ -326,7 +326,7 @@ impl ServerConfiguration {
         );
         environment.insert(
             "STARTUP".to_string(),
-            serde_json::Value::from(self.invocation.clone()),
+            serde_json::Value::String(self.invocation.clone()),
         );
         environment.insert(
             "SERVER_MEMORY".to_string(),
@@ -335,7 +335,7 @@ impl ServerConfiguration {
         if let Some(default) = &self.allocations.default {
             environment.insert(
                 "SERVER_IP".to_string(),
-                serde_json::Value::from(default.ip.clone()),
+                serde_json::Value::String(default.ip.clone()),
             );
             environment.insert(
                 "SERVER_PORT".to_string(),
@@ -347,8 +347,7 @@ impl ServerConfiguration {
             .into_iter()
             .map(|(k, v)| {
                 format!(
-                    "{}={}",
-                    k,
+                    "{k}={}",
                     match v {
                         serde_json::Value::String(s) => s,
                         _ => v.to_string(),

@@ -76,10 +76,15 @@ impl Manager {
                         );
 
                         let mut installer = Arc::new(
-                            super::installation::ServerInstaller::new(&server, reinstall).await,
+                            super::installation::ServerInstaller::new(
+                                &server,
+                                reinstall,
+                                Some(container_script),
+                            )
+                            .await,
                         );
 
-                        if let Err(err) = installer.attach(container_script).await {
+                        if let Err(err) = installer.attach().await {
                             tracing::error!(
                                 server = %server.uuid,
                                 "failed to attach installation container: {:#?}",
@@ -255,8 +260,9 @@ impl Manager {
                 let server = server.clone();
 
                 async move {
-                    let mut installer =
-                        Arc::new(super::installation::ServerInstaller::new(&server, true).await);
+                    let mut installer = Arc::new(
+                        super::installation::ServerInstaller::new(&server, true, None).await,
+                    );
 
                     if let Err(err) = installer.start(false).await {
                         tracing::error!(

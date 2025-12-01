@@ -5,6 +5,7 @@ mod post {
     use crate::{
         response::{ApiResponse, ApiResponseResult},
         routes::{ApiError, api::servers::_server_::GetServer},
+        server::installation::InstallationScript,
     };
     use axum::{extract::rejection::JsonRejection, http::StatusCode};
     use serde::{Deserialize, Serialize};
@@ -15,6 +16,8 @@ mod post {
     pub struct Payload {
         #[serde(default)]
         truncate_directory: bool,
+        #[serde(default)]
+        installation_script: Option<InstallationScript>,
     }
 
     #[derive(ToSchema, Serialize)]
@@ -38,6 +41,7 @@ mod post {
             Ok(data) => data.0,
             Err(_) => Payload {
                 truncate_directory: false,
+                installation_script: None,
             },
         };
 
@@ -62,8 +66,14 @@ mod post {
             );
         }
 
-        let mut installer =
-            Arc::new(crate::server::installation::ServerInstaller::new(&server, true).await);
+        let mut installer = Arc::new(
+            crate::server::installation::ServerInstaller::new(
+                &server,
+                true,
+                data.installation_script,
+            )
+            .await,
+        );
 
         installer.start(false).await?;
         server.installer.write().await.replace(installer);

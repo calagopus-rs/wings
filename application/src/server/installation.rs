@@ -19,6 +19,8 @@ pub struct InstallationScript {
 
     #[serde(deserialize_with = "crate::deserialize::deserialize_defaultable")]
     pub script: String,
+    #[serde(default)]
+    pub environment: HashMap<String, serde_json::Value>,
 }
 
 pub struct ServerInstaller {
@@ -33,7 +35,11 @@ pub struct ServerInstaller {
 }
 
 impl ServerInstaller {
-    pub async fn new(server: &super::Server, reinstall: bool) -> Self {
+    pub async fn new(
+        server: &super::Server,
+        reinstall: bool,
+        installation_script: Option<InstallationScript>,
+    ) -> Self {
         Self {
             reinstall,
             environment: server
@@ -42,7 +48,7 @@ impl ServerInstaller {
                 .await
                 .environment(&server.app_state.config),
             server: server.clone(),
-            installation_script: None,
+            installation_script: installation_script.map(Arc::new),
             container_id: Arc::new(Mutex::new(None)),
             abort_notify: Arc::new(tokio::sync::Notify::new()),
         }
@@ -153,19 +159,40 @@ impl ServerInstaller {
             return Ok(());
         }
 
-        let container_script = match self
-            .server
-            .app_state
-            .config
-            .client
-            .server_install_script(self.server.uuid)
-            .await
-            .context("Failed to fetch installation script")
-        {
-            Ok(container_script) => Arc::new(container_script),
-            Err(err) => {
-                self.unset_installing(false).await?;
-                return Err(err);
+        let container_script = match &self.installation_script {
+            Some(container_script) => container_script.clone(),
+            None => {
+                let container_script = match self
+                    .server
+                    .app_state
+                    .config
+                    .client
+                    .server_install_script(self.server.uuid)
+                    .await
+                    .context("Failed to fetch installation script")
+                {
+                    Ok(container_script) => Arc::new(container_script),
+                    Err(err) => {
+                        self.unset_installing(false).await?;
+                        return Err(err);
+                    }
+                };
+
+                match Arc::get_mut(self) {
+                    Some(installer) => {
+                        installer
+                            .installation_script
+                            .replace(Arc::clone(&container_script));
+                    }
+                    None => {
+                        self.unset_installing(false).await?;
+                        return Err(anyhow::anyhow!(
+                            "unable to get mutable reference to server installer"
+                        ));
+                    }
+                }
+
+                container_script
             }
         };
 
@@ -177,20 +204,6 @@ impl ServerInstaller {
 
             self.unset_installing(true).await?;
             return Ok(());
-        }
-
-        match Arc::get_mut(self) {
-            Some(installer) => {
-                installer
-                    .installation_script
-                    .replace(Arc::clone(&container_script));
-            }
-            None => {
-                self.unset_installing(false).await?;
-                return Err(anyhow::anyhow!(
-                    "unable to get mutable reference to server installer"
-                ));
-            }
         }
 
         tokio::spawn({
@@ -434,15 +447,7 @@ impl ServerInstaller {
         Ok(())
     }
 
-    pub async fn attach(
-        self: &mut Arc<Self>,
-        container_script: InstallationScript,
-    ) -> Result<(), anyhow::Error> {
-        Arc::get_mut(self)
-            .ok_or_else(|| anyhow::anyhow!("unable to get mutable reference to server installer"))?
-            .installation_script
-            .replace(Arc::new(container_script));
-
+    pub async fn attach(self: &mut Arc<Self>) -> Result<(), anyhow::Error> {
         self.server.installing.store(true, Ordering::SeqCst);
         self.server
             .websocket
@@ -781,6 +786,18 @@ impl ServerInstaller {
 
     async fn container_config(&self) -> Result<bollard::container::Config<String>, anyhow::Error> {
         let container_script = self.get_installation_script()?;
+        let mut env = self.environment.clone();
+        env.reserve_exact(container_script.environment.len());
+
+        for (k, v) in &container_script.environment {
+            env.push(format!(
+                "{k}={}",
+                match v {
+                    serde_json::Value::String(s) => s,
+                    _ => &v.to_string(),
+                }
+            ));
+        }
 
         let labels = HashMap::from([
             (
@@ -900,7 +917,7 @@ impl ServerInstaller {
                     .trim_end_matches('~')
                     .to_string(),
             ),
-            env: Some(self.environment.clone()),
+            env: Some(env),
             labels: Some(labels),
             attach_stdin: Some(true),
             attach_stdout: Some(true),

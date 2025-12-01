@@ -9,8 +9,25 @@ use std::{
 
 async fn container_config(
     server: &super::Server,
-    script: &InstallationScript,
+    container_script: &InstallationScript,
 ) -> tokio::io::Result<bollard::container::Config<String>> {
+    let mut env = server
+        .configuration
+        .read()
+        .await
+        .environment(&server.app_state.config);
+    env.reserve_exact(container_script.environment.len());
+
+    for (k, v) in &container_script.environment {
+        env.push(format!(
+            "{k}={}",
+            match v {
+                serde_json::Value::String(s) => s,
+                _ => &v.to_string(),
+            }
+        ));
+    }
+
     let labels = HashMap::from([
         (
             "Service".to_string(),
@@ -46,7 +63,7 @@ async fn container_config(
     tokio::fs::create_dir_all(&tmp_dir).await?;
     tokio::fs::write(
         tmp_dir.join("script.sh"),
-        script.script.replace("\r\n", "\n"),
+        container_script.script.replace("\r\n", "\n"),
     )
     .await?;
     tokio::fs::set_permissions(&tmp_dir, Permissions::from_mode(0o755)).await?;
@@ -107,18 +124,17 @@ async fn container_config(
             ..Default::default()
         }),
         cmd: Some(vec![
-            script.entrypoint.clone(),
+            container_script.entrypoint.clone(),
             "/mnt/script/script.sh".to_string(),
         ]),
         hostname: Some("script".to_string()),
-        image: Some(script.container_image.trim_end_matches('~').to_string()),
-        env: Some(
-            server
-                .configuration
-                .read()
-                .await
-                .environment(&server.app_state.config),
+        image: Some(
+            container_script
+                .container_image
+                .trim_end_matches('~')
+                .to_string(),
         ),
+        env: Some(env),
         labels: Some(labels),
         attach_stdout: Some(true),
         attach_stderr: Some(true),
@@ -130,10 +146,10 @@ async fn container_config(
 pub async fn script_server(
     server: &super::Server,
     client: &Arc<bollard::Docker>,
-    script: InstallationScript,
+    container_script: InstallationScript,
 ) -> Result<(String, String), anyhow::Error> {
     server
-        .pull_image(&script.container_image, true)
+        .pull_image(&container_script.container_image, true)
         .await
         .context("Failed to pull installation container image")?;
 
@@ -147,7 +163,7 @@ pub async fn script_server(
                 ),
                 ..Default::default()
             }),
-            container_config(server, &script).await?,
+            container_config(server, &container_script).await?,
         )
         .await
         .context("Failed to create installation container")?;
