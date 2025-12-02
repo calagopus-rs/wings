@@ -820,12 +820,15 @@ impl Server {
                         if let Some(status_str) = status.status {
                             if let Some(progress_detail) = status.progress_detail {
                                 self.log_daemon_install(format!(
-                                    "{status_str} {}",
+                                    "{status_str} {} of {}",
                                     crate::utils::draw_progress_bar(
                                         50usize.saturating_sub(status_str.len()),
                                         progress_detail.current.unwrap_or_default() as f64,
                                         progress_detail.total.unwrap_or_default() as f64
-                                    )
+                                    ),
+                                    human_bytes::human_bytes(
+                                        progress_detail.total.unwrap_or_default() as f64
+                                    ),
                                 ))
                                 .await;
                             } else {
@@ -837,7 +840,7 @@ impl Server {
                         tracing::error!(
                             server = %self.uuid,
                             image = %image,
-                            "failed to pull image: {}",
+                            "failed to pull image: {:?}",
                             err
                         );
 

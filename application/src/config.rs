@@ -359,7 +359,7 @@ nestify::nest! {
             pub max_jwt_uses: usize,
             #[serde(default)]
             #[schema(value_type = Vec<String>)]
-            pub trusted_proxies: Vec<std::net::IpAddr>,
+            pub trusted_proxies: Vec<cidr::IpCidr>,
         },
         #[serde(default)]
         #[schema(inline)]
@@ -882,8 +882,8 @@ impl Config {
         headers: &HeaderMap,
         connect_info: ConnectInfo<std::net::SocketAddr>,
     ) -> std::net::IpAddr {
-        for ip in &self.api.trusted_proxies {
-            if connect_info.ip() == *ip {
+        for cidr in &self.api.trusted_proxies {
+            if cidr.contains(&connect_info.ip()) {
                 if let Some(forwarded) = headers.get("X-Forwarded-For")
                     && let Ok(forwarded) = forwarded.to_str()
                     && let Some(ip) = forwarded.split(',').next()

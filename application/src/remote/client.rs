@@ -77,7 +77,7 @@ impl Client {
                         return Err(err);
                     }
 
-                    tracing::debug!("retry attempt {} failed: {:#?}", tries + 1, err);
+                    tracing::error!("retry attempt {} failed: {:#?}", tries + 1, err);
 
                     last_err = Some(err);
                     tries += 1;
