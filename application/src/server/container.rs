@@ -1,4 +1,5 @@
 use super::configuration::process::ProcessConfigurationStartup;
+use bollard::container::MemoryStatsStats;
 use futures_util::StreamExt;
 use std::sync::Arc;
 use tokio::{
@@ -134,7 +135,19 @@ impl Container {
 
                         let mut usage = resource_usage.write().await;
 
-                        usage.memory_bytes = stats.memory_stats.usage.unwrap_or(0);
+                        let mut memory_usage = stats.memory_stats.usage.unwrap_or(0);
+                        if let Some(MemoryStatsStats::V1(stats)) = stats.memory_stats.stats
+                            && stats.total_inactive_file < memory_usage
+                        {
+                            memory_usage -= stats.total_inactive_file;
+                        }
+                        if let Some(MemoryStatsStats::V2(stats)) = stats.memory_stats.stats
+                            && stats.inactive_file < memory_usage
+                        {
+                            memory_usage -= stats.inactive_file;
+                        }
+
+                        usage.memory_bytes = memory_usage;
                         usage.memory_limit_bytes = stats.memory_stats.limit.unwrap_or(0);
                         usage.disk_bytes = disk_usage;
                         usage.state = server.state.get_state();
