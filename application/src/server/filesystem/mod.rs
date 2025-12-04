@@ -1,7 +1,7 @@
 use crate::server::backup::BrowseBackup;
-use cap_std::fs::{Metadata, PermissionsExt};
+use cap_std::fs::{Metadata, MetadataExt, PermissionsExt};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     hint::unreachable_unchecked,
     ops::Deref,
     os::fd::AsFd,
@@ -113,6 +113,7 @@ impl Filesystem {
 
                             let tmp_disk_usage =
                                 Arc::new(Mutex::new(Some(usage::DiskUsage::default())));
+                            let seen_inodes = Arc::new(RwLock::new(HashSet::new()));
                             let total_size = Arc::new(AtomicU64::new(0));
 
                             cap_filesystem
@@ -123,11 +124,13 @@ impl Filesystem {
                                     Arc::new({
                                         let total_size = Arc::clone(&total_size);
                                         let disk_usage = Arc::clone(&tmp_disk_usage);
+                                        let seen_inodes = Arc::clone(&seen_inodes);
                                         let cap_filesystem = cap_filesystem.clone();
 
                                         move |_, path: PathBuf| {
                                             let total_size = Arc::clone(&total_size);
                                             let disk_usage = Arc::clone(&disk_usage);
+                                            let seen_inodes = Arc::clone(&seen_inodes);
                                             let cap_filesystem = cap_filesystem.clone();
 
                                             async move {
@@ -139,6 +142,21 @@ impl Filesystem {
                                                     Err(_) => return Ok(()),
                                                 };
                                                 let size = metadata.len();
+
+                                                if !metadata.is_dir() {
+                                                    if seen_inodes
+                                                        .read()
+                                                        .await
+                                                        .contains(&metadata.ino())
+                                                    {
+                                                        return Ok(());
+                                                    } else {
+                                                        seen_inodes
+                                                            .write()
+                                                            .await
+                                                            .insert(metadata.ino());
+                                                    }
+                                                }
 
                                                 if metadata.is_dir()
                                                     && let Some(disk_usage) =
