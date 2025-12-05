@@ -143,7 +143,7 @@ impl Filesystem {
                                                 };
                                                 let size = metadata.len();
 
-                                                if !metadata.is_dir() {
+                                                if !metadata.is_dir() && metadata.nlink() > 1 {
                                                     if seen_inodes
                                                         .read()
                                                         .await
