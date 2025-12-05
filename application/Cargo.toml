@@ -1,6 +1,6 @@
 [package]
 name = "wings-rs"
-version = "0.21.14"
+version = "0.21.15"
 edition = "2024"
 
 [dependencies]
@@ -43,7 +43,7 @@ rustls = { version = "0.23.27", features = ["ring"] }
 ignore = { version = "0.4.23", features = ["simd-accel"] }
 sha1 = "0.10.6"
 futures = "0.3.31"
-russh = "0.54.0"
+russh = "0.55.0"
 russh-sftp = "2.1.1"
 md5 = "0.8.0"
 human_bytes = "0.4.3"
@@ -63,13 +63,14 @@ content_disposition = "0.4.0"
 cron = { version = "0.15.0", features = ["serde"] }
 chrono-tz = "0.10.4"
 gzp = "2.0.0"
-lzma-rust2 = { version = "0.15.0", features = ["optimization"] }
+lzma-rust2 = { version = "=0.15.2", features = ["optimization"] }
 bzip2 = "0.6.0"
 zstd = { version = "0.13.3", features = ["zstdmt"] }
 base64 = "0.22.1"
 chunked_vec = "=0.3.4"
 async-channel = "2.5.0"
 lzzzz = "2.0.0"
+xmltree = { version = "0.12.0", features = ["indexmap"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 tikv-jemallocator = "0.6.0"

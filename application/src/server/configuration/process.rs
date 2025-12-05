@@ -1,10 +1,10 @@
+use anyhow::{Context, Result};
 use serde::Deserialize;
 use serde_default::DefaultFromSerde;
-use std::collections::HashMap;
-use std::path::Path;
+use std::{collections::HashMap, fmt::Write, path::Path};
 use utoipa::ToSchema;
 
-#[derive(ToSchema, Deserialize, Clone, Copy)]
+#[derive(ToSchema, Deserialize, Clone, Copy, Debug)]
 #[serde(rename_all = "lowercase")]
 #[schema(rename_all = "lowercase")]
 pub enum ServerConfigurationFileParser {
@@ -17,14 +17,15 @@ pub enum ServerConfigurationFileParser {
     Xml,
 }
 
-#[derive(ToSchema, Deserialize, Clone)]
+#[derive(ToSchema, Deserialize, Clone, Debug)]
 pub struct ServerConfigurationFileReplacement {
     pub r#match: String,
     pub if_value: Option<String>,
+    #[serde(alias = "value")]
     pub replace_with: serde_json::Value,
 }
 
-#[derive(ToSchema, Deserialize, Clone)]
+#[derive(ToSchema, Deserialize, Clone, Debug)]
 pub struct ServerConfigurationFile {
     pub file: String,
     pub parser: ServerConfigurationFileParser,
@@ -36,139 +37,180 @@ impl ServerConfigurationFile {
     async fn lookup_value(
         server: &crate::server::Server,
         replacement: &serde_json::Value,
-    ) -> Option<String> {
-        let value = replacement.as_str()?;
+    ) -> Result<String> {
+        let value = match replacement {
+            serde_json::Value::String(s) => s.as_str(),
+            serde_json::Value::Number(n) => return Ok(n.to_string()),
+            serde_json::Value::Bool(b) => return Ok(b.to_string()),
+            serde_json::Value::Null => return Ok(String::new()),
+            _ => return Ok(replacement.to_string()),
+        };
 
-        if value.starts_with("{{") && value.ends_with("}}") {
-            let variable = value.trim_start_matches("{{").trim_end_matches("}}").trim();
+        if !value.starts_with("{{") || !value.ends_with("}}") {
+            return Ok(value.to_string());
+        }
 
-            tracing::debug!(
+        let variable = value.trim_start_matches("{{").trim_end_matches("}}").trim();
+
+        tracing::debug!(
+            server = %server.uuid,
+            "looking up variable: {}",
+            variable
+        );
+
+        let parts: Vec<&str> = variable.split('.').collect();
+        if parts.is_empty() {
+            tracing::error!(
                 server = %server.uuid,
-                "looking up variable: {} for server {}",
-                variable, server.uuid
+                "empty variable path"
             );
+            return Ok(String::new());
+        }
 
-            let parts: Vec<&str> = variable.split('.').collect();
-            if parts.len() >= 3 && parts[0] == "server" {
-                let config = server.configuration.read().await;
+        match parts[0] {
+            "server" => Self::lookup_server_variable(server, &parts[1..]).await,
+            "config" => Self::lookup_config_variable(&server.app_state.config, &parts[1..]).await,
+            _ => {
+                tracing::error!(
+                    server = %server.uuid,
+                    "unknown variable prefix: {}",
+                    parts[0]
+                );
+                Ok(String::new())
+            }
+        }
+    }
+
+    async fn lookup_server_variable(
+        server: &crate::server::Server,
+        parts: &[&str],
+    ) -> Result<String> {
+        if parts.is_empty() {
+            return Ok(String::new());
+        }
+
+        let config = server.configuration.read().await;
+
+        match parts[0] {
+            "build" => {
+                if parts.len() < 2 {
+                    return Ok(String::new());
+                }
 
                 match parts[1] {
-                    "build" => {
-                        if parts.len() >= 3 {
-                            match parts[2] {
-                                "memory" => return Some(config.build.memory_limit.to_string()),
-                                "io" => {
-                                    return Some(
-                                        config
-                                            .build
-                                            .io_weight
-                                            .map_or_else(|| "none".to_string(), |v| v.to_string()),
-                                    );
-                                }
-                                "cpu" => return Some(config.build.cpu_limit.to_string()),
-                                "disk" => return Some(config.build.disk_space.to_string()),
-                                "default" if parts.len() >= 4 => match parts[3] {
-                                    "port" => {
-                                        return config
-                                            .allocations
-                                            .default
-                                            .as_ref()
-                                            .map(|d| d.port.to_string());
-                                    }
-                                    "ip" => {
-                                        return config
-                                            .allocations
-                                            .default
-                                            .as_ref()
-                                            .map(|d| d.ip.to_string());
-                                    }
-                                    _ => {
-                                        tracing::error!(
-                                            server = %server.uuid,
-                                            "unknown server.build.default subpath: {}",
-                                            parts[3]
-                                        );
-                                    }
-                                },
-                                "env" if parts.len() >= 4 => {
-                                    let env_var = parts[3];
-                                    if let Some(value) = config.environment.get(env_var) {
-                                        return if let Some(value_str) = value.as_str() {
-                                            Some(value_str.to_string())
-                                        } else {
-                                            Some(value.to_string())
-                                        };
-                                    } else {
-                                        tracing::error!(
-                                            server = %server.uuid,
-                                            "environment variable not found: {}",
-                                            env_var
-                                        );
-                                    }
-                                }
-                                _ => {
-                                    tracing::error!(
-                                        server = %server.uuid,
-                                        "unknown server.build subpath: {}",
-                                        parts[2]
-                                    );
-                                }
-                            }
+                    "memory" => Ok(config.build.memory_limit.to_string()),
+                    "swap" => Ok(config.build.swap.to_string()),
+                    "io" => Ok(config
+                        .build
+                        .io_weight
+                        .map_or_else(|| "500".to_string(), |v| v.to_string())),
+                    "cpu" => Ok(config.build.cpu_limit.to_string()),
+                    "disk" => Ok(config.build.disk_space.to_string()),
+                    "threads" => Ok(config.build.threads.clone().unwrap_or_default()),
+                    "default" => {
+                        if parts.len() < 3 {
+                            return Ok(String::new());
                         }
-                    }
-                    "env" => {
-                        if parts.len() >= 3 {
-                            let env_var = parts[2];
-                            if let Some(value) = config.environment.get(env_var) {
-                                return if let Some(value_str) = value.as_str() {
-                                    Some(value_str.to_string())
-                                } else {
-                                    Some(value.to_string())
-                                };
-                            } else {
+                        match parts[2] {
+                            "port" => Ok(config
+                                .allocations
+                                .default
+                                .as_ref()
+                                .map(|d| d.port.to_string())
+                                .unwrap_or_default()),
+                            "ip" => Ok(config
+                                .allocations
+                                .default
+                                .as_ref()
+                                .map(|d| d.ip.to_string())
+                                .unwrap_or_default()),
+                            _ => {
                                 tracing::error!(
                                     server = %server.uuid,
-                                    "environment variable not found: {}",
-                                    env_var
+                                    "unknown server.build.default subpath: {}",
+                                    parts[2]
                                 );
+                                Ok(String::new())
                             }
                         }
                     }
                     _ => {
                         tracing::error!(
                             server = %server.uuid,
-                            "unknown server section: {}",
+                            "unknown server.build subpath: {}",
                             parts[1]
                         );
+                        Ok(String::new())
                     }
                 }
             }
+            "env" => {
+                if parts.len() < 2 {
+                    return Ok(String::new());
+                }
+                let env_var = parts[1];
+                if let Some(value) = config.environment.get(env_var) {
+                    Ok(value
+                        .as_str()
+                        .map_or_else(|| value.to_string(), |v| v.to_string()))
+                } else {
+                    tracing::warn!(
+                        server = %server.uuid,
+                        "environment variable not found: {}",
+                        env_var
+                    );
+                    Ok(String::new())
+                }
+            }
+            _ => {
+                tracing::error!(
+                    server = %server.uuid,
+                    "unknown server section: {}",
+                    parts[0]
+                );
+                Ok(String::new())
+            }
+        }
+    }
 
-            tracing::error!(
-                server = %server.uuid,
-                "could not resolve variable: {}, returning empty string",
-                variable
-            );
-
-            return Some(String::new());
+    async fn lookup_config_variable(
+        config: &crate::config::Config,
+        parts: &[&str],
+    ) -> Result<String> {
+        if parts.is_empty() || parts[0] == "token_id" || parts[0] == "token" {
+            return Ok(String::new());
         }
 
-        tracing::debug!(
-            server = %server.uuid,
-            "using raw value: {}",
-            value
-        );
+        let config_json =
+            serde_json::to_value(&**config).context("failed to serialize Wings configuration")?;
 
-        Some(value.to_string())
+        let mut current = &config_json;
+        for part in parts {
+            match current.get(part) {
+                Some(value) => current = value,
+                None => {
+                    tracing::warn!("config path not found: {}", parts.join("."));
+                    return Ok(String::new());
+                }
+            }
+        }
+
+        Ok(match current {
+            serde_json::Value::String(s) => s.clone(),
+            serde_json::Value::Number(n) => n.to_string(),
+            serde_json::Value::Bool(b) => b.to_string(),
+            serde_json::Value::Null => String::new(),
+            _ => current.to_string(),
+        })
     }
 
     async fn replace_all_placeholders(
         server: &crate::server::Server,
         input: &serde_json::Value,
-    ) -> String {
+    ) -> Result<String> {
         let input = match input.as_str() {
             Some(s) => s,
-            None => return input.to_string(),
+            None => return Self::lookup_value(server, input).await,
         };
 
         let mut result = String::new();
@@ -192,10 +234,16 @@ impl ServerConfigurationFile {
 
                 if found_end {
                     let value = serde_json::Value::String(placeholder.clone());
-                    if let Some(replacement) = Self::lookup_value(server, &value).await {
-                        result.push_str(&replacement);
-                    } else {
-                        result.push_str(&placeholder);
+                    match Self::lookup_value(server, &value).await {
+                        Ok(replacement) => result.push_str(&replacement),
+                        Err(e) => {
+                            tracing::error!(
+                                server = %server.uuid,
+                                "failed to lookup variable {}: {}",
+                                placeholder, e
+                            );
+                            result.push_str(&placeholder);
+                        }
                     }
                 } else {
                     result.push_str(&placeholder);
@@ -205,7 +253,7 @@ impl ServerConfigurationFile {
             }
         }
 
-        result
+        Ok(result)
     }
 }
 
@@ -231,7 +279,7 @@ nestify::nest! {
 }
 
 impl ProcessConfiguration {
-    pub async fn update_files(&self, server: &crate::server::Server) -> Result<(), anyhow::Error> {
+    pub async fn update_files(&self, server: &crate::server::Server) -> Result<()> {
         tracing::info!(
             server = %server.uuid,
             "starting configuration file updates with {} configuration files",
@@ -239,10 +287,6 @@ impl ProcessConfiguration {
         );
 
         if self.configs.is_empty() {
-            tracing::info!(
-                server = %server.uuid,
-                "no configuration files to update"
-            );
             return Ok(());
         }
 
@@ -256,212 +300,88 @@ impl ProcessConfiguration {
 
             if let Some(parent) = full_path.parent()
                 && !parent.as_os_str().is_empty()
+                && server.filesystem.async_metadata(&parent).await.is_err()
             {
                 tracing::debug!(
                     server = %server.uuid,
-                    "checking if parent directory exists: {}",
+                    "creating parent directory: {}",
                     parent.display()
                 );
 
-                if server.filesystem.async_metadata(&parent).await.is_err() {
-                    tracing::info!(
-                        server = %server.uuid,
-                        "creating parent directory: {}",
-                        parent.display()
-                    );
+                server
+                    .filesystem
+                    .async_create_dir_all(&parent)
+                    .await
+                    .with_context(|| {
+                        format!("failed to create parent directory: {}", parent.display())
+                    })?;
 
-                    match server.filesystem.async_create_dir_all(&parent).await {
-                        Ok(_) => {
-                            tracing::debug!(
-                                server = %server.uuid,
-                                "successfully created parent directory: {}",
-                                parent.display()
-                            );
-                        }
-                        Err(e) => {
-                            tracing::error!(
-                                server = %server.uuid,
-                                "failed to create parent directory {}: {}",
-                                parent.display(),
-                                e
-                            );
-                            continue;
-                        }
-                    }
-
-                    tracing::debug!(
-                        server = %server.uuid,
-                        "setting ownership for directory: {}",
-                        parent.display()
-                    );
-                    match server.filesystem.chown_path(&parent).await {
-                        Ok(_) => {
-                            tracing::debug!(
-                                server = %server.uuid,
-                                "successfully set ownership for directory: {}",
-                                parent.display()
-                            );
-                        }
-                        Err(e) => {
-                            tracing::error!(
-                                server = %server.uuid,
-                                "failed to set ownership for directory {}: {}",
-                                parent.display(),
-                                e
-                            );
-                        }
-                    }
-                } else {
-                    tracing::debug!(
-                        server = %server.uuid,
-                        "parent directory already exists: {}",
-                        parent.display()
-                    );
-                }
+                server
+                    .filesystem
+                    .chown_path(&parent)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "failed to set ownership for directory: {}",
+                            parent.display()
+                        )
+                    })?;
             }
 
             let mut file_content = String::new();
-
-            if let Ok(metadata) = server.filesystem.async_symlink_metadata(&file_path).await {
-                if !metadata.is_dir() {
-                    tracing::debug!(
-                        server = %server.uuid,
-                        "file exists, reading content: {}",
-                        file_path
-                    );
-
-                    match server.filesystem.async_read_to_string(&file_path).await {
-                        Ok(content) => {
-                            file_content = content;
-                            tracing::debug!(
-                                server = %server.uuid,
-                                "successfully read file content ({} bytes)",
-                                file_content.len()
-                            );
-                        }
-                        Err(e) => {
-                            tracing::debug!(
-                                server = %server.uuid,
-                                "failed to read file {}: {}",
-                                file_path, e
-                            );
-                        }
-                    }
-                } else {
-                    tracing::error!(
-                        server = %server.uuid,
-                        "path exists but is a directory: {}",
-                        file_path
-                    );
-                }
-            } else {
-                tracing::debug!(
-                    server = %server.uuid,
-                    "file does not exist, will create new: {}",
-                    file_path
-                );
+            if let Ok(metadata) = server.filesystem.async_symlink_metadata(&file_path).await
+                && !metadata.is_dir()
+            {
+                file_content = server
+                    .filesystem
+                    .async_read_to_string(&file_path)
+                    .await
+                    .unwrap_or_default();
             }
 
             let updated_content = match config.parser {
                 ServerConfigurationFileParser::Properties => {
-                    tracing::debug!(
-                        server = %server.uuid,
-                        "using properties parser"
-                    );
-                    process_properties_file(&file_content, &config, server).await
+                    process_properties_file(&file_content, &config, server).await?
                 }
                 ServerConfigurationFileParser::Json => {
-                    tracing::debug!(
-                        server = %server.uuid,
-                        "using json parser"
-                    );
-                    process_json_file(&file_content, &config, server).await
+                    process_json_file(&file_content, &config, server).await?
                 }
                 ServerConfigurationFileParser::Yaml => {
-                    tracing::debug!(
-                        server = %server.uuid,
-                        "using yaml parser"
-                    );
-                    process_yaml_file(&file_content, &config, server).await
+                    process_yaml_file(&file_content, &config, server).await?
                 }
                 ServerConfigurationFileParser::Ini => {
-                    tracing::debug!(
-                        server = %server.uuid,
-                        "using ini parser"
-                    );
-                    process_ini_file(&file_content, &config, server).await
+                    process_ini_file(&file_content, &config, server).await?
                 }
                 ServerConfigurationFileParser::Xml => {
-                    tracing::debug!(
-                        server = %server.uuid,
-                        "using xml parser"
-                    );
-                    process_xml_file(&file_content, &config, server).await
+                    process_xml_file(&file_content, &config, server).await?
                 }
                 ServerConfigurationFileParser::File => {
-                    tracing::debug!(
-                        server = %server.uuid,
-                        "using plain file parser"
-                    );
-                    process_plain_file(&file_content, &config, server).await
+                    process_plain_file(&file_content, &config, server).await?
                 }
             };
 
-            tracing::debug!(
-                server = %server.uuid,
-                "finished processing content, writing updated content ({} bytes)",
-                updated_content.len()
-            );
-
-            match server
+            server
                 .filesystem
                 .async_write(&full_path, updated_content.as_bytes().to_vec())
                 .await
-            {
-                Ok(_) => {
-                    tracing::debug!(
-                        server = %server.uuid,
-                        "successfully wrote content to file: {}",
-                        file_path
-                    );
+                .with_context(|| format!("failed to write file: {}", file_path))?;
 
-                    match server.filesystem.chown_path(&file_path).await {
-                        Ok(_) => {
-                            tracing::debug!(
-                                server = %server.uuid,
-                                "successfully set ownership for file: {}",
-                                file_path
-                            );
-                        }
-                        Err(e) => {
-                            tracing::error!(
-                                server = %server.uuid,
-                                "failed to set ownership for file {}: {}",
-                                file_path, e
-                            );
-                        }
-                    }
+            server
+                .filesystem
+                .chown_path(&file_path)
+                .await
+                .with_context(|| format!("failed to set ownership for file: {}", file_path))?;
 
-                    tracing::debug!(
-                        server = %server.uuid,
-                        "successfully processed configuration file {} for server {}",
-                        file_path, server.uuid
-                    );
-                }
-                Err(e) => {
-                    tracing::debug!(
-                        server = %server.uuid,
-                        "failed to write to file {}: {}",
-                        file_path, e
-                    );
-                }
-            }
+            tracing::debug!(
+                server = %server.uuid,
+                "successfully processed configuration file: {}",
+                file_path
+            );
         }
 
         tracing::info!(
             server = %server.uuid,
-            "completed all configuration file updates for server {}",
-            server.uuid
+            "completed all configuration file updates"
         );
 
         Ok(())
@@ -472,337 +392,166 @@ async fn process_properties_file(
     content: &str,
     config: &ServerConfigurationFile,
     server: &crate::server::Server,
-) -> String {
+) -> Result<String> {
     tracing::debug!(
         server = %server.uuid,
-        "processing properties file with {} lines",
-        content.lines().count()
+        "processing properties file"
     );
 
-    let mut result = Vec::new();
-    let mut processed_keys = HashMap::new();
+    let mut result = String::new();
+    let mut in_header = true;
+    let mut properties = HashMap::new();
+    let mut property_order = Vec::new();
 
-    for (line_num, line) in content.lines().enumerate() {
-        let mut updated_line = line.to_string();
+    for line in content.lines() {
+        let trimmed = line.trim();
 
-        if line.trim().is_empty() || line.trim().starts_with('#') {
-            tracing::debug!(
-                server = %server.uuid,
-                "line {}: skipping comment or empty line: '{}'",
-                line_num, line
-            );
-
-            result.push(updated_line);
+        if in_header && (trimmed.is_empty() || trimmed.starts_with('#')) {
+            writeln!(result, "{}", line)?;
             continue;
         }
 
-        let parts: Vec<&str> = line.splitn(2, '=').collect();
-        if parts.len() != 2 {
-            tracing::debug!(
-                server = %server.uuid,
-                "line {}: not a key-value pair: '{}'",
-                line_num, line
-            );
+        in_header = false;
 
-            result.push(updated_line);
+        if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
 
-        let key = parts[0].trim();
-        let original_value = parts[1];
-        processed_keys.insert(key.to_owned(), true);
+        if let Some(eq_pos) = line.find('=') {
+            let key = line[..eq_pos].trim().to_string();
+            let value = line[eq_pos + 1..].to_string();
 
-        tracing::debug!(
-            server = %server.uuid,
-            "line {}: processing key '{}' with value '{}'",
-            line_num, key, original_value
-        );
-
-        for replacement in &config.replace {
-            if replacement.r#match == key {
-                tracing::debug!(
-                    server = %server.uuid,
-                    "found replacement match for key: {}",
-                    key
-                );
-
-                if let Some(if_value) = &replacement.if_value
-                    && original_value != if_value
-                {
-                    tracing::debug!(
-                        server = %server.uuid,
-                        "value '{}' does not match required if_value '{}', skipping",
-                        original_value, if_value
-                    );
-                    continue;
-                }
-
-                let value = ServerConfigurationFile::replace_all_placeholders(
-                    server,
-                    &replacement.replace_with,
-                )
-                .await;
-
-                tracing::debug!(
-                    server = %server.uuid,
-                    "replacing value for key '{}': '{}' -> '{}'",
-                    key, original_value, value
-                );
-
-                updated_line = format!("{key}={value}");
-                break;
+            if !properties.contains_key(&key) {
+                property_order.push(key.clone());
             }
+            properties.insert(key, value);
         }
-
-        result.push(updated_line);
     }
 
     for replacement in &config.replace {
-        if !processed_keys.contains_key(&replacement.r#match) {
-            tracing::debug!(
-                server = %server.uuid,
-                "adding missing key: {}",
-                replacement.r#match
-            );
+        let value =
+            ServerConfigurationFile::replace_all_placeholders(server, &replacement.replace_with)
+                .await?;
 
-            let value = ServerConfigurationFile::replace_all_placeholders(
-                server,
-                &replacement.replace_with,
-            )
-            .await;
+        if let Some(if_value) = &replacement.if_value {
+            if let Some(existing) = properties.get(&replacement.r#match) {
+                if existing != if_value {
+                    tracing::debug!(
+                        server = %server.uuid,
+                        "skipping replacement for '{}': value '{}' != '{}'",
+                        replacement.r#match, existing, if_value
+                    );
+                    continue;
+                }
+            } else {
+                continue;
+            }
+        }
 
-            tracing::debug!(
-                server = %server.uuid,
-                "adding new key-value pair: '{}={}'",
-                replacement.r#match, value
-            );
-            result.push(format!("{}={}", replacement.r#match, value));
+        if !properties.contains_key(&replacement.r#match) {
+            property_order.push(replacement.r#match.clone());
+        }
+        properties.insert(replacement.r#match.clone(), value);
+    }
+
+    for key in property_order {
+        if let Some(value) = properties.get(&key) {
+            let escaped_value = escape_property_value(value);
+            writeln!(result, "{}={}", key, escaped_value)?;
         }
     }
 
-    tracing::debug!(
-        server = %server.uuid,
-        "finished processing properties file, resulting in {} lines",
-        result.len()
-    );
+    Ok(result)
+}
 
-    result.join("\n") + "\n"
+fn escape_property_value(value: &str) -> String {
+    let mut result = String::new();
+
+    for ch in value.chars() {
+        match ch {
+            '\\' => result.push_str("\\\\"),
+            '\n' => result.push_str("\\n"),
+            '\r' => result.push_str("\\r"),
+            '\t' => result.push_str("\\t"),
+            ch if ch.is_ascii() && !ch.is_control() => result.push(ch),
+            ch => {
+                result.push_str(&format!("\\u{:04x}", ch as u32));
+            }
+        }
+    }
+
+    result
 }
 
 async fn process_json_file(
     content: &str,
     config: &ServerConfigurationFile,
     server: &crate::server::Server,
-) -> String {
+) -> Result<String> {
     tracing::debug!(
         server = %server.uuid,
-        "processing json file with {} bytes",
-        content.len()
+        "processing json file"
     );
 
     let mut json: serde_json::Value = if content.trim().is_empty() {
-        tracing::debug!(
-            server = %server.uuid,
-            "content is empty, starting with empty object"
-        );
         serde_json::Value::Object(serde_json::Map::new())
     } else {
-        match serde_json::from_str(content) {
-            Ok(j) => {
-                tracing::debug!(
-                    server = %server.uuid,
-                    "successfully parsed json content"
-                );
-                j
-            }
-            Err(e) => {
-                tracing::error!(
-                    server = %server.uuid,
-                    "failed to parse json content: {}. starting with empty object.",
-                    e
-                );
-                serde_json::Value::Object(serde_json::Map::new())
-            }
-        }
+        serde_json::from_str(content)
+            .unwrap_or_else(|_| serde_json::Value::Object(serde_json::Map::new()))
     };
 
-    tracing::debug!(
-        server = %server.uuid,
-        "applying {} replacements to json",
-        config.replace.len()
-    );
-
-    for (index, replacement) in config.replace.iter().enumerate() {
+    for replacement in &config.replace {
         let path_parts: Vec<&str> = replacement.r#match.split('.').collect();
 
-        tracing::debug!(
-            server = %server.uuid,
-            "processing replacement {}/{}: path '{}'",
-            index + 1,
-            config.replace.len(),
-            replacement.r#match
-        );
+        let value = match &replacement.replace_with {
+            serde_json::Value::String(_) => {
+                let resolved = ServerConfigurationFile::replace_all_placeholders(
+                    server,
+                    &replacement.replace_with,
+                )
+                .await?;
 
-        let value =
-            ServerConfigurationFile::replace_all_placeholders(server, &replacement.replace_with)
-                .await;
+                serde_json::from_str(&resolved).unwrap_or(serde_json::Value::String(resolved))
+            }
+            other => other.clone(),
+        };
 
-        tracing::debug!(
-            server = %server.uuid,
-            "updating json value at path '{}' with value '{}'",
-            replacement.r#match, value
-        );
-        update_json_value(&mut json, &path_parts, value, server);
+        update_json_value(&mut json, &path_parts, value);
     }
 
-    match serde_json::to_string_pretty(&json) {
-        Ok(json_str) => {
-            tracing::debug!(
-                server = %server.uuid,
-                "successfully serialized json ({} bytes)",
-                json_str.len()
-            );
-            json_str
-        }
-        Err(e) => {
-            tracing::error!(
-                server = %server.uuid,
-                "failed to serialize json: {}",
-                e
-            );
-            "{}".to_string()
-        }
-    }
+    Ok(serde_json::to_string_pretty(&json)?)
 }
 
-fn update_json_value(
-    json: &mut serde_json::Value,
-    path: &[&str],
-    value: String,
-    server: &crate::server::Server,
-) {
+fn update_json_value(json: &mut serde_json::Value, path: &[&str], value: serde_json::Value) {
     if path.is_empty() {
-        tracing::debug!(
-            server = %server.uuid,
-            "empty path provided to update_json_value, skipping"
-        );
         return;
     }
 
     if path.len() == 1 {
-        tracing::debug!(
-            server = %server.uuid,
-            "setting leaf value at path '{}' to '{}'",
-            path[0], value
-        );
-
         match json {
             serde_json::Value::Object(map) => {
-                let val = if value.eq_ignore_ascii_case("true") {
-                    tracing::debug!(
-                        server = %server.uuid,
-                        "treating value as boolean (true)"
-                    );
-                    serde_json::Value::Bool(true)
-                } else if value.eq_ignore_ascii_case("false") {
-                    tracing::debug!(
-                        server = %server.uuid,
-                        "treating value as boolean (false)"
-                    );
-                    serde_json::Value::Bool(false)
-                } else if let Ok(i) = value.parse::<i64>() {
-                    tracing::debug!(
-                        server = %server.uuid,
-                        "treating value as integer: {}",
-                        i
-                    );
-                    serde_json::Value::Number(serde_json::Number::from(i))
-                } else if let Ok(f) = value.parse::<f64>() {
-                    if f.fract() != 0.0 {
-                        tracing::debug!(
-                            server = %server.uuid,
-                            "treating value as float: {}",
-                            f
-                        );
-                        match serde_json::Number::from_f64(f) {
-                            Some(n) => serde_json::Value::Number(n),
-                            None => {
-                                tracing::debug!(
-                                    server = %server.uuid,
-                                    "failed to convert float to json number, using string"
-                                );
-                                serde_json::Value::String(value)
-                            }
-                        }
-                    } else {
-                        tracing::debug!(
-                            server = %server.uuid,
-                            "float has no fractional part, treating as string"
-                        );
-                        serde_json::Value::String(value)
-                    }
-                } else {
-                    tracing::debug!(
-                        server = %server.uuid,
-                        "treating value as string"
-                    );
-                    serde_json::Value::String(value)
-                };
-
-                tracing::debug!(
-                    server = %server.uuid,
-                    "setting json object key '{}' to value",
-                    path[0]
-                );
-                map.insert(path[0].to_string(), val);
+                map.insert(path[0].to_string(), value);
             }
             _ => {
-                tracing::debug!(
-                    server = %server.uuid,
-                    "json value is not an object, replacing with new object"
-                );
-
                 let mut map = serde_json::Map::new();
-                map.insert(path[0].to_string(), serde_json::Value::String(value));
+                map.insert(path[0].to_string(), value);
                 *json = serde_json::Value::Object(map);
             }
         }
         return;
     }
 
-    tracing::debug!(
-        server = %server.uuid,
-        "navigating to nested path: {}",
-        path[0]
-    );
-
     match json {
         serde_json::Value::Object(map) => {
-            tracing::debug!(
-                server = %server.uuid,
-                "found object at path '{}', navigating deeper",
-                path[0]
-            );
-            let entry = map.entry(path[0].to_string()).or_insert_with(|| {
-                tracing::debug!(
-                    server = %server.uuid,
-                    "creating new object for key '{}'",
-                    path[0]
-                );
-                serde_json::Value::Object(serde_json::Map::new())
-            });
-            update_json_value(entry, &path[1..], value, server);
+            let entry = map
+                .entry(path[0].to_string())
+                .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+            update_json_value(entry, &path[1..], value);
         }
         _ => {
-            tracing::debug!(
-                server = %server.uuid,
-                "value at '{}' is not an object, replacing with new object hierarchy",
-                path[0]
-            );
-
             let mut map = serde_json::Map::new();
             let mut new_value = serde_json::Value::Object(serde_json::Map::new());
-            update_json_value(&mut new_value, &path[1..], value, server);
+            update_json_value(&mut new_value, &path[1..], value);
             map.insert(path[0].to_string(), new_value);
             *json = serde_json::Value::Object(map);
         }
@@ -813,293 +562,335 @@ async fn process_yaml_file(
     content: &str,
     config: &ServerConfigurationFile,
     server: &crate::server::Server,
-) -> String {
+) -> Result<String> {
     tracing::debug!(
         server = %server.uuid,
-        "processing yaml file with {} bytes",
-        content.len()
+        "processing yaml file"
     );
 
-    let mut json = if content.trim().is_empty() {
-        tracing::debug!(
-            server = %server.uuid,
-            "content is empty, starting with empty object"
-        );
+    let mut json: serde_json::Value = if content.trim().is_empty() {
         serde_json::Value::Object(serde_json::Map::new())
     } else {
-        match serde_json::from_str(content) {
-            Ok(j) => {
-                tracing::debug!(
-                    server = %server.uuid,
-                    "successfully parsed yaml content as json"
-                );
-                j
-            }
-            Err(e) => {
-                tracing::error!(
-                    server = %server.uuid,
-                    "failed to parse yaml content as json: {}. starting with empty document.",
-                    e
-                );
-                serde_json::Value::Object(serde_json::Map::new())
-            }
-        }
+        serde_yml::from_str(content)
+            .unwrap_or_else(|_| serde_json::Value::Object(serde_json::Map::new()))
     };
 
-    tracing::debug!(
-        server = %server.uuid,
-        "applying {} replacements to yaml",
-        config.replace.len()
-    );
-
-    for (index, replacement) in config.replace.iter().enumerate() {
+    for replacement in &config.replace {
         let path_parts: Vec<&str> = replacement.r#match.split('.').collect();
 
-        tracing::debug!(
-            server = %server.uuid,
-            "processing replacement {}/{}: path '{}'",
-            index + 1,
-            config.replace.len(),
-            replacement.r#match
-        );
+        let value = match &replacement.replace_with {
+            serde_json::Value::String(_) => {
+                let resolved = ServerConfigurationFile::replace_all_placeholders(
+                    server,
+                    &replacement.replace_with,
+                )
+                .await?;
+                serde_json::from_str(&resolved).unwrap_or(serde_json::Value::String(resolved))
+            }
+            other => other.clone(),
+        };
 
-        let value =
-            ServerConfigurationFile::replace_all_placeholders(server, &replacement.replace_with)
-                .await;
-
-        tracing::debug!(
-            server = %server.uuid,
-            "updating yaml value at path '{}' with value '{}'",
-            replacement.r#match, value
-        );
-        update_json_value(&mut json, &path_parts, value, server);
+        update_json_value(&mut json, &path_parts, value);
     }
 
-    match serde_json::to_string_pretty(&json) {
-        Ok(yaml_str) => yaml_str,
-        Err(e) => {
-            tracing::error!(
-                server = %server.uuid,
-                "failed to serialize yaml: {}",
-                e
-            );
-            "{}\n".to_string()
-        }
-    }
+    Ok(serde_yml::to_string(&json)?)
 }
 
 async fn process_ini_file(
     content: &str,
     config: &ServerConfigurationFile,
     server: &crate::server::Server,
-) -> String {
+) -> Result<String> {
     tracing::debug!(
         server = %server.uuid,
-        "processing ini file with {} bytes",
-        content.len()
+        "processing ini file"
     );
 
-    let mut lines = Vec::new();
-    let mut sections = HashMap::new();
+    let mut result = String::new();
+    let mut sections: HashMap<String, HashMap<String, String>> = HashMap::new();
+    let mut section_order = Vec::new();
     let mut current_section = String::new();
-    let mut processed_keys = HashMap::new();
+    let mut root_section = HashMap::new();
 
     for line in content.lines() {
-        if line.trim().is_empty() || line.starts_with(';') || line.starts_with('#') {
-            lines.push(line.to_string());
+        let trimmed = line.trim();
+
+        if trimmed.is_empty() || trimmed.starts_with(';') || trimmed.starts_with('#') {
             continue;
         }
 
-        if line.starts_with('[') && line.ends_with(']') {
-            current_section = line[1..line.len() - 1].to_string();
-            lines.push(line.to_string());
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            current_section = trimmed[1..trimmed.len() - 1].to_string();
+            if !sections.contains_key(&current_section) {
+                section_order.push(current_section.clone());
+                sections.insert(current_section.clone(), HashMap::new());
+            }
             continue;
         }
 
-        let parts: Vec<&str> = line.splitn(2, '=').collect();
-        if parts.len() == 2 {
-            let key = parts[0].trim();
-            let full_key = if current_section.is_empty() {
-                key.to_string()
-            } else {
-                format!("{current_section}.{key}")
-            };
+        if let Some(eq_pos) = line.find('=') {
+            let key = line[..eq_pos].trim().to_string();
+            let value = line[eq_pos + 1..].trim().to_string();
 
-            processed_keys.insert(full_key.clone(), lines.len());
-            lines.push(line.to_string());
-        } else {
-            lines.push(line.to_string());
+            if current_section.is_empty() {
+                root_section.insert(key, value);
+            } else if let Some(section) = sections.get_mut(&current_section) {
+                section.insert(key, value);
+            }
         }
     }
 
     for replacement in &config.replace {
-        let parts: Vec<&str> = replacement.r#match.splitn(2, '.').collect();
-
         let value =
             ServerConfigurationFile::replace_all_placeholders(server, &replacement.replace_with)
-                .await;
+                .await?;
 
-        if parts.len() == 2 {
-            let section = parts[0];
-            let key = parts[1];
-            let full_key = replacement.r#match.clone();
+        let (section_name, key_name) = parse_ini_path(&replacement.r#match);
 
-            if let Some(line_idx) = processed_keys.get(&full_key) {
-                tracing::debug!(
-                    server = %server.uuid,
-                    "updating existing key '{}' in section '{}'",
-                    key, section
-                );
-                lines[*line_idx] = format!("{key}={value}");
-            } else {
-                if !sections.contains_key(section) {
-                    tracing::debug!(
-                        server = %server.uuid,
-                        "adding new section: [{}]",
-                        section
-                    );
-                    sections.insert(section.to_string(), true);
-                    lines.push(format!("[{section}]"));
-                }
-                tracing::debug!(
-                    server = %server.uuid,
-                    "adding new key '{}' to section '{}'",
-                    key, section
-                );
-                lines.push(format!("{key}={value}"));
-            }
+        if section_name.is_empty() {
+            root_section.insert(key_name, value);
         } else {
-            let key = parts[0];
-
-            if let Some(line_idx) = processed_keys.get(key) {
-                tracing::debug!(
-                    server = %server.uuid,
-                    "updating existing key '{}' in root section",
-                    key
-                );
-                lines[*line_idx] = format!("{key}={value}");
-            } else {
-                tracing::debug!(
-                    server = %server.uuid,
-                    "adding new key '{}' to root section",
-                    key
-                );
-                lines.push(format!("{key}={value}"));
+            if !sections.contains_key(&section_name) {
+                section_order.push(section_name.clone());
+                sections.insert(section_name.clone(), HashMap::new());
+            }
+            if let Some(section) = sections.get_mut(&section_name) {
+                section.insert(key_name, value);
             }
         }
     }
 
-    tracing::debug!(
-        server = %server.uuid,
-        "finished processing ini file, resulting in {} lines",
-        lines.len()
-    );
+    for (key, value) in &root_section {
+        writeln!(result, "{}={}", key, value)?;
+    }
 
-    lines.join("\n") + "\n"
+    for section_name in section_order {
+        if let Some(section) = sections.get(&section_name)
+            && !section.is_empty()
+        {
+            writeln!(result, "\n[{}]", section_name)?;
+            for (key, value) in section {
+                writeln!(result, "{}={}", key, value)?;
+            }
+        }
+    }
+
+    Ok(result)
+}
+
+fn parse_ini_path(path: &str) -> (String, String) {
+    let mut section = String::new();
+    let mut key = String::new();
+    let mut bracket_depth = 0;
+    let mut in_section = true;
+
+    for ch in path.chars() {
+        match ch {
+            '[' => {
+                bracket_depth += 1;
+                if in_section {
+                    section.push(ch);
+                } else {
+                    key.push(ch);
+                }
+            }
+            ']' => {
+                bracket_depth -= 1;
+                if in_section {
+                    section.push(ch);
+                } else {
+                    key.push(ch);
+                }
+            }
+            '.' => {
+                if bracket_depth > 0 {
+                    if in_section {
+                        section.push(ch);
+                    } else {
+                        key.push(ch);
+                    }
+                } else if in_section && !section.is_empty() {
+                    in_section = false;
+                } else {
+                    key.push(ch);
+                }
+            }
+            _ => {
+                if in_section {
+                    section.push(ch);
+                } else {
+                    key.push(ch);
+                }
+            }
+        }
+    }
+
+    if in_section {
+        (String::new(), section)
+    } else {
+        (section, key)
+    }
 }
 
 async fn process_xml_file(
     content: &str,
     config: &ServerConfigurationFile,
     server: &crate::server::Server,
-) -> String {
-    let mut xml_content = if content.trim().is_empty() {
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<root>\n</root>".to_string()
+) -> Result<String> {
+    tracing::debug!(
+        server = %server.uuid,
+        "processing xml file"
+    );
+
+    let content = if content.trim().is_empty() {
+        r#"<?xml version="1.0" encoding="UTF-8"?><root></root>"#
     } else {
-        content.to_string()
+        content
     };
+
+    let mut root = xmltree::Element::parse(content.as_bytes())?;
 
     for replacement in &config.replace {
         let value =
             ServerConfigurationFile::replace_all_placeholders(server, &replacement.replace_with)
-                .await;
+                .await?;
 
-        let parts: Vec<&str> = replacement
-            .r#match
-            .split('/')
-            .filter(|p| !p.is_empty())
-            .collect();
-        if parts.is_empty() {
-            continue;
-        }
+        let path = replacement.r#match.replace('.', "/");
+        let path_parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
 
-        let tag_name = parts.last().unwrap();
-        let start_tag = format!("<{tag_name}>");
-        let end_tag = format!("</{tag_name}>");
-
-        if xml_content.contains(&start_tag) && xml_content.contains(&end_tag) {
-            if let Some(start_pos) = xml_content.find(&start_tag) {
-                let tag_end = start_pos + start_tag.len();
-                if let Some(end_pos) = xml_content[tag_end..].find(&end_tag) {
-                    let full_end = tag_end + end_pos;
-                    xml_content = format!(
-                        "{}{}{}{}",
-                        &xml_content[..tag_end],
-                        value,
-                        &xml_content[full_end..full_end],
-                        &xml_content[full_end..]
-                    );
-                }
-            }
-        } else if parts.len() == 1
-            && let Some(root_end_idx) = xml_content.rfind("</root>")
-        {
-            xml_content.insert_str(
-                root_end_idx,
-                &format!("\n  <{tag_name}>{value}</{tag_name}>\n"),
-            );
+        if path.contains('*') {
+            update_xml_wildcard(&mut root, &path_parts, &value);
+        } else {
+            update_xml_element(&mut root, &path_parts, &value);
         }
     }
 
-    xml_content
+    let mut xml_bytes = Vec::new();
+    root.write_with_config(
+        &mut xml_bytes,
+        xmltree::EmitterConfig::new()
+            .perform_indent(true)
+            .indent_string("  "),
+    )?;
+
+    Ok(String::from_utf8(xml_bytes)?)
+}
+
+fn update_xml_element(element: &mut xmltree::Element, path: &[&str], value: &str) {
+    if path.is_empty() {
+        return;
+    }
+
+    if path.len() == 1 {
+        let tag = path[0];
+
+        if let Some(attr_value) = value.strip_prefix('@')
+            && let Some(eq_pos) = attr_value.find('=')
+        {
+            let attr_name = &attr_value[..eq_pos];
+            let attr_val = &attr_value[eq_pos + 1..];
+            element
+                .attributes
+                .insert(attr_name.to_string(), attr_val.to_string());
+            return;
+        }
+
+        if let Some(child) = element.get_mut_child(tag) {
+            child.children.clear();
+            child
+                .children
+                .push(xmltree::XMLNode::Text(value.to_string()));
+        } else {
+            let mut new_child = xmltree::Element::new(tag);
+            new_child
+                .children
+                .push(xmltree::XMLNode::Text(value.to_string()));
+            element.children.push(xmltree::XMLNode::Element(new_child));
+        }
+        return;
+    }
+
+    let tag = path[0];
+    if let Some(child) = element.get_mut_child(tag) {
+        update_xml_element(child, &path[1..], value);
+    } else {
+        let mut new_child = xmltree::Element::new(tag);
+        update_xml_element(&mut new_child, &path[1..], value);
+        element.children.push(xmltree::XMLNode::Element(new_child));
+    }
+}
+
+fn update_xml_wildcard(element: &mut xmltree::Element, path: &[&str], value: &str) {
+    if path.is_empty() {
+        return;
+    }
+
+    let tag = path[0];
+
+    if tag == "*" {
+        for child in &mut element.children {
+            if let xmltree::XMLNode::Element(child_elem) = child {
+                if path.len() == 1 {
+                    child_elem.children.clear();
+                    child_elem
+                        .children
+                        .push(xmltree::XMLNode::Text(value.to_string()));
+                } else {
+                    update_xml_wildcard(child_elem, &path[1..], value);
+                }
+            }
+        }
+    } else {
+        for child in &mut element.children {
+            if let xmltree::XMLNode::Element(child_elem) = child
+                && child_elem.name == tag
+            {
+                if path.len() == 1 {
+                    child_elem.children.clear();
+                    child_elem
+                        .children
+                        .push(xmltree::XMLNode::Text(value.to_string()));
+                } else {
+                    update_xml_wildcard(child_elem, &path[1..], value);
+                }
+            }
+        }
+    }
 }
 
 async fn process_plain_file(
     content: &str,
     config: &ServerConfigurationFile,
     server: &crate::server::Server,
-) -> String {
-    let mut result = Vec::new();
-    let mut processed_matches = HashMap::new();
+) -> Result<String> {
+    tracing::debug!(
+        server = %server.uuid,
+        "processing plain file"
+    );
+
+    let mut result = String::new();
 
     for line in content.lines() {
-        let mut updated_line = line.to_string();
+        let mut replaced = false;
 
         for replacement in &config.replace {
-            if line.trim().starts_with(&replacement.r#match) {
-                processed_matches.insert(replacement.r#match.clone(), true);
-
-                if let Some(if_value) = &replacement.if_value
-                    && !line.contains(if_value)
-                {
-                    continue;
-                }
-
+            if line.starts_with(&replacement.r#match) {
                 let value = ServerConfigurationFile::replace_all_placeholders(
                     server,
                     &replacement.replace_with,
                 )
-                .await;
+                .await?;
 
-                updated_line = value;
+                writeln!(result, "{}", value)?;
+                replaced = true;
                 break;
             }
         }
 
-        result.push(updated_line);
-    }
-
-    for replacement in &config.replace {
-        if !processed_matches.contains_key(&replacement.r#match) {
-            let value = ServerConfigurationFile::replace_all_placeholders(
-                server,
-                &replacement.replace_with,
-            )
-            .await;
-
-            result.push(value);
+        if !replaced {
+            writeln!(result, "{}", line)?;
         }
     }
 
-    result.join("\n") + "\n"
+    Ok(result)
 }
