@@ -638,7 +638,7 @@ impl Filesystem {
         self.disk_usage.write().await.clear();
         self.disk_usage_cached.store(0, Ordering::Relaxed);
 
-        let mut directory = self.async_walk_dir(Path::new("")).await?;
+        let mut directory = self.async_read_dir(Path::new("")).await?;
         while let Some(Ok((is_dir, path))) = directory.next_entry().await {
             if is_dir {
                 self.async_remove_dir_all(&path).await?;
