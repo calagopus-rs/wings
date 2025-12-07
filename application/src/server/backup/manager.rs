@@ -298,13 +298,6 @@ impl BackupManager {
         );
 
         if truncate_directory && let Err(err) = server.filesystem.truncate_root().await {
-            tracing::error!(
-                server = %server.uuid,
-                backup = %backup.uuid(),
-                "failed to truncate root directory before restoring backup: {:#?}",
-                err
-            );
-
             server.restoring.store(false, Ordering::SeqCst);
             server
                 .app_state
@@ -313,7 +306,7 @@ impl BackupManager {
                 .set_backup_restore_status(backup.uuid(), false)
                 .await?;
 
-            return Err(err);
+            return Err(err.context("failed to truncate root directory before restoring backup"));
         }
 
         let progress = Arc::new(AtomicU64::new(0));
