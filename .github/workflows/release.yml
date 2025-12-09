@@ -31,7 +31,7 @@ jobs:
         - build: riscv64-linux
           os: ubuntu-24.04
           rust: stable
-          target: riscv64gc-unknown-none-elf
+          target: riscv64gc-unknown-linux-musl
           cross: true
 
     steps:
