@@ -1,4 +1,5 @@
 name: Release
+
 on:
   push:
     branches:
@@ -20,53 +21,42 @@ jobs:
         include:
           - build: x86_64-linux
             os: ubuntu-24.04
-            rust: stable
             target: x86_64-unknown-linux-musl
-            cross: true
           - build: aarch64-linux
             os: ubuntu-24.04
-            rust: stable
             target: aarch64-unknown-linux-musl
-            cross: true
           - build: riscv64-linux
             os: ubuntu-24.04
-            rust: stable
             target: riscv64gc-unknown-linux-gnu
-            cross: true
 
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
 
-      - name: Install ${{ matrix.rust }} toolchain
-        uses: actions-rs/toolchain@v1
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          profile: minimal
-          toolchain: ${{ matrix.rust }}
+          toolchain: stable
           target: ${{ matrix.target }}
-          override: true
+
+      - name: Install cross toolchain
+        uses: taiki-e/setup-cross-toolchain-action@v1
+        with:
+          target: ${{ matrix.target }}
+
+      - name: Install cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
-        with:
-          prefix-key: ${{ runner.os }}-${{ matrix.rust }}-${{ matrix.target }}
 
-      - name: Run cargo test
-        uses: actions-rs/cargo@v1
-        with:
-          use-cross: ${{ matrix.cross }}
-          command: test
-          args: --release --target ${{ matrix.target }}
+      - name: Run cargo test (cross)
+        run: cross test --release --target ${{ matrix.target }}
 
-      - name: Build release binary
-        uses: actions-rs/cargo@v1
-        with:
-          use-cross: ${{ matrix.cross }}
-          command: build
-          args: --release --target ${{ matrix.target }}
+      - name: Build release binary (cross)
+        run: cross build --release --target ${{ matrix.target }}
 
       - name: Prepare binary with platform name
-        shell: bash
         run: |
           mkdir -p dist
           cp "target/${{ matrix.target }}/release/$BIN_NAME" "dist/$BIN_NAME-${{ matrix.build }}"
@@ -83,20 +73,21 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
 
-      - name: Download all artifacts
+      - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
 
-      - name: Get cli version from Cargo.toml
+      - name: Fetch version from Cargo.toml
         id: version
-        run: echo "val=$(cargo metadata --format-version=1 --no-deps | jq '.packages[0].version' -r)" >> $GITHUB_OUTPUT
+        run: echo "val=$(cargo metadata --format-version=1 --no-deps | jq -r '.packages[0].version')" >> $GITHUB_OUTPUT
 
-      - name: Upload binaries to release
+      - name: Upload binaries to GitHub Release
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
@@ -142,15 +133,15 @@ jobs:
           chmod +x dist/${{ env.PROJECT_NAME }}-riscv64-linux/${{ env.BIN_NAME }}-riscv64-linux
 
           mkdir -p .docker/amd64 .docker/arm64 .docker/riscv64
-          cp dist/${{ env.BIN_NAME }}-x86_64-linux/${{ env.BIN_NAME }}-x86_64-linux .docker/amd64/wings-rs
-          cp dist/${{ env.BIN_NAME }}-aarch64-linux/${{ env.BIN_NAME }}-aarch64-linux .docker/arm64/wings-rs
-          cp dist/${{ env.BIN_NAME }}-riscv64-linux/${{ env.BIN_NAME }}-riscv64-linux .docker/riscv64/wings-rs
+          cp dist/${{ env.PROJECT_NAME }}-x86_64-linux/${{ env.BIN_NAME }}-x86_64-linux .docker/amd64/wings-rs
+          cp dist/${{ env.PROJECT_NAME }}-aarch64-linux/${{ env.BIN_NAME }}-aarch64-linux .docker/arm64/wings-rs
+          cp dist/${{ env.PROJECT_NAME }}-riscv64-linux/${{ env.BIN_NAME }}-riscv64-linux .docker/riscv64/wings-rs
 
-      - name: Get cli version from Cargo.toml
+      - name: Extract version
         id: version
-        run: echo "val=$(cargo metadata --format-version=1 --no-deps | jq '.packages[0].version' -r)" >> $GITHUB_OUTPUT
+        run: echo "val=$(cargo metadata --format-version=1 --no-deps | jq -r '.packages[0].version')" >> $GITHUB_OUTPUT
 
-      - name: Build and push multi-arch Docker image
+      - name: Build & push multi-arch image
         uses: docker/build-push-action@v5
         with:
           context: .
