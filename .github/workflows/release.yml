@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        build: [x86_64-linux, aarch64-linux]
+        build: [x86_64-linux, aarch64-linux, riscv64-linux]
         include:
         - build: x86_64-linux
           os: ubuntu-24.04
@@ -27,6 +27,11 @@ jobs:
           os: ubuntu-24.04
           rust: stable
           target: aarch64-unknown-linux-musl
+          cross: true
+        - build: riscv64-linux
+          os: ubuntu-24.04
+          rust: stable
+          target: riscv64g-unknown-linux-musl
           cross: true
 
     steps:
@@ -134,10 +139,12 @@ jobs:
         run: |
           chmod +x dist/${{ env.PROJECT_NAME }}-x86_64-linux/${{ env.BIN_NAME }}-x86_64-linux
           chmod +x dist/${{ env.PROJECT_NAME }}-aarch64-linux/${{ env.BIN_NAME }}-aarch64-linux
+          chmod +x dist/${{ env.PROJECT_NAME }}-riscv64-linux/${{ env.BIN_NAME }}-riscv64-linux
 
-          mkdir -p .docker/amd64 .docker/arm64
+          mkdir -p .docker/amd64 .docker/arm64 .docker/riscv64
           cp dist/${{ env.BIN_NAME }}-x86_64-linux/${{ env.BIN_NAME }}-x86_64-linux .docker/amd64/wings-rs
           cp dist/${{ env.BIN_NAME }}-aarch64-linux/${{ env.BIN_NAME }}-aarch64-linux .docker/arm64/wings-rs
+          cp dist/${{ env.BIN_NAME }}-riscv64-linux/${{ env.BIN_NAME }}-riscv64-linux .docker/riscv64/wings-rs
 
       - name: Get cli version from Cargo.toml
         id: version
@@ -147,7 +154,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64,linux/arm64,linux/riscv64
           push: true
           tags: ghcr.io/${{ env.REPO_NAME }}:latest,ghcr.io/${{ env.REPO_NAME }}:${{ steps.version.outputs.val }}
           cache-from: type=gha

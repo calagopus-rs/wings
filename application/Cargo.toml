@@ -63,7 +63,7 @@ content_disposition = "0.4.0"
 cron = { version = "0.15.0", features = ["serde"] }
 chrono-tz = "0.10.4"
 gzp = "2.0.0"
-lzma-rust2 = { version = "=0.15.2", features = ["optimization"] }
+lzma-rust2 = { version = "0.15.4", features = ["optimization"] }
 bzip2 = "0.6.0"
 zstd = { version = "0.13.3", features = ["zstdmt"] }
 base64 = "0.22.1"
