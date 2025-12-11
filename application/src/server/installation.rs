@@ -793,8 +793,8 @@ impl ServerInstaller {
             env.push(format!(
                 "{k}={}",
                 match v {
-                    serde_json::Value::String(s) => s,
-                    _ => &v.to_string(),
+                    serde_json::Value::String(s) => s.clone(),
+                    _ => v.to_string(),
                 }
             ));
         }
