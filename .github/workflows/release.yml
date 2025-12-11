@@ -30,7 +30,7 @@ jobs:
             target: riscv64gc-unknown-linux-musl
           - build: powerpc64le-linux
             os: ubuntu-24.04
-            target: powerpc64le-unknown-linux-musl
+            target: powerpc64le-unknown-linux-gnu
 
     steps:
       - name: Checkout sources
