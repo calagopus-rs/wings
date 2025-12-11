@@ -133,7 +133,6 @@ jobs:
           cp dist/${{ env.PROJECT_NAME }}-aarch64-linux/${{ env.BIN_NAME }}-aarch64-linux .docker/arm64/wings-rs
           cp dist/${{ env.PROJECT_NAME }}-riscv64-linux/${{ env.BIN_NAME }}-riscv64-linux .docker/riscv64/wings-rs
           cp dist/${{ env.PROJECT_NAME }}-powerpc64le-linux/${{ env.BIN_NAME }}-powerpc64le-linux .docker/ppc64le/wings-rs
-          cp dist/${{ env.PROJECT_NAME }}-s390x-linux/${{ env.BIN_NAME }}-s390x-linux .docker/s390x/wings-rs
 
           chmod +x .docker/*/wings-rs
 
@@ -145,7 +144,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          platforms: linux/amd64,linux/arm64,linux/riscv64,linux/ppc64le,linux/s390x
+          platforms: linux/amd64,linux/arm64,linux/riscv64,linux/ppc64le
           push: true
           tags: ghcr.io/${{ env.REPO_NAME }}:latest,ghcr.io/${{ env.REPO_NAME }}:${{ steps.version.outputs.val }}
           cache-from: type=gha
