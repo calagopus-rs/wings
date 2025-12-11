@@ -115,6 +115,25 @@ impl ScheduleManager {
     }
 
     #[tracing::instrument(skip(self))]
+    pub async fn execute_backup_status_trigger(&self, status: crate::models::ServerBackupStatus) {
+        tracing::debug!("executing backup status schedule trigger");
+
+        let schedules = self.schedules.read().await;
+
+        for schedule in schedules.iter() {
+            for trigger in schedule.triggers.iter() {
+                if let ScheduleTrigger::BackupStatus {
+                    status: trigger_status,
+                } = trigger
+                    && *trigger_status == status
+                {
+                    schedule.trigger(false);
+                }
+            }
+        }
+    }
+
+    #[tracing::instrument(skip(self))]
     pub async fn execute_crash_trigger(&self) {
         tracing::debug!("executing crash schedule trigger");
 

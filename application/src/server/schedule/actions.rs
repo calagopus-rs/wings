@@ -8,10 +8,23 @@ use crate::{
 use cap_std::fs::OpenOptions;
 use serde::{Deserialize, Serialize};
 use std::{
+    borrow::Cow,
     path::{Path, PathBuf},
     sync::Arc,
 };
 use tokio::io::AsyncWriteExt;
+
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct ScheduleVariable {
+    pub variable: String,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum ScheduleDynamicParameter {
+    Raw(String),
+    Variable(ScheduleVariable),
+}
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct RenameFile {
@@ -25,11 +38,28 @@ pub enum ScheduleAction {
     Sleep {
         duration: u64,
     },
+    Ensure {
+        condition: super::conditions::ScheduleCondition,
+    },
+    Format {
+        format: String,
+        output_into: ScheduleVariable,
+    },
+    MatchRegex {
+        input: ScheduleDynamicParameter,
+
+        #[serde(with = "serde_regex")]
+        regex: regex::Regex,
+
+        output_into: Vec<Option<ScheduleVariable>>,
+    },
     WaitForConsoleLine {
         ignore_failure: bool,
 
-        contains: String,
+        contains: ScheduleDynamicParameter,
         timeout: u64,
+
+        output_into: Option<ScheduleVariable>,
     },
     SendPower {
         ignore_failure: bool,
@@ -39,74 +69,74 @@ pub enum ScheduleAction {
     SendCommand {
         ignore_failure: bool,
 
-        command: String,
+        command: ScheduleDynamicParameter,
     },
     CreateBackup {
         ignore_failure: bool,
         foreground: bool,
 
-        name: Option<String>,
+        name: Option<ScheduleDynamicParameter>,
         ignored_files: Vec<String>,
     },
     CreateDirectory {
         ignore_failure: bool,
 
-        root: String,
-        name: String,
+        root: ScheduleDynamicParameter,
+        name: ScheduleDynamicParameter,
     },
     WriteFile {
         ignore_failure: bool,
         append: bool,
 
-        file: String,
-        content: String,
+        file: ScheduleDynamicParameter,
+        content: ScheduleDynamicParameter,
     },
     CopyFile {
         ignore_failure: bool,
         foreground: bool,
 
-        file: String,
-        destination: String,
+        file: ScheduleDynamicParameter,
+        destination: ScheduleDynamicParameter,
     },
     DeleteFiles {
-        root: String,
+        root: ScheduleDynamicParameter,
         files: Vec<String>,
     },
     RenameFiles {
-        root: String,
+        root: ScheduleDynamicParameter,
         files: Vec<RenameFile>,
     },
     CompressFiles {
         ignore_failure: bool,
         foreground: bool,
 
-        root: String,
+        root: ScheduleDynamicParameter,
         files: Vec<String>,
         format: ArchiveFormat,
-        name: String,
+        name: ScheduleDynamicParameter,
     },
     DecompressFile {
         ignore_failure: bool,
         foreground: bool,
 
-        root: String,
-        file: String,
+        root: ScheduleDynamicParameter,
+        file: ScheduleDynamicParameter,
     },
     UpdateStartupVariable {
         ignore_failure: bool,
 
-        env_variable: String,
-        value: String,
+        env_variable: ScheduleDynamicParameter,
+        value: ScheduleDynamicParameter,
     },
     UpdateStartupCommand {
         ignore_failure: bool,
 
-        command: String,
+        command: ScheduleDynamicParameter,
     },
     UpdateStartupDockerImage {
         ignore_failure: bool,
 
-        image: String,
+        image: ScheduleDynamicParameter,
     },
 }
 
@@ -115,6 +145,9 @@ impl ScheduleAction {
     pub fn ignore_failure(&self) -> bool {
         match self {
             ScheduleAction::Sleep { .. } => false,
+            ScheduleAction::Ensure { .. } => false,
+            ScheduleAction::Format { .. } => false,
+            ScheduleAction::MatchRegex { .. } => false,
             ScheduleAction::WaitForConsoleLine { ignore_failure, .. } => *ignore_failure,
             ScheduleAction::SendPower { ignore_failure, .. } => *ignore_failure,
             ScheduleAction::SendCommand { ignore_failure, .. } => *ignore_failure,
@@ -136,7 +169,8 @@ impl ScheduleAction {
         &self,
         state: &State,
         server: &crate::server::Server,
-    ) -> Result<(), String> {
+        execution_context: &mut super::ScheduleExecutionContext,
+    ) -> Result<(), Cow<'static, str>> {
         if server.is_locked_state() {
             return Err("server is in a locked state.".into());
         }
@@ -145,8 +179,94 @@ impl ScheduleAction {
             ScheduleAction::Sleep { duration } => {
                 tokio::time::sleep(std::time::Duration::from_millis(*duration)).await;
             }
+            ScheduleAction::Ensure { condition } => {
+                if !condition.evaluate(server, execution_context).await {
+                    return Err("condition did not evaluate with success.".into());
+                }
+            }
+            ScheduleAction::Format {
+                format,
+                output_into,
+            } => {
+                let mut result = String::new();
+                let mut chars = format.chars().peekable();
+
+                while let Some(ch) = chars.next() {
+                    if ch == '{' {
+                        if chars.peek() == Some(&'{') {
+                            chars.next();
+                            result.push('{');
+                        } else {
+                            let mut var_name = String::new();
+                            let mut found_closing = false;
+
+                            for inner_ch in chars.by_ref() {
+                                if inner_ch == '}' {
+                                    found_closing = true;
+                                    break;
+                                }
+                                var_name.push(inner_ch);
+                            }
+
+                            if found_closing {
+                                if let Some(value) =
+                                    execution_context.get_variable_by_str(&var_name)
+                                {
+                                    result.push_str(value.as_str());
+                                } else {
+                                    result.push('{');
+                                    result.push_str(&var_name);
+                                    result.push('}');
+                                }
+                            } else {
+                                result.push('{');
+                                result.push_str(&var_name);
+                            }
+                        }
+                    } else if ch == '}' {
+                        if chars.peek() == Some(&'}') {
+                            chars.next();
+                            result.push('}');
+                        } else {
+                            result.push(ch);
+                        }
+                    } else {
+                        result.push(ch);
+                    }
+                }
+
+                execution_context.store_variable(output_into.clone(), result);
+            }
+            ScheduleAction::MatchRegex {
+                input,
+                regex,
+                output_into,
+            } => {
+                let input = match execution_context.resolve_parameter(input) {
+                    Some(input) => input.to_string(),
+                    None => {
+                        return Err("unable to resolve parameter `input` into a string.".into());
+                    }
+                };
+
+                let Some(matches) = regex.captures(&input) else {
+                    return Ok(());
+                };
+
+                for (group_match, output_into) in matches.iter().skip(1).zip(output_into.iter()) {
+                    let (Some(group_match), Some(output_into)) = (group_match, output_into) else {
+                        continue;
+                    };
+
+                    execution_context
+                        .store_variable(output_into.clone(), group_match.as_str().to_string());
+                }
+            }
             ScheduleAction::WaitForConsoleLine {
-                contains, timeout, ..
+                contains,
+                timeout,
+                output_into,
+                ..
             } => {
                 let mut stdout = match server.container_stdout().await {
                     Some(stdout) => stdout,
@@ -155,20 +275,36 @@ impl ScheduleAction {
                     }
                 };
 
-                let line_finder = async {
-                    while let Ok(line) = stdout.recv().await {
-                        if line.contains(contains) {
-                            return;
-                        }
+                let contains = match execution_context.resolve_parameter(contains) {
+                    Some(contains) => contains,
+                    None => {
+                        return Err("unable to resolve parameter `contains` into a string.".into());
                     }
                 };
 
-                if tokio::time::timeout(std::time::Duration::from_millis(*timeout), line_finder)
-                    .await
-                    .is_err()
+                let line_finder = async {
+                    while let Ok(line) = stdout.recv().await {
+                        if line.contains(contains) {
+                            return Some(line.to_string());
+                        }
+                    }
+
+                    None
+                };
+
+                if let Ok(line) =
+                    tokio::time::timeout(std::time::Duration::from_millis(*timeout), line_finder)
+                        .await
                 {
-                    return Err("timeout while waiting for matching console output.".into());
+                    if let Some(output_into) = output_into
+                        && let Some(line) = line
+                    {
+                        execution_context.store_variable(output_into.clone(), line);
+                    }
+                    return Ok(());
                 }
+
+                return Err("timeout while waiting for matching console output.".into());
             }
             ScheduleAction::SendPower { action, .. } => match action {
                 crate::models::ServerPowerAction::Start => {
@@ -179,9 +315,7 @@ impl ScheduleAction {
                     if let Err(err) = server.start(None, false).await {
                         match err.downcast::<&str>() {
                             Ok(message) => {
-                                let mut message = message.to_string();
-                                message.make_ascii_lowercase();
-                                return Err(message);
+                                return Err(message.into());
                             }
                             Err(err) => {
                                 tracing::error!(
@@ -227,9 +361,7 @@ impl ScheduleAction {
                     } {
                         match err.downcast::<&str>() {
                             Ok(message) => {
-                                let mut message = message.to_string();
-                                message.make_ascii_lowercase();
-                                return Err(message);
+                                return Err(message.into());
                             }
                             Err(err) => {
                                 tracing::error!(
@@ -279,9 +411,7 @@ impl ScheduleAction {
                     } {
                         match err.downcast::<&str>() {
                             Ok(message) => {
-                                let mut message = message.to_string();
-                                message.make_ascii_lowercase();
-                                return Err(message);
+                                return Err(message.into());
                             }
                             Err(err) => {
                                 tracing::error!(
@@ -342,6 +472,15 @@ impl ScheduleAction {
                 }
 
                 if let Some(stdin) = server.container_stdin().await {
+                    let command = match execution_context.resolve_parameter(command) {
+                        Some(command) => command,
+                        None => {
+                            return Err(
+                                "unable to resolve parameter `command` into a string.".into()
+                            );
+                        }
+                    };
+
                     if stdin.send(format!("{}\n", command)).await.is_ok() {
                         server
                             .activity
@@ -366,10 +505,20 @@ impl ScheduleAction {
                 ignored_files,
                 ..
             } => {
+                let name = match name {
+                    Some(name) => match execution_context.resolve_parameter(name) {
+                        Some(name) => Some(name.as_str()),
+                        None => {
+                            return Err("unable to resolve parameter `name` into a string.".into());
+                        }
+                    },
+                    None => None,
+                };
+
                 let (adapter, uuid) = match state
                     .config
                     .client
-                    .create_backup(server.uuid, name.as_deref(), ignored_files)
+                    .create_backup(server.uuid, name, ignored_files)
                     .await
                 {
                     Ok(result) => result,
@@ -410,7 +559,7 @@ impl ScheduleAction {
                             return Err("failed to create backup".into());
                         }
 
-                        Ok::<_, String>(())
+                        Ok::<_, Cow<'static, str>>(())
                     }
                 });
 
@@ -419,6 +568,19 @@ impl ScheduleAction {
                 }
             }
             ScheduleAction::CreateDirectory { root, name, .. } => {
+                let root = match execution_context.resolve_parameter(root) {
+                    Some(root) => root,
+                    None => {
+                        return Err("unable to resolve parameter `root` into a string.".into());
+                    }
+                };
+                let name = match execution_context.resolve_parameter(name) {
+                    Some(name) => name,
+                    None => {
+                        return Err("unable to resolve parameter `name` into a string.".into());
+                    }
+                };
+
                 let path = match server.filesystem.async_canonicalize(root).await {
                     Ok(path) => path,
                     Err(_) => PathBuf::from(root),
@@ -471,6 +633,19 @@ impl ScheduleAction {
                 append,
                 ..
             } => {
+                let file_path = match execution_context.resolve_parameter(file_path) {
+                    Some(file_path) => file_path,
+                    None => {
+                        return Err("unable to resolve parameter `file_path` into a string.".into());
+                    }
+                };
+                let content = match execution_context.resolve_parameter(content) {
+                    Some(content) => content,
+                    None => {
+                        return Err("unable to resolve parameter `content` into a string.".into());
+                    }
+                };
+
                 let path = match server.filesystem.async_canonicalize(file_path).await {
                     Ok(path) => path,
                     Err(_) => PathBuf::from(file_path),
@@ -582,6 +757,21 @@ impl ScheduleAction {
                 destination,
                 ..
             } => {
+                let file = match execution_context.resolve_parameter(file) {
+                    Some(file) => file,
+                    None => {
+                        return Err("unable to resolve parameter `file` into a string.".into());
+                    }
+                };
+                let destination = match execution_context.resolve_parameter(destination) {
+                    Some(destination) => destination,
+                    None => {
+                        return Err(
+                            "unable to resolve parameter `destination` into a string.".into()
+                        );
+                    }
+                };
+
                 let location = match server.filesystem.async_canonicalize(file).await {
                     Ok(path) => path,
                     Err(_) => return Err("file not found".into()),
@@ -659,6 +849,13 @@ impl ScheduleAction {
                 }
             }
             ScheduleAction::DeleteFiles { root, files } => {
+                let root = match execution_context.resolve_parameter(root) {
+                    Some(root) => root,
+                    None => {
+                        return Err("unable to resolve parameter `root` into a string.".into());
+                    }
+                };
+
                 let root = match server.filesystem.async_canonicalize(root).await {
                     Ok(path) => path,
                     Err(_) => {
@@ -710,7 +907,12 @@ impl ScheduleAction {
                     .await;
             }
             ScheduleAction::RenameFiles { root, files } => {
-                let root = Path::new(root);
+                let root = match execution_context.resolve_parameter(root) {
+                    Some(root) => Path::new(root),
+                    None => {
+                        return Err("unable to resolve parameter `root` into a string.".into());
+                    }
+                };
 
                 let metadata = server.filesystem.async_metadata(&root).await;
                 if !metadata.map(|m| m.is_dir()).unwrap_or(true) {
@@ -781,6 +983,19 @@ impl ScheduleAction {
                 name,
                 ..
             } => {
+                let root = match execution_context.resolve_parameter(root) {
+                    Some(root) => root,
+                    None => {
+                        return Err("unable to resolve parameter `root` into a string.".into());
+                    }
+                };
+                let name = match execution_context.resolve_parameter(name) {
+                    Some(name) => name,
+                    None => {
+                        return Err("unable to resolve parameter `name` into a string.".into());
+                    }
+                };
+
                 let root = match server.filesystem.async_canonicalize(root).await {
                     Ok(path) => path,
                     Err(_) => {
@@ -924,6 +1139,19 @@ impl ScheduleAction {
                 file,
                 ..
             } => {
+                let root = match execution_context.resolve_parameter(root) {
+                    Some(root) => root,
+                    None => {
+                        return Err("unable to resolve parameter `root` into a string.".into());
+                    }
+                };
+                let file = match execution_context.resolve_parameter(file) {
+                    Some(file) => file,
+                    None => {
+                        return Err("unable to resolve parameter `file` into a string.".into());
+                    }
+                };
+
                 let root = match server.filesystem.async_canonicalize(root).await {
                     Ok(path) => path,
                     Err(_) => {
@@ -961,7 +1189,7 @@ impl ScheduleAction {
                 {
                     Ok(archive) => archive,
                     Err(err) => {
-                        return Err(format!("failed to open archive: {err}"));
+                        return Err(format!("failed to open archive: {err}").into());
                     }
                 };
 
@@ -992,6 +1220,21 @@ impl ScheduleAction {
                 value,
                 ..
             } => {
+                let env_variable = match execution_context.resolve_parameter(env_variable) {
+                    Some(env_variable) => env_variable,
+                    None => {
+                        return Err(
+                            "unable to resolve parameter `env_variable` into a string.".into()
+                        );
+                    }
+                };
+                let value = match execution_context.resolve_parameter(value) {
+                    Some(value) => value,
+                    None => {
+                        return Err("unable to resolve parameter `value` into a string.".into());
+                    }
+                };
+
                 match state
                     .config
                     .client
@@ -1011,6 +1254,13 @@ impl ScheduleAction {
                 };
             }
             ScheduleAction::UpdateStartupCommand { command, .. } => {
+                let command = match execution_context.resolve_parameter(command) {
+                    Some(command) => command,
+                    None => {
+                        return Err("unable to resolve parameter `command` into a string.".into());
+                    }
+                };
+
                 match state
                     .config
                     .client
@@ -1030,6 +1280,13 @@ impl ScheduleAction {
                 };
             }
             ScheduleAction::UpdateStartupDockerImage { image, .. } => {
+                let image = match execution_context.resolve_parameter(image) {
+                    Some(image) => image,
+                    None => {
+                        return Err("unable to resolve parameter `image` into a string.".into());
+                    }
+                };
+
                 match state
                     .config
                     .client

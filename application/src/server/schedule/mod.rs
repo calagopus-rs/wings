@@ -1,10 +1,11 @@
 use crate::server::websocket::{WebsocketEvent, WebsocketMessage};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, pin::Pin, str::FromStr, sync::Arc};
+use std::{borrow::Cow, collections::HashMap, str::FromStr, sync::Arc};
 use tokio::sync::{Mutex, RwLock};
 use utoipa::ToSchema;
 
 pub mod actions;
+pub mod conditions;
 pub mod manager;
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -18,6 +19,13 @@ pub enum ScheduleTrigger {
     },
     ServerState {
         state: crate::server::state::ServerState,
+    },
+    BackupStatus {
+        status: crate::models::ServerBackupStatus,
+    },
+    ConsoleLine {
+        contains: String,
+        output_into: Option<actions::ScheduleVariable>,
     },
     Crash,
 }
@@ -36,146 +44,23 @@ impl PartialEq for ScheduleTrigger {
                 ScheduleTrigger::ServerState { state: s1 },
                 ScheduleTrigger::ServerState { state: s2 },
             ) => s1 == s2,
+            (
+                ScheduleTrigger::BackupStatus { status: s1 },
+                ScheduleTrigger::BackupStatus { status: s2 },
+            ) => s1 == s2,
+            (
+                ScheduleTrigger::ConsoleLine {
+                    contains: c1,
+                    output_into: o1,
+                },
+                ScheduleTrigger::ConsoleLine {
+                    contains: c2,
+                    output_into: o2,
+                },
+            ) => c1 == c2 && o1 == o2,
             (ScheduleTrigger::Crash, ScheduleTrigger::Crash) => true,
             _ => false,
         }
-    }
-}
-
-#[derive(Clone, Copy, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ScheduleComparator {
-    SmallerThan,
-    SmallerThanOrEquals,
-    Equal,
-    GreaterThan,
-    GreaterThanOrEquals,
-}
-
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case", tag = "type")]
-pub enum ScheduleCondition {
-    None,
-    And {
-        conditions: Vec<ScheduleCondition>,
-    },
-    Or {
-        conditions: Vec<ScheduleCondition>,
-    },
-    ServerState {
-        state: crate::server::state::ServerState,
-    },
-    Uptime {
-        comparator: ScheduleComparator,
-        value: u64,
-    },
-    CpuUsage {
-        comparator: ScheduleComparator,
-        value: f64,
-    },
-    MemoryUsage {
-        comparator: ScheduleComparator,
-        value: u64,
-    },
-    DiskUsage {
-        comparator: ScheduleComparator,
-        value: u64,
-    },
-    FileExists {
-        file: String,
-    },
-}
-
-impl ScheduleCondition {
-    pub fn evaluate<'a>(
-        &'a self,
-        server: &'a crate::server::Server,
-    ) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
-        Box::pin(async move {
-            match self {
-                ScheduleCondition::None => true,
-                ScheduleCondition::And { conditions } => {
-                    for condition in conditions {
-                        if !condition.evaluate(server).await {
-                            return false;
-                        }
-                    }
-
-                    true
-                }
-                ScheduleCondition::Or { conditions } => {
-                    for condition in conditions {
-                        if condition.evaluate(server).await {
-                            return true;
-                        }
-                    }
-
-                    false
-                }
-                ScheduleCondition::ServerState { state: cond_state } => {
-                    server.state.get_state() == *cond_state
-                }
-                ScheduleCondition::Uptime { comparator, value } => {
-                    let resource_usage = server.resource_usage().await;
-
-                    match comparator {
-                        ScheduleComparator::SmallerThan => resource_usage.uptime < *value,
-                        ScheduleComparator::SmallerThanOrEquals => resource_usage.uptime <= *value,
-                        ScheduleComparator::Equal => resource_usage.uptime == *value,
-                        ScheduleComparator::GreaterThan => resource_usage.uptime > *value,
-                        ScheduleComparator::GreaterThanOrEquals => resource_usage.uptime >= *value,
-                    }
-                }
-                ScheduleCondition::CpuUsage { comparator, value } => {
-                    let resource_usage = server.resource_usage().await;
-
-                    match comparator {
-                        ScheduleComparator::SmallerThan => resource_usage.cpu_absolute < *value,
-                        ScheduleComparator::SmallerThanOrEquals => {
-                            resource_usage.cpu_absolute <= *value
-                        }
-                        ScheduleComparator::Equal => resource_usage.cpu_absolute == *value,
-                        ScheduleComparator::GreaterThan => resource_usage.cpu_absolute > *value,
-                        ScheduleComparator::GreaterThanOrEquals => {
-                            resource_usage.cpu_absolute >= *value
-                        }
-                    }
-                }
-                ScheduleCondition::MemoryUsage { comparator, value } => {
-                    let resource_usage = server.resource_usage().await;
-
-                    match comparator {
-                        ScheduleComparator::SmallerThan => resource_usage.memory_bytes < *value,
-                        ScheduleComparator::SmallerThanOrEquals => {
-                            resource_usage.memory_bytes <= *value
-                        }
-                        ScheduleComparator::Equal => resource_usage.memory_bytes == *value,
-                        ScheduleComparator::GreaterThan => resource_usage.memory_bytes > *value,
-                        ScheduleComparator::GreaterThanOrEquals => {
-                            resource_usage.memory_bytes >= *value
-                        }
-                    }
-                }
-                ScheduleCondition::DiskUsage { comparator, value } => {
-                    let resource_usage = server.resource_usage().await;
-
-                    match comparator {
-                        ScheduleComparator::SmallerThan => resource_usage.disk_bytes < *value,
-                        ScheduleComparator::SmallerThanOrEquals => {
-                            resource_usage.disk_bytes <= *value
-                        }
-                        ScheduleComparator::Equal => resource_usage.disk_bytes == *value,
-                        ScheduleComparator::GreaterThan => resource_usage.disk_bytes > *value,
-                        ScheduleComparator::GreaterThanOrEquals => {
-                            resource_usage.disk_bytes >= *value
-                        }
-                    }
-                }
-                ScheduleCondition::FileExists { file } => {
-                    server.filesystem.async_symlink_metadata(file).await.is_ok()
-                }
-            }
-        })
     }
 }
 
@@ -183,7 +68,7 @@ impl ScheduleCondition {
 pub struct ApiScheduleCompletionStatus {
     pub uuid: uuid::Uuid,
     pub successful: bool,
-    pub errors: HashMap<uuid::Uuid, String>,
+    pub errors: HashMap<uuid::Uuid, Cow<'static, str>>,
     pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 
@@ -193,16 +78,48 @@ pub struct ScheduleStatus {
     pub step: Option<uuid::Uuid>,
 }
 
+#[derive(Default)]
+pub struct ScheduleExecutionContext {
+    variables: HashMap<String, String>,
+}
+
+impl ScheduleExecutionContext {
+    pub fn resolve_parameter<'a>(
+        &'a self,
+        parameter: &'a actions::ScheduleDynamicParameter,
+    ) -> Option<&'a String> {
+        match parameter {
+            actions::ScheduleDynamicParameter::Raw(value) => Some(value),
+            actions::ScheduleDynamicParameter::Variable(variable) => {
+                self.variables.get(&variable.variable)
+            }
+        }
+    }
+
+    pub fn get_variable_by_str(&self, variable: &str) -> Option<&String> {
+        self.variables.get(variable)
+    }
+
+    pub fn store_variable(
+        &mut self,
+        variable: actions::ScheduleVariable,
+        value: String,
+    ) -> Option<String> {
+        self.variables.insert(variable.variable, value)
+    }
+}
+
 pub struct Schedule {
     pub uuid: uuid::Uuid,
     pub triggers: Vec<ScheduleTrigger>,
-    pub condition: Arc<RwLock<ScheduleCondition>>,
+    pub condition: Arc<RwLock<conditions::SchedulePreCondition>>,
     pub raw_actions: Arc<RwLock<Arc<Vec<super::configuration::ScheduleAction>>>>,
     pub status: Arc<RwLock<ScheduleStatus>>,
     pub completion_status: Arc<Mutex<Option<ApiScheduleCompletionStatus>>>,
 
     trigger_tasks: Vec<tokio::task::JoinHandle<()>>,
 
+    next_execution_context: Arc<Mutex<Option<ScheduleExecutionContext>>>,
     executor_task: tokio::task::JoinHandle<()>,
     executor_notifier: Arc<tokio::sync::Notify>,
     executor_skip_notifier: Arc<tokio::sync::Notify>,
@@ -223,10 +140,12 @@ impl Schedule {
             step: None,
         }));
         let completion_status = Arc::new(Mutex::new(None));
+        let next_execution_context = Arc::new(Mutex::new(None));
 
         let (triggers, trigger_tasks) = Self::create_trigger_tasks(
             server.clone(),
             raw_schedule.triggers,
+            Arc::clone(&next_execution_context),
             Arc::clone(&executor_notifier),
         );
 
@@ -238,11 +157,13 @@ impl Schedule {
             status: Arc::clone(&status),
             completion_status: Arc::clone(&completion_status),
             trigger_tasks,
+            next_execution_context: Arc::clone(&next_execution_context),
             executor_task: Self::create_executor_task(
                 server,
                 raw_schedule.uuid,
                 condition,
                 raw_actions,
+                next_execution_context,
                 Arc::clone(&executor_notifier),
                 Arc::clone(&executor_skip_notifier),
                 status,
@@ -255,6 +176,23 @@ impl Schedule {
 
     #[inline]
     pub fn trigger(&self, skip_condition: bool) {
+        if skip_condition {
+            self.executor_skip_notifier.notify_one();
+        } else {
+            self.executor_notifier.notify_one();
+        }
+    }
+
+    pub async fn trigger_with_context(
+        &self,
+        skip_condition: bool,
+        execution_context: ScheduleExecutionContext,
+    ) {
+        self.next_execution_context
+            .lock()
+            .await
+            .replace(execution_context);
+
         if skip_condition {
             self.executor_skip_notifier.notify_one();
         } else {
@@ -278,8 +216,12 @@ impl Schedule {
             task.abort();
         }
 
-        let (triggers, tasks) =
-            Self::create_trigger_tasks(server, triggers, Arc::clone(&self.executor_notifier));
+        let (triggers, tasks) = Self::create_trigger_tasks(
+            server,
+            triggers,
+            Arc::clone(&self.next_execution_context),
+            Arc::clone(&self.executor_notifier),
+        );
 
         self.triggers = triggers;
         self.trigger_tasks = tasks;
@@ -294,6 +236,7 @@ impl Schedule {
             self.uuid,
             Arc::clone(&self.condition),
             Arc::clone(&self.raw_actions),
+            Arc::clone(&self.next_execution_context),
             Arc::clone(&self.executor_notifier),
             Arc::clone(&self.executor_skip_notifier),
             Arc::clone(&self.status),
@@ -305,8 +248,9 @@ impl Schedule {
     fn create_executor_task(
         server: crate::server::Server,
         uuid: uuid::Uuid,
-        condition: Arc<RwLock<ScheduleCondition>>,
+        condition: Arc<RwLock<conditions::SchedulePreCondition>>,
         raw_actions: Arc<RwLock<Arc<Vec<super::configuration::ScheduleAction>>>>,
+        next_execution_context: Arc<Mutex<Option<ScheduleExecutionContext>>>,
         executor_notifier: Arc<tokio::sync::Notify>,
         executor_skip_notifier: Arc<tokio::sync::Notify>,
         status: Arc<RwLock<ScheduleStatus>>,
@@ -331,6 +275,12 @@ impl Schedule {
                 let raw_actions = Arc::clone(&*raw_actions_lock);
                 drop(raw_actions_lock);
 
+                let mut execution_context = next_execution_context
+                    .lock()
+                    .await
+                    .take()
+                    .unwrap_or_default();
+
                 let mut errors = HashMap::new();
                 let mut successful = true;
 
@@ -351,7 +301,11 @@ impl Schedule {
                         ))
                         .ok();
 
-                    match raw_action.action.execute(&server.app_state, &server).await {
+                    match raw_action
+                        .action
+                        .execute(&server.app_state, &server, &mut execution_context)
+                        .await
+                    {
                         Ok(()) => {}
                         Err(err) => {
                             errors.insert(raw_action.uuid, err.clone());
@@ -359,7 +313,7 @@ impl Schedule {
                                 .websocket
                                 .send(WebsocketMessage::new(
                                     WebsocketEvent::ServerScheduleStepError,
-                                    [raw_action.uuid.to_string(), err].into(),
+                                    [raw_action.uuid.to_string(), err.to_string()].into(),
                                 ))
                                 .ok();
 
@@ -402,16 +356,22 @@ impl Schedule {
     fn create_trigger_tasks(
         server: crate::server::Server,
         raw_triggers: Vec<ScheduleTrigger>,
+        nest_execution_context: Arc<Mutex<Option<ScheduleExecutionContext>>>,
         executor_notifier: Arc<tokio::sync::Notify>,
     ) -> (Vec<ScheduleTrigger>, Vec<tokio::task::JoinHandle<()>>) {
-        let cron_count = raw_triggers
+        let taskable_triggers_count = raw_triggers
             .iter()
-            .filter(|t| matches!(t, ScheduleTrigger::Cron { .. }))
+            .filter(|t| {
+                matches!(
+                    t,
+                    ScheduleTrigger::Cron { .. } | ScheduleTrigger::ConsoleLine { .. }
+                )
+            })
             .count();
         let mut triggers = Vec::new();
-        triggers.reserve_exact(raw_triggers.len() - cron_count);
+        triggers.reserve_exact(raw_triggers.len() - taskable_triggers_count);
         let mut tasks = Vec::new();
-        tasks.reserve_exact(cron_count);
+        tasks.reserve_exact(taskable_triggers_count);
 
         for trigger in raw_triggers {
             match trigger {
@@ -451,6 +411,47 @@ impl Schedule {
                                 ))
                                 .await;
                                 executor_notifier.notify_one();
+                            }
+                        }
+                    }));
+                }
+                ScheduleTrigger::ConsoleLine {
+                    contains,
+                    output_into,
+                } => {
+                    tasks.push(tokio::task::spawn({
+                        let nest_execution_context = Arc::clone(&nest_execution_context);
+                        let executor_notifier = Arc::clone(&executor_notifier);
+                        let server = server.clone();
+
+                        async move {
+                            loop {
+                                let mut stdout = match server.container_stdout().await {
+                                    Some(stdout) => stdout,
+                                    None => {
+                                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                                        continue;
+                                    }
+                                };
+
+                                while let Ok(line) = stdout.recv().await {
+                                    if line.contains(&contains) {
+                                        if let Some(output_into) = &output_into {
+                                            let mut execution_context =
+                                                ScheduleExecutionContext::default();
+                                            execution_context.store_variable(
+                                                output_into.clone(),
+                                                line.to_string(),
+                                            );
+                                            nest_execution_context
+                                                .lock()
+                                                .await
+                                                .replace(execution_context);
+                                        }
+
+                                        executor_notifier.notify_one();
+                                    }
+                                }
                             }
                         }
                     }));

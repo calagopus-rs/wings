@@ -159,6 +159,11 @@ impl BackupManager {
             }
         });
 
+        server
+            .schedules
+            .execute_backup_status_trigger(crate::models::ServerBackupStatus::Starting)
+            .await;
+
         let backup = match adapter
             .create(
                 server,
@@ -172,11 +177,19 @@ impl BackupManager {
         {
             Ok(backup) => {
                 progress_task.abort();
+                server
+                    .schedules
+                    .execute_backup_status_trigger(crate::models::ServerBackupStatus::Finished)
+                    .await;
 
                 backup
             }
             Err(e) => {
                 progress_task.abort();
+                server
+                    .schedules
+                    .execute_backup_status_trigger(crate::models::ServerBackupStatus::Failed)
+                    .await;
 
                 server
                     .app_state

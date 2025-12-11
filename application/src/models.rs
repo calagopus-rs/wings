@@ -30,6 +30,15 @@ impl FromStr for ServerPowerAction {
     }
 }
 
+#[derive(ToSchema, Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+#[schema(rename_all = "lowercase")]
+pub enum ServerBackupStatus {
+    Starting,
+    Finished,
+    Failed,
+}
+
 #[derive(ToSchema, Serialize)]
 pub struct Server {
     pub state: ServerState,
