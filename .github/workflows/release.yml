@@ -27,7 +27,7 @@ jobs:
             target: aarch64-unknown-linux-musl
           - build: riscv64-linux
             os: ubuntu-24.04
-            target: riscv64gc-unknown-linux-musl
+            target: riscv64gc-unknown-linux-gnu
           - build: powerpc64le-linux
             os: ubuntu-24.04
             target: powerpc64le-unknown-linux-gnu
