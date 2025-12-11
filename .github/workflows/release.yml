@@ -31,9 +31,6 @@ jobs:
           - build: powerpc64le-linux
             os: ubuntu-24.04
             target: powerpc64le-unknown-linux-musl
-          - build: s390x-linux
-            os: ubuntu-24.04
-            target: s390x-unknown-linux-musl
 
     steps:
       - name: Checkout sources
