@@ -1,11 +1,12 @@
 use cap_std::fs::{Metadata, OpenOptions, PermissionsExt};
 use std::{
     collections::VecDeque,
+    io::Read,
     os::{fd::AsFd, unix::fs::PermissionsExt as StdPermissionsExt},
     path::{Path, PathBuf},
     sync::Arc,
 };
-use tokio::sync::RwLock;
+use tokio::{io::AsyncReadExt, sync::RwLock};
 pub use utils::{AsyncReadDir, AsyncWalkDir, ReadDir, WalkDir};
 
 mod utils;
@@ -349,20 +350,77 @@ impl CapFilesystem {
     pub async fn async_read_to_string(
         &self,
         path: impl AsRef<Path>,
+        limit: usize,
     ) -> Result<String, anyhow::Error> {
+        let content = self.async_read_to_vec(path, limit).await?;
+
+        Ok(String::from_utf8(content)?)
+    }
+
+    pub fn read_to_string(
+        &self,
+        path: impl AsRef<Path>,
+        limit: usize,
+    ) -> Result<String, anyhow::Error> {
+        let content = self.read_to_vec(path, limit)?;
+
+        Ok(String::from_utf8(content)?)
+    }
+
+    pub async fn async_read_to_vec(
+        &self,
+        path: impl AsRef<Path>,
+        limit: usize,
+    ) -> Result<Vec<u8>, anyhow::Error> {
         let path = self.relative_path(path.as_ref());
 
-        let inner = self.async_get_inner().await?;
-        let content = tokio::task::spawn_blocking(move || inner.read_to_string(path)).await??;
+        let mut file = self.async_open(path).await?;
+        let mut content = Vec::new();
+
+        let mut buf = vec![0; crate::BUFFER_SIZE];
+        loop {
+            let bytes_read = file.read(&mut buf).await?;
+
+            if crate::unlikely(bytes_read == 0) {
+                break;
+            }
+
+            content.extend_from_slice(&buf[..bytes_read]);
+
+            if crate::unlikely(content.len() >= limit) {
+                content.truncate(limit);
+                break;
+            }
+        }
 
         Ok(content)
     }
 
-    pub fn read_to_string(&self, path: impl AsRef<Path>) -> Result<String, anyhow::Error> {
+    pub fn read_to_vec(
+        &self,
+        path: impl AsRef<Path>,
+        limit: usize,
+    ) -> Result<Vec<u8>, anyhow::Error> {
         let path = self.relative_path(path.as_ref());
 
-        let inner = self.get_inner()?;
-        let content = inner.read_to_string(path)?;
+        let mut file = self.open(path)?;
+        let mut content = Vec::new();
+
+        let mut buf = vec![0; crate::BUFFER_SIZE];
+        loop {
+            let bytes_read = file.read(&mut buf)?;
+
+            if crate::unlikely(bytes_read == 0) {
+                break;
+            }
+
+            content.extend_from_slice(&buf[..bytes_read]);
+
+            if crate::unlikely(content.len() >= limit) {
+                content.truncate(limit);
+                break;
+            }
+        }
 
         Ok(content)
     }

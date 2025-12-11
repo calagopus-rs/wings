@@ -320,7 +320,7 @@ impl ProcessConfiguration {
             {
                 file_content = server
                     .filesystem
-                    .async_read_to_string(&file_path)
+                    .async_read_to_string(&file_path, 1024 * 1024)
                     .await
                     .unwrap_or_default();
             } else if !config.create_new {

@@ -110,7 +110,11 @@ impl BackupManager {
             }
         }
 
-        if let Ok(pteroignore) = server.filesystem.async_read_to_string(".pteroignore").await {
+        if let Ok(pteroignore) = server
+            .filesystem
+            .async_read_to_string(".pteroignore", 1024 * 1024)
+            .await
+        {
             for line in pteroignore.lines() {
                 if ignore_builder.add_line(None, line).is_ok() {
                     ignore_raw.push_str(line);
