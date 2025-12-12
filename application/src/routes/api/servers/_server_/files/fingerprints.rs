@@ -57,6 +57,8 @@ mod get {
     ))]
     pub async fn route(server: GetServer, Query(data): Query<Params>) -> ApiResponseResult {
         let mut fingerprint_handles = Vec::new();
+        fingerprint_handles.reserve_exact(data.files.len());
+
         for path_raw in data.files {
             let path = match server.filesystem.async_canonicalize(&path_raw).await {
                 Ok(path) => path,

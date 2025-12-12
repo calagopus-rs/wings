@@ -101,7 +101,6 @@ mod get {
         }
 
         let mut directory = server.filesystem.async_read_dir(&path).await?;
-
         let mut entries = Vec::new();
 
         while let Some(Ok((_, entry))) = directory.next_entry().await {
@@ -117,7 +116,7 @@ mod get {
 
             entries.push(server.filesystem.to_api_entry(path, metadata).await);
 
-            if entries.len() >= state.config.api.directory_entry_limit {
+            if crate::unlikely(entries.len() >= state.config.api.directory_entry_limit) {
                 break;
             }
         }

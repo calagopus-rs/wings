@@ -17,7 +17,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        build: [x86_64-linux, aarch64-linux, riscv64-linux, powerpc64le-linux]
+        build:
+          - x86_64-linux
+          - aarch64-linux
+          - riscv64-linux
+          - powerpc64le-linux
         include:
           - build: x86_64-linux
             os: ubuntu-24.04
@@ -47,6 +51,8 @@ jobs:
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: ${{ runner.os }}-${{ matrix.target }}
 
       - name: Run cargo test
         run: cross test --release --target ${{ matrix.target }}

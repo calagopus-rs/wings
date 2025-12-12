@@ -723,10 +723,6 @@ impl ScheduleAction {
                     tracing::error!(path = %path.display(), "failed to write file: {:?}", err);
                     return Err("failed to write file".into());
                 }
-                if let Err(err) = file.flush().await {
-                    tracing::error!(path = %path.display(), "failed to flush file: {:?}", err);
-                    return Err("failed to flush file".into());
-                }
                 if let Err(err) = file.sync_all().await {
                     tracing::error!(path = %path.display(), "failed to sync file: {:?}", err);
                     return Err("failed to sync file".into());

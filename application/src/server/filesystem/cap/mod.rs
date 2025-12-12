@@ -1,12 +1,15 @@
 use cap_std::fs::{Metadata, OpenOptions, PermissionsExt};
 use std::{
     collections::VecDeque,
-    io::Read,
+    io::{Read, Write},
     os::{fd::AsFd, unix::fs::PermissionsExt as StdPermissionsExt},
     path::{Path, PathBuf},
     sync::Arc,
 };
-use tokio::{io::AsyncReadExt, sync::RwLock};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    sync::RwLock,
+};
 pub use utils::{AsyncReadDir, AsyncWalkDir, ReadDir, WalkDir};
 
 mod utils;
@@ -475,21 +478,27 @@ impl CapFilesystem {
     pub async fn async_write(
         &self,
         path: impl AsRef<Path>,
-        data: Vec<u8>,
+        data: impl AsRef<[u8]>,
     ) -> Result<(), anyhow::Error> {
         let path = self.relative_path(path.as_ref());
 
-        let inner = self.async_get_inner().await?;
-        tokio::task::spawn_blocking(move || inner.write(path, data)).await??;
+        let mut file = self.async_create(path).await?;
+        file.write_all(data.as_ref()).await?;
+        file.sync_all().await?;
 
         Ok(())
     }
 
-    pub fn write(&self, path: impl AsRef<Path>, data: Vec<u8>) -> Result<(), anyhow::Error> {
+    pub fn write(
+        &self,
+        path: impl AsRef<Path>,
+        data: impl AsRef<[u8]>,
+    ) -> Result<(), anyhow::Error> {
         let path = self.relative_path(path.as_ref());
 
-        let inner = self.get_inner()?;
-        inner.write(path, data)?;
+        let mut file = self.create(path)?;
+        file.write_all(data.as_ref())?;
+        file.sync_all()?;
 
         Ok(())
     }

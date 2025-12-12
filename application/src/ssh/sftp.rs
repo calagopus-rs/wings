@@ -955,14 +955,28 @@ impl russh_sftp::server::Handler for SftpSession {
             let path = path.clone();
 
             move || {
-                let mut options = OpenOptions::new();
-                options.read(pflags.contains(OpenFlags::READ));
-                options
-                    .write(pflags.contains(OpenFlags::WRITE) || pflags.contains(OpenFlags::APPEND));
-                options.create(pflags.contains(OpenFlags::CREATE));
-                options.truncate(pflags.contains(OpenFlags::TRUNCATE));
+                let mut open_options = OpenOptions::new();
+                if pflags.contains(OpenFlags::READ) {
+                    open_options.read(true);
+                }
+                if pflags.contains(OpenFlags::WRITE) {
+                    open_options.write(true);
+                }
+                if pflags.contains(OpenFlags::APPEND) {
+                    open_options.append(true);
+                }
+                if pflags.contains(OpenFlags::CREATE) {
+                    if pflags.contains(OpenFlags::EXCLUDE) {
+                        open_options.create_new(true);
+                    } else {
+                        open_options.create(true);
+                    }
+                }
+                if pflags.contains(OpenFlags::TRUNCATE) {
+                    open_options.truncate(true);
+                }
 
-                server.filesystem.open_with(path, options)
+                server.filesystem.open_with(path, open_options)
             }
         })
         .await

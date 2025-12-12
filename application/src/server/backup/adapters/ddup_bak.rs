@@ -713,22 +713,17 @@ impl BackupBrowseExt for BrowseDdupBakBackup {
                 let entry = match archive.find_archive_entry(&path) {
                     Some(entry) => entry,
                     None => {
+                        let directory_entry_count = archive
+                            .entries()
+                            .iter()
+                            .filter(|e| e.is_directory())
+                            .count();
+
                         let mut directory_entries = Vec::new();
-                        directory_entries.reserve_exact(
-                            archive
-                                .entries()
-                                .iter()
-                                .filter(|e| e.is_directory())
-                                .count(),
-                        );
+                        directory_entries.reserve_exact(directory_entry_count);
                         let mut other_entries = Vec::new();
-                        other_entries.reserve_exact(
-                            archive
-                                .entries()
-                                .iter()
-                                .filter(|e| !e.is_directory())
-                                .count(),
-                        );
+                        other_entries
+                            .reserve_exact(archive.entries().len() - directory_entry_count);
 
                         for entry in archive.entries() {
                             if is_ignored(PathBuf::from(entry.name()), entry.is_directory()) {

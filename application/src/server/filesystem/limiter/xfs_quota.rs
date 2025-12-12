@@ -7,7 +7,7 @@ use tokio::{
     fs::{File, OpenOptions},
     io::{AsyncReadExt, AsyncWriteExt},
     process::Command,
-    sync::RwLock,
+    sync::{Mutex, RwLock},
 };
 
 type DiskUsageMap = HashMap<String, (PathBuf, u32, i64)>;
@@ -89,6 +89,8 @@ static DISK_USAGE: LazyLock<Arc<RwLock<DiskUsageMap>>> = LazyLock::new(|| {
     disk_usage
 });
 
+static ETC_PROJECTS_LOCK: Mutex<()> = Mutex::const_new(());
+
 fn uuid_to_project_id(uuid: &uuid::Uuid) -> u32 {
     let uuid_bytes = uuid.as_bytes();
     u32::from_be_bytes([uuid_bytes[0], uuid_bytes[1], uuid_bytes[2], uuid_bytes[3]])
@@ -136,6 +138,8 @@ pub async fn setup(
         tokio::fs::create_dir_all(&filesystem.base_path).await?;
     }
 
+    let etc_projects_lock = ETC_PROJECTS_LOCK.lock().await;
+
     let mut projects = OpenOptions::new()
         .read(true)
         .append(true)
@@ -166,8 +170,10 @@ pub async fn setup(
             )
             .await?;
         projects.sync_all().await?;
-        drop(projects);
     }
+
+    drop(projects);
+    drop(etc_projects_lock);
 
     let project_id = uuid_to_project_id(&filesystem.uuid);
 
@@ -277,6 +283,8 @@ pub async fn destroy(
 
     update_disk_limit(filesystem, 0).await?;
 
+    let etc_projects_lock = ETC_PROJECTS_LOCK.lock().await;
+
     if let Ok(mut projects) = File::open(Path::new("/etc/projects")).await {
         let mut contents = String::new();
         projects.read_to_string(&mut contents).await?;
@@ -296,6 +304,8 @@ pub async fn destroy(
         projects_file.write_all(new_contents.as_bytes()).await?;
         projects_file.sync_all().await?;
     }
+
+    drop(etc_projects_lock);
 
     tokio::fs::remove_dir_all(&filesystem.base_path).await?;
 
