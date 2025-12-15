@@ -1,4 +1,5 @@
 use anyhow::Context;
+use compact_str::ToCompactString;
 use hmac::digest::KeyInit;
 use jwt::VerifyWithKey;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -8,11 +9,11 @@ use tokio::sync::RwLock;
 #[derive(Deserialize, Serialize)]
 pub struct BasePayload {
     #[serde(rename = "iss")]
-    pub issuer: String,
+    pub issuer: compact_str::CompactString,
     #[serde(rename = "sub")]
-    pub subject: Option<String>,
+    pub subject: Option<compact_str::CompactString>,
     #[serde(rename = "aud")]
-    pub audience: Vec<String>,
+    pub audience: Vec<compact_str::CompactString>,
     #[serde(rename = "exp")]
     pub expiration_time: Option<i64>,
     #[serde(rename = "nbf")]
@@ -20,7 +21,7 @@ pub struct BasePayload {
     #[serde(rename = "iat")]
     pub issued_at: Option<i64>,
     #[serde(rename = "jti")]
-    pub jwt_id: String,
+    pub jwt_id: compact_str::CompactString,
 }
 
 impl BasePayload {
@@ -60,14 +61,15 @@ impl BasePayload {
     }
 }
 
-type CountingMap = HashMap<String, (usize, chrono::DateTime<chrono::Utc>)>;
+type CountingMap = HashMap<compact_str::CompactString, (usize, chrono::DateTime<chrono::Utc>)>;
 
 pub struct JwtClient {
     pub key: hmac::Hmac<sha2::Sha256>,
     pub boot_time: chrono::DateTime<chrono::Utc>,
     pub max_jwt_uses: usize,
 
-    pub denied_jtokens: Arc<RwLock<HashMap<String, chrono::DateTime<chrono::Utc>>>>,
+    pub denied_jtokens:
+        Arc<RwLock<HashMap<compact_str::CompactString, chrono::DateTime<chrono::Utc>>>>,
     pub seen_jtoken_ids: Arc<RwLock<CountingMap>>,
 }
 
@@ -137,13 +139,13 @@ impl JwtClient {
             self.seen_jtoken_ids
                 .write()
                 .await
-                .insert(id.to_string(), (1, chrono::Utc::now()));
+                .insert(id.to_compact_string(), (1, chrono::Utc::now()));
         }
 
         true
     }
 
-    pub async fn deny(&self, id: impl Into<String>) {
+    pub async fn deny(&self, id: impl Into<compact_str::CompactString>) {
         let mut denied = self.denied_jtokens.write().await;
         denied.insert(id.into(), chrono::Utc::now());
     }

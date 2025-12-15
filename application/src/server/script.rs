@@ -85,7 +85,7 @@ async fn container_config(
             mounts: Some(vec![
                 bollard::models::Mount {
                     typ: Some(bollard::secret::MountTypeEnum::BIND),
-                    source: Some(server.filesystem.base()),
+                    source: Some(server.filesystem.base().into()),
                     target: Some("/mnt/server".to_string()),
                     ..Default::default()
                 },
@@ -124,7 +124,7 @@ async fn container_config(
             ..Default::default()
         }),
         cmd: Some(vec![
-            container_script.entrypoint.clone(),
+            container_script.entrypoint.to_string(),
             "/mnt/script/script.sh".to_string(),
         ]),
         hostname: Some("script".to_string()),

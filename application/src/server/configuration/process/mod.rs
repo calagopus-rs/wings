@@ -123,7 +123,12 @@ impl ServerConfigurationFile {
                         .map_or_else(|| "500".to_string(), |v| v.to_string())),
                     "cpu" => Ok(config.build.cpu_limit.to_string()),
                     "disk" => Ok(config.build.disk_space.to_string()),
-                    "threads" => Ok(config.build.threads.clone().unwrap_or_default()),
+                    "threads" => Ok(config
+                        .build
+                        .threads
+                        .clone()
+                        .map(|t| t.into())
+                        .unwrap_or_default()),
                     "default" => {
                         if parts.len() < 3 {
                             return Ok(String::new());
@@ -279,15 +284,15 @@ nestify::nest! {
     pub struct ProcessConfiguration {
         #[serde(default)]
         pub startup: #[derive(ToSchema, Deserialize, Clone, DefaultFromSerde)] pub struct ProcessConfigurationStartup {
-            pub done: Option<Vec<String>>,
+            pub done: Option<Vec<compact_str::CompactString>>,
             #[serde(default)]
             pub strip_ansi: bool,
         },
         #[serde(default)]
         pub stop: #[derive(ToSchema, Deserialize, DefaultFromSerde)] pub struct ProcessConfigurationStop {
             #[serde(default)]
-            pub r#type: String,
-            pub value: Option<String>,
+            pub r#type: compact_str::CompactString,
+            pub value: Option<compact_str::CompactString>,
         },
 
         #[serde(default)]

@@ -18,8 +18,8 @@ mod post {
     #[derive(ToSchema, Deserialize)]
     pub struct Payload {
         #[serde(default)]
-        root: String,
-        file: String,
+        root: compact_str::CompactString,
+        file: compact_str::CompactString,
 
         #[serde(default = "foreground")]
         foreground: bool,

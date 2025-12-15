@@ -223,7 +223,7 @@ impl ExecSession {
                     if self.server.state.get_state() != crate::server::state::ServerState::Offline
                         && let Some(stdin) = self.server.container_stdin().await
                     {
-                        if let Err(err) = stdin.send(format!("{command}\n")).await {
+                        if let Err(err) = stdin.send(format!("{command}\n").into()).await {
                             tracing::error!(
                                 server = %self.server.uuid,
                                 "failed to send command to server: {}",

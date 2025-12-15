@@ -1,3 +1,4 @@
+use compact_str::ToCompactString;
 use serde::{Deserialize, Serialize};
 use serde_default::DefaultFromSerde;
 use std::{collections::HashMap, path::PathBuf};
@@ -20,8 +21,8 @@ pub struct Mount {
     #[serde(skip_deserializing, default)]
     pub default: bool,
 
-    pub target: String,
-    pub source: String,
+    pub target: compact_str::CompactString,
+    pub source: compact_str::CompactString,
     pub read_only: bool,
 }
 
@@ -52,15 +53,15 @@ nestify::nest! {
 
         #[schema(inline)]
         pub meta: #[derive(ToSchema, Deserialize, Serialize)] pub struct ServerConfigurationMeta {
-            pub name: String,
-            pub description: String,
+            pub name: compact_str::CompactString,
+            pub description: compact_str::CompactString,
         },
 
         pub suspended: bool,
-        pub invocation: String,
+        pub invocation: compact_str::CompactString,
         pub skip_egg_scripts: bool,
 
-        pub environment: HashMap<String, serde_json::Value>,
+        pub environment: HashMap<compact_str::CompactString, serde_json::Value>,
         #[serde(default)]
         pub labels: HashMap<String, String>,
         #[serde(default)]
@@ -74,12 +75,12 @@ nestify::nest! {
 
             #[schema(inline)]
             pub default: Option<#[derive(ToSchema, Deserialize, Serialize)] pub struct ServerConfigurationAllocationsDefault {
-                pub ip: String,
+                pub ip: compact_str::CompactString,
                 pub port: u16,
             }>,
 
             #[serde(default, deserialize_with = "crate::deserialize::deserialize_defaultable")]
-            pub mappings: HashMap<String, Vec<u16>>,
+            pub mappings: HashMap<compact_str::CompactString, Vec<u16>>,
         },
         #[schema(inline)]
         pub build: #[derive(ToSchema, Deserialize, Serialize)] pub struct ServerConfigurationBuild {
@@ -88,7 +89,7 @@ nestify::nest! {
             pub io_weight: Option<u16>,
             pub cpu_limit: i64,
             pub disk_space: u64,
-            pub threads: Option<String>,
+            pub threads: Option<compact_str::CompactString>,
             pub oom_disabled: bool,
         },
         pub mounts: Vec<Mount>,
@@ -96,21 +97,21 @@ nestify::nest! {
         pub egg: #[derive(ToSchema, Deserialize, Serialize)] pub struct ServerConfigurationEgg {
             pub id: uuid::Uuid,
             #[serde(default, deserialize_with = "crate::deserialize::deserialize_defaultable")]
-            pub file_denylist: Vec<String>,
+            pub file_denylist: Vec<compact_str::CompactString>,
         },
 
         #[schema(inline)]
         pub container: #[derive(ToSchema, Deserialize, Serialize)] pub struct ServerConfigurationContainer {
             #[serde(default)]
             pub privileged: bool,
-            pub image: String,
-            pub timezone: Option<String>,
+            pub image: compact_str::CompactString,
+            pub timezone: Option<compact_str::CompactString>,
 
             #[serde(default)]
             #[schema(inline)]
             pub seccomp: #[derive(ToSchema, Deserialize, Serialize, DefaultFromSerde)] pub struct ServerConfigurationContainerSeccomp {
                 #[serde(default)]
-                pub remove_allowed: Vec<String>,
+                pub remove_allowed: Vec<compact_str::CompactString>,
             },
         },
 
@@ -136,7 +137,7 @@ impl ServerConfiguration {
 
         mounts.push(Mount {
             default: true,
-            target: "/home/container".to_string(),
+            target: "/home/container".into(),
             source: filesystem.base(),
             read_only: false,
         });
@@ -144,20 +145,20 @@ impl ServerConfiguration {
         if config.system.passwd.enabled {
             mounts.push(Mount {
                 default: false,
-                target: "/etc/group".to_string(),
+                target: "/etc/group".into(),
                 source: PathBuf::from(&config.system.passwd.directory)
                     .join("group")
                     .to_string_lossy()
-                    .to_string(),
+                    .to_compact_string(),
                 read_only: true,
             });
             mounts.push(Mount {
                 default: false,
-                target: "/etc/passwd".to_string(),
+                target: "/etc/passwd".into(),
                 source: PathBuf::from(&config.system.passwd.directory)
                     .join("passwd")
                     .to_string_lossy()
-                    .to_string(),
+                    .to_compact_string(),
                 read_only: true,
             });
         }
@@ -182,8 +183,8 @@ impl ServerConfiguration {
             .into_iter()
             .map(|mount| bollard::models::Mount {
                 typ: Some(bollard::secret::MountTypeEnum::BIND),
-                target: Some(mount.target),
-                source: Some(mount.source),
+                target: Some(mount.target.into()),
+                source: Some(mount.source.into()),
                 read_only: Some(mount.read_only),
                 ..Default::default()
             })
@@ -196,7 +197,7 @@ impl ServerConfiguration {
         for (ip, ports) in &self.allocations.mappings {
             for port in ports {
                 let binding = bollard::models::PortBinding {
-                    host_ip: Some(ip.clone()),
+                    host_ip: Some(ip.to_string()),
                     host_port: Some(port.to_string()),
                 };
 
@@ -297,7 +298,7 @@ impl ServerConfiguration {
                 0 => None,
                 limit => Some(limit as i64),
             },
-            cpuset_cpus: self.build.threads.clone(),
+            cpuset_cpus: self.build.threads.clone().map(|t| t.into()),
             ..Default::default()
         };
 
@@ -315,32 +316,28 @@ impl ServerConfiguration {
         environment.reserve(5);
 
         environment.insert(
-            "TZ".to_string(),
+            "TZ".into(),
             serde_json::Value::String(
                 self.container
                     .timezone
                     .as_ref()
-                    .unwrap_or(&config.system.timezone)
-                    .clone(),
+                    .map_or_else(|| config.system.timezone.to_string(), |tz| tz.to_string()),
             ),
         );
         environment.insert(
-            "STARTUP".to_string(),
-            serde_json::Value::String(self.invocation.clone()),
+            "STARTUP".into(),
+            serde_json::Value::String(self.invocation.to_string()),
         );
         environment.insert(
-            "SERVER_MEMORY".to_string(),
+            "SERVER_MEMORY".into(),
             serde_json::Value::from(self.build.memory_limit),
         );
         if let Some(default) = &self.allocations.default {
             environment.insert(
-                "SERVER_IP".to_string(),
-                serde_json::Value::String(default.ip.clone()),
+                "SERVER_IP".into(),
+                serde_json::Value::String(default.ip.to_string()),
             );
-            environment.insert(
-                "SERVER_PORT".to_string(),
-                serde_json::Value::from(default.port),
-            );
+            environment.insert("SERVER_PORT".into(), serde_json::Value::from(default.port));
         }
 
         environment
@@ -364,8 +361,8 @@ impl ServerConfiguration {
         filesystem: &super::filesystem::Filesystem,
     ) -> bollard::container::Config<String> {
         let mut labels = self.labels.clone();
-        labels.insert("Service".to_string(), config.app_name.clone());
-        labels.insert("ContainerType".to_string(), "server_process".to_string());
+        labels.insert("Service".into(), config.app_name.clone());
+        labels.insert("ContainerType".into(), "server_process".into());
 
         let network_mode = if self.allocations.force_outgoing_ip
             && let Some(default) = &self.allocations.default

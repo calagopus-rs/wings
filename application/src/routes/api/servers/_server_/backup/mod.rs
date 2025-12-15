@@ -17,7 +17,7 @@ mod post {
     pub struct Payload {
         adapter: BackupAdapter,
         uuid: uuid::Uuid,
-        ignore: String,
+        ignore: compact_str::CompactString,
     }
 
     #[derive(ToSchema, Serialize)]

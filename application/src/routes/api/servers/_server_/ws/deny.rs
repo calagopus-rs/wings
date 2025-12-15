@@ -11,7 +11,7 @@ mod post {
 
     #[derive(ToSchema, Deserialize)]
     pub struct Payload {
-        jtis: Vec<String>,
+        jtis: Vec<compact_str::CompactString>,
     }
 
     #[derive(ToSchema, Serialize)]
@@ -31,7 +31,7 @@ mod post {
         axum::Json(data): axum::Json<Payload>,
     ) -> ApiResponseResult {
         for jti in data.jtis {
-            state.config.jwt.deny(&jti).await;
+            state.config.jwt.deny(jti).await;
         }
 
         ApiResponse::json(Response {}).ok()

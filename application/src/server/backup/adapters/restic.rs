@@ -353,7 +353,7 @@ impl BackupCreateExt for ResticBackup {
         progress: Arc<AtomicU64>,
         total: Arc<AtomicU64>,
         _ignore: ignore::gitignore::Gitignore,
-        ignore_raw: String,
+        ignore_raw: compact_str::CompactString,
     ) -> Result<RawServerBackup, anyhow::Error> {
         let mut excluded_paths = Vec::new();
         for line in ignore_raw.lines() {
@@ -681,7 +681,7 @@ impl BackupExt for ResticBackup {
         server: &crate::server::Server,
         progress: Arc<AtomicU64>,
         total: Arc<AtomicU64>,
-        _download_url: Option<String>,
+        _download_url: Option<compact_str::CompactString>,
     ) -> Result<(), anyhow::Error> {
         let child = Command::new("restic")
             .envs(&self.configuration.environment)
@@ -863,11 +863,11 @@ impl BrowseResticBackup {
                 .file_name()
                 .unwrap_or_default()
                 .to_string_lossy()
-                .to_string(),
+                .into(),
             created: chrono::DateTime::from_timestamp(0, 0).unwrap_or_default(),
             modified: entry.mtime,
             mode: encode_mode(entry.mode),
-            mode_bits: format!("{:o}", entry.mode & 0o777),
+            mode_bits: compact_str::format_compact!("{:o}", entry.mode & 0o777),
             size,
             directory: matches!(entry.r#type, ResticEntryType::Dir),
             file: matches!(entry.r#type, ResticEntryType::File),

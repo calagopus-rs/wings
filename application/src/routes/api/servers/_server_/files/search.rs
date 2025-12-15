@@ -15,8 +15,8 @@ mod post {
     #[derive(ToSchema, Deserialize)]
     pub struct Payload {
         #[serde(default)]
-        root: String,
-        query: String,
+        root: compact_str::CompactString,
+        query: compact_str::CompactString,
         #[serde(default)]
         include_content: bool,
 
@@ -107,13 +107,13 @@ mod post {
                                 return Ok(());
                             }
 
-                            if path.to_string_lossy().contains(query.as_ref()) {
+                            if path.to_string_lossy().contains(query.as_str()) {
                                 let mut entry = server
                                     .filesystem
                                     .to_api_entry(path.to_path_buf(), metadata)
                                     .await;
                                 entry.name = match path.strip_prefix(root.as_ref()) {
-                                    Ok(path) => path.to_string_lossy().to_string(),
+                                    Ok(path) => path.to_string_lossy().into(),
                                     Err(_) => return Ok(()),
                                 };
 
@@ -142,7 +142,7 @@ mod post {
                                     let content = String::from_utf8_lossy(&buffer[..bytes_read]);
                                     last_content.push_str(&content);
 
-                                    if last_content.contains(query.as_ref()) {
+                                    if last_content.contains(query.as_str()) {
                                         let mut entry = server
                                             .filesystem
                                             .to_api_entry_buffer(
@@ -155,7 +155,7 @@ mod post {
                                             )
                                             .await;
                                         entry.name = match path.strip_prefix(root.as_ref()) {
-                                            Ok(path) => path.to_string_lossy().to_string(),
+                                            Ok(path) => path.to_string_lossy().into(),
                                             Err(_) => return Ok(()),
                                         };
 

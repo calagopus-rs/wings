@@ -91,7 +91,7 @@ impl BackupManager {
         adapter: BackupAdapter,
         server: &crate::server::Server,
         uuid: uuid::Uuid,
-        ignore: String,
+        ignore: compact_str::CompactString,
     ) -> Result<RawServerBackup, anyhow::Error> {
         tracing::info!(
             server = %server.uuid,
@@ -101,7 +101,7 @@ impl BackupManager {
         );
 
         let mut ignore_builder = GitignoreBuilder::new("");
-        let mut ignore_raw = String::new();
+        let mut ignore_raw = compact_str::CompactString::default();
 
         for line in ignore.lines() {
             if ignore_builder.add_line(None, line).is_ok() {
@@ -279,7 +279,7 @@ impl BackupManager {
         backup: &super::Backup,
         server: &crate::server::Server,
         truncate_directory: bool,
-        download_url: Option<String>,
+        download_url: Option<compact_str::CompactString>,
     ) -> Result<(), anyhow::Error> {
         if server.is_locked_state() {
             return Err(anyhow::anyhow!("Server is in a locked state"));

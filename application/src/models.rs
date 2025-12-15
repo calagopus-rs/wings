@@ -49,11 +49,11 @@ pub struct Server {
 
 #[derive(ToSchema, Serialize)]
 pub struct DirectoryEntry {
-    pub name: String,
+    pub name: compact_str::CompactString,
     pub created: chrono::DateTime<chrono::Utc>,
     pub modified: chrono::DateTime<chrono::Utc>,
-    pub mode: String,
-    pub mode_bits: String,
+    pub mode: compact_str::CompactString,
+    pub mode_bits: compact_str::CompactString,
     pub size: u64,
     pub directory: bool,
     pub file: bool,

@@ -13,8 +13,8 @@ mod post {
 
     #[derive(ToSchema, Deserialize)]
     pub struct Payload {
-        name: String,
-        path: String,
+        name: compact_str::CompactString,
+        path: compact_str::CompactString,
     }
 
     #[derive(ToSchema, Serialize)]

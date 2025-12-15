@@ -93,7 +93,7 @@ impl BackupCreateExt for BtrfsBackup {
         _progress: Arc<AtomicU64>,
         _total: Arc<AtomicU64>,
         ignore: ignore::gitignore::Gitignore,
-        ignore_raw: String,
+        ignore_raw: compact_str::CompactString,
     ) -> Result<RawServerBackup, anyhow::Error> {
         let subvolume_path = Self::get_subvolume_path(&server.app_state.config, uuid);
         let ignored_path = Self::get_ignore_path(&server.app_state.config, uuid);
@@ -327,7 +327,7 @@ impl BackupExt for BtrfsBackup {
         server: &crate::server::Server,
         progress: Arc<AtomicU64>,
         total: Arc<AtomicU64>,
-        _download_url: Option<String>,
+        _download_url: Option<compact_str::CompactString>,
     ) -> Result<(), anyhow::Error> {
         let subvolume_path = Self::get_subvolume_path(&server.app_state.config, self.uuid);
 

@@ -15,9 +15,9 @@ mod get {
     #[derive(ToSchema, Deserialize)]
     pub struct Params {
         #[serde(default)]
-        pub directory: String,
+        pub directory: compact_str::CompactString,
         #[serde(default)]
-        pub ignored: Vec<String>,
+        pub ignored: Vec<compact_str::CompactString>,
 
         pub per_page: Option<usize>,
         pub page: Option<usize>,

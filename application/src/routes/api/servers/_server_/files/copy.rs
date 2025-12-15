@@ -7,14 +7,15 @@ mod post {
         routes::{ApiError, api::servers::_server_::GetServer},
     };
     use axum::http::StatusCode;
+    use compact_str::ToCompactString;
     use serde::Deserialize;
     use std::path::Path;
     use utoipa::ToSchema;
 
     #[derive(ToSchema, Deserialize)]
     pub struct Payload {
-        location: String,
-        name: Option<String>,
+        location: compact_str::CompactString,
+        name: Option<compact_str::CompactString>,
     }
 
     #[utoipa::path(post, path = "/", responses(
@@ -64,32 +65,35 @@ mod post {
         };
 
         #[inline]
-        async fn generate_new_name(server: &GetServer, location: &Path) -> String {
+        async fn generate_new_name(
+            server: &GetServer,
+            location: &Path,
+        ) -> compact_str::CompactString {
             let mut extension = location
                 .extension()
                 .and_then(|ext| ext.to_str())
-                .map(|ext| format!(".{ext}"))
-                .unwrap_or("".to_string());
+                .map(|ext| compact_str::format_compact!(".{ext}"))
+                .unwrap_or("".into());
             let mut base_name = location
                 .file_stem()
                 .and_then(|stem| stem.to_str())
                 .unwrap_or("")
-                .to_string();
+                .to_compact_string();
 
             if base_name.ends_with(".tar") {
-                extension = format!(".tar{extension}");
+                extension = compact_str::format_compact!(".tar{extension}");
                 base_name.truncate(base_name.len() - 4);
             }
 
             let parent = location.parent().unwrap_or(Path::new(""));
-            let mut suffix = " copy".to_string();
+            let mut suffix = " copy".to_compact_string();
 
             for i in 0..51 {
                 if i > 0 {
-                    suffix = format!(" copy {i}");
+                    suffix = compact_str::format_compact!(" copy {i}");
                 }
 
-                let new_name = format!("{base_name}{suffix}{extension}");
+                let new_name = compact_str::format_compact!("{base_name}{suffix}{extension}");
                 let new_path = parent.join(&new_name);
 
                 if server
@@ -103,14 +107,14 @@ mod post {
 
                 if i == 50 {
                     let timestamp = chrono::Utc::now().to_rfc3339();
-                    suffix = format!("copy.{timestamp}");
+                    suffix = compact_str::format_compact!("copy.{timestamp}");
 
-                    let final_name = format!("{base_name}{suffix}{extension}");
+                    let final_name = compact_str::format_compact!("{base_name}{suffix}{extension}");
                     return final_name;
                 }
             }
 
-            format!("{base_name}{suffix}{extension}")
+            compact_str::format_compact!("{base_name}{suffix}{extension}")
         }
 
         let parent = match location.parent() {

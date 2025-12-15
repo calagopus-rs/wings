@@ -55,10 +55,10 @@ mod post {
     #[derive(ToSchema, Deserialize)]
     pub struct Payload {
         #[serde(default, alias = "directory")]
-        root: String,
+        root: compact_str::CompactString,
 
-        url: String,
-        file_name: Option<String>,
+        url: compact_str::CompactString,
+        file_name: Option<compact_str::CompactString>,
 
         #[serde(default)]
         use_header: bool,

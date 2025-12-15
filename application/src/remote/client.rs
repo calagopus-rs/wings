@@ -4,6 +4,7 @@ use crate::server::{
 };
 use anyhow::Context;
 use axum::http::{HeaderMap, HeaderName, HeaderValue};
+use serde::Serialize;
 use std::fmt::Debug;
 
 pub struct Client {
@@ -332,7 +333,7 @@ impl Client {
         &self,
         server: uuid::Uuid,
         name: Option<&str>,
-        ignored_files: &[String],
+        ignored_files: &[impl Serialize + Debug + AsRef<str>],
     ) -> Result<(BackupAdapter, uuid::Uuid), anyhow::Error> {
         tracing::info!("creating backup");
 

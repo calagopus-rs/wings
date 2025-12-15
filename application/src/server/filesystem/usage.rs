@@ -1,27 +1,138 @@
-use std::{collections::HashMap, path::Path};
+use compact_str::ToCompactString;
+use std::path::Path;
+
+#[derive(Default, Clone, Copy)]
+pub struct UsedSpace {
+    data: [u32; 3],
+}
+
+impl UsedSpace {
+    #[inline]
+    pub fn get_real(&self) -> u64 {
+        ((self.data[0] as u64) | ((self.data[1] as u64) << 32)) & 0xFFFF_FFFF_FFFF
+    }
+
+    pub fn set_real(&mut self, val: u64) {
+        assert!(val <= 0xFFFF_FFFF_FFFF);
+        self.data[0] = val as u32;
+        self.data[1] = ((val >> 32) & 0xFFFF) as u32;
+    }
+
+    #[inline]
+    pub fn sub_real(&mut self, val: u64) {
+        let real = self.get_real();
+        self.set_real(real.saturating_sub(val));
+    }
+
+    #[inline]
+    pub fn add_real(&mut self, val: u64) {
+        let real = self.get_real();
+        self.set_real(real.saturating_add(val).min(0xFFFF_FFFF_FFFF));
+    }
+
+    #[inline]
+    pub fn get_apparent(&self) -> u64 {
+        (((self.data[1] >> 16) as u64) | ((self.data[2] as u64) << 16)) & 0xFFFF_FFFF_FFFF
+    }
+
+    pub fn set_apparent(&mut self, val: u64) {
+        assert!(val <= 0xFFFF_FFFF_FFFF);
+        self.data[1] = (self.data[1] & 0xFFFF) | ((val & 0xFFFF) << 16) as u32;
+        self.data[2] = (val >> 16) as u32;
+    }
+
+    #[inline]
+    pub fn sub_apparent(&mut self, val: u64) {
+        let real = self.get_apparent();
+        self.set_apparent(real.saturating_sub(val));
+    }
+
+    #[inline]
+    pub fn add_apparent(&mut self, val: u64) {
+        let real = self.get_apparent();
+        self.set_apparent(real.saturating_add(val).min(0xFFFF_FFFF_FFFF));
+    }
+}
+
+#[derive(Default, Clone, Copy)]
+pub struct SpaceDelta {
+    pub real: i64,
+    pub apparent: i64,
+}
+
+impl From<i64> for SpaceDelta {
+    #[inline]
+    fn from(value: i64) -> Self {
+        SpaceDelta {
+            real: value,
+            apparent: value,
+        }
+    }
+}
+
+impl From<(i64, i64)> for SpaceDelta {
+    #[inline]
+    fn from(value: (i64, i64)) -> Self {
+        SpaceDelta {
+            real: value.0,
+            apparent: value.1,
+        }
+    }
+}
 
 #[derive(Default)]
 pub struct DiskUsage {
-    pub size: u64,
-    pub entries: HashMap<String, DiskUsage>,
+    pub space: UsedSpace,
+    entries: Vec<(compact_str::CompactString, DiskUsage)>,
 }
 
 impl DiskUsage {
-    pub fn get_size(&self, path: &Path) -> Option<u64> {
+    fn upsert_entry(&mut self, key: &str) -> &mut DiskUsage {
+        match self.entries.binary_search_by(|a| a.0.as_str().cmp(key)) {
+            Ok(idx) => &mut self.entries[idx].1,
+            Err(idx) => {
+                self.entries
+                    .insert(idx, (key.to_compact_string(), DiskUsage::default()));
+                &mut self.entries[idx].1
+            }
+        }
+    }
+
+    fn get_entry(&mut self, key: &str) -> Option<&mut DiskUsage> {
+        if let Ok(idx) = self.entries.binary_search_by(|a| a.0.as_str().cmp(key)) {
+            Some(&mut self.entries[idx].1)
+        } else {
+            None
+        }
+    }
+
+    fn remove_entry(&mut self, key: &str) -> Option<DiskUsage> {
+        if let Ok(idx) = self.entries.binary_search_by(|a| a.0.as_str().cmp(key)) {
+            Some(self.entries.remove(idx).1)
+        } else {
+            None
+        }
+    }
+
+    pub fn get_size(&self, path: &Path) -> Option<UsedSpace> {
         if crate::unlikely(path == Path::new("") || path == Path::new("/")) {
-            return Some(self.size);
+            return Some(self.space);
         }
 
         let mut current = self;
         for component in path.components() {
             let name = component.as_os_str().to_str()?;
-            current = current.entries.get(name)?;
+            let idx = current
+                .entries
+                .binary_search_by(|(n, _)| n.as_str().cmp(name))
+                .ok()?;
+            current = &current.entries[idx].1;
         }
 
-        Some(current.size)
+        Some(current.space)
     }
 
-    pub fn update_size(&mut self, path: &Path, delta: i64) {
+    pub fn update_size(&mut self, path: &Path, delta: SpaceDelta) {
         if crate::unlikely(path == Path::new("") || path == Path::new("/")) {
             return;
         }
@@ -29,63 +140,44 @@ impl DiskUsage {
         let mut current = self;
         for component in path.components() {
             let key = component.as_os_str().to_str().unwrap_or_default();
+            let entry = current.upsert_entry(key);
 
-            current = if current.entries.contains_key(key) {
-                // this is perfectly safe, we have a mutable reference to `current`
-                // and we know the entry exists (using check above)
-                let entry = unsafe { current.entries.get_mut(key).unwrap_unchecked() };
-
-                if delta >= 0 {
-                    entry.size = entry.size.saturating_add(delta as u64);
-                } else {
-                    entry.size = entry.size.saturating_sub(delta.unsigned_abs());
-                }
-
-                entry
+            if delta.real >= 0 {
+                entry.space.add_real(delta.real as u64);
             } else {
-                let entry = current.entries.entry(key.to_string()).or_default();
-
-                if delta >= 0 {
-                    entry.size = entry.size.saturating_add(delta as u64);
-                } else {
-                    entry.size = entry.size.saturating_sub(delta.unsigned_abs());
-                }
-
-                entry
+                entry.space.sub_real(delta.real.unsigned_abs());
             }
+            if delta.apparent >= 0 {
+                entry.space.add_apparent(delta.apparent as u64);
+            } else {
+                entry.space.sub_apparent(delta.apparent.unsigned_abs());
+            }
+
+            current = entry;
         }
     }
 
-    pub fn update_size_slice(&mut self, path: &[String], delta: i64) {
+    pub fn update_size_slice(&mut self, path: &[impl AsRef<str>], delta: SpaceDelta) {
         if crate::unlikely(path.is_empty()) {
             return;
         }
 
         let mut current = self;
         for component in path {
-            current = if current.entries.contains_key(component) {
-                // this is perfectly safe, we have a mutable reference to `current`
-                // and we know the entry exists (using check above)
-                let entry = unsafe { current.entries.get_mut(component).unwrap_unchecked() };
+            let entry = current.upsert_entry(component.as_ref());
 
-                if delta >= 0 {
-                    entry.size = entry.size.saturating_add(delta as u64);
-                } else {
-                    entry.size = entry.size.saturating_sub(delta.unsigned_abs());
-                }
-
-                entry
+            if delta.real >= 0 {
+                entry.space.add_real(delta.real as u64);
             } else {
-                let entry = current.entries.entry(component.clone()).or_default();
-
-                if delta >= 0 {
-                    entry.size = entry.size.saturating_add(delta as u64);
-                } else {
-                    entry.size = entry.size.saturating_sub(delta.unsigned_abs());
-                }
-
-                entry
+                entry.space.sub_real(delta.real.unsigned_abs());
             }
+            if delta.apparent >= 0 {
+                entry.space.add_apparent(delta.apparent as u64);
+            } else {
+                entry.space.sub_apparent(delta.apparent.unsigned_abs());
+            }
+
+            current = entry;
         }
     }
 
@@ -94,25 +186,25 @@ impl DiskUsage {
             return None;
         }
 
-        self.recursive_remove(
-            &path
-                .components()
-                .map(|c| c.as_os_str().to_str().unwrap_or_default().to_string())
-                .collect::<Vec<_>>(),
-        )
+        self.recursive_remove(&mut path.components())
     }
 
-    fn recursive_remove(&mut self, path: &[String]) -> Option<DiskUsage> {
-        let name = &path[0];
-        if path.len() == 1 {
-            return self.entries.remove(name);
+    fn recursive_remove<'a>(
+        &mut self,
+        components: &mut impl Iterator<Item = std::path::Component<'a>>,
+    ) -> Option<DiskUsage> {
+        let component = components.next()?;
+        let name = component.as_os_str().to_str().unwrap_or_default();
+
+        if components.size_hint().0 == 0 {
+            return self.remove_entry(name);
         }
 
-        if let Some(usage) = self.entries.get_mut(name)
-            && let Some(removed) = usage.recursive_remove(&path[1..])
+        if let Some(child) = self.get_entry(name)
+            && let Some(removed) = child.recursive_remove(components)
         {
-            usage.size = usage.size.saturating_sub(removed.size);
-
+            self.space.sub_real(removed.space.get_real());
+            self.space.sub_apparent(removed.space.get_apparent());
             return Some(removed);
         }
 
@@ -124,7 +216,11 @@ impl DiskUsage {
         self.entries.clear();
     }
 
-    pub fn add_directory(&mut self, target_path: &[String], source_dir: DiskUsage) -> bool {
+    pub fn add_directory(
+        &mut self,
+        target_path: &[impl AsRef<str>],
+        source_dir: DiskUsage,
+    ) -> bool {
         if crate::unlikely(target_path.is_empty()) {
             return false;
         }
@@ -135,23 +231,15 @@ impl DiskUsage {
 
         let mut current = self;
         for component in parents {
-            current = if current.entries.contains_key(component) {
-                // this is perfectly safe, we have a mutable reference to `current`
-                // and we know the entry exists (using check above)
-                let entry = unsafe { current.entries.get_mut(component).unwrap_unchecked() };
+            current.space.add_real(source_dir.space.get_real());
+            current.space.add_apparent(source_dir.space.get_apparent());
 
-                current.size = current.size.saturating_add(source_dir.size);
-                entry
-            } else {
-                let entry = current.entries.entry(component.clone()).or_default();
-
-                current.size = current.size.saturating_add(source_dir.size);
-                entry
-            }
+            current = current.upsert_entry(component.as_ref());
         }
 
-        current.size = current.size.saturating_add(source_dir.size);
-        current.entries.insert(leaf.clone(), source_dir);
+        current.space.add_real(source_dir.space.get_real());
+        current.space.add_apparent(source_dir.space.get_apparent());
+        *current.upsert_entry(leaf.as_ref()) = source_dir;
 
         true
     }

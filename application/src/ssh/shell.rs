@@ -473,7 +473,7 @@ impl ShellSession {
                                     != crate::server::state::ServerState::Offline
                                     && let Some(stdin) = self.server.container_stdin().await
                                 {
-                                    if let Err(err) = stdin.send(format!("{line}\n")).await {
+                                    if let Err(err) = stdin.send(format!("{line}\n").into()).await {
                                         data_writer.write_all(b"\r\n").await.unwrap_or_default();
 
                                         tracing::error!(

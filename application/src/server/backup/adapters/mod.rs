@@ -145,7 +145,7 @@ impl BackupAdapter {
         progress: Arc<AtomicU64>,
         total: Arc<AtomicU64>,
         ignore: ignore::gitignore::Gitignore,
-        ignore_raw: String,
+        ignore_raw: compact_str::CompactString,
     ) -> Result<RawServerBackup, anyhow::Error> {
         match self {
             BackupAdapter::Wings => {

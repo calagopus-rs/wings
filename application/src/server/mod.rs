@@ -384,7 +384,9 @@ impl Server {
         })
     }
 
-    pub async fn container_stdin(&self) -> Option<tokio::sync::mpsc::Sender<String>> {
+    pub async fn container_stdin(
+        &self,
+    ) -> Option<tokio::sync::mpsc::Sender<compact_str::CompactString>> {
         self.container
             .read()
             .await
@@ -392,7 +394,9 @@ impl Server {
             .map(|c| c.stdin.clone())
     }
 
-    pub async fn container_stdout(&self) -> Option<tokio::sync::broadcast::Receiver<Arc<String>>> {
+    pub async fn container_stdout(
+        &self,
+    ) -> Option<tokio::sync::broadcast::Receiver<Arc<compact_str::CompactString>>> {
         self.container
             .read()
             .await

@@ -15,12 +15,12 @@ mod post {
 
     #[derive(ToSchema, Deserialize)]
     pub struct Payload {
-        url: String,
-        headers: HashMap<String, String>,
-        sha256: String,
+        url: compact_str::CompactString,
+        headers: HashMap<compact_str::CompactString, compact_str::CompactString>,
+        sha256: compact_str::CompactString,
 
-        restart_command: String,
-        restart_command_args: Vec<String>,
+        restart_command: compact_str::CompactString,
+        restart_command_args: Vec<compact_str::CompactString>,
     }
 
     #[derive(ToSchema, Serialize)]
@@ -57,7 +57,7 @@ mod post {
 
         for (key, value) in data.headers {
             headers.insert(
-                match HeaderName::try_from(key) {
+                match HeaderName::try_from(key.as_str()) {
                     Ok(v) => v,
                     Err(_) => continue,
                 },
@@ -73,7 +73,11 @@ mod post {
             .connect_timeout(std::time::Duration::from_secs(30))
             .build()?;
 
-        let mut response = client.get(data.url).headers(headers).send().await?;
+        let mut response = client
+            .get(data.url.as_str())
+            .headers(headers)
+            .send()
+            .await?;
         let mut file = tokio::fs::File::options()
             .create(true)
             .write(true)

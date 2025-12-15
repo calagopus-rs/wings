@@ -134,11 +134,11 @@ impl UserPermissionsMap {
         &self,
         user_uuid: uuid::Uuid,
         permissions: Permissions,
-        ignored_files: &[String],
+        ignored_files: &[impl AsRef<str>],
     ) {
         let mut overrides = ignore::overrides::OverrideBuilder::new("/");
         for file in ignored_files {
-            overrides.add(file).ok();
+            overrides.add(file.as_ref()).ok();
         }
 
         self.map.write().await.insert(

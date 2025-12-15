@@ -1,3 +1,4 @@
+use compact_str::ToCompactString;
 use serde::Serialize;
 use std::{
     collections::{HashMap, VecDeque},
@@ -72,7 +73,7 @@ pub struct ApiActivity {
     event: ActivityEvent,
     metadata: Option<serde_json::Value>,
 
-    ip: Option<String>,
+    ip: Option<compact_str::CompactString>,
     timestamp: chrono::DateTime<chrono::Utc>,
 }
 
@@ -259,7 +260,7 @@ impl ActivityManager {
                                         server,
                                         event: activity.event,
                                         metadata: activity.metadata,
-                                        ip: activity.ip.map(|ip| ip.to_string()),
+                                        ip: activity.ip.map(|ip| ip.to_compact_string()),
                                         timestamp: activity.timestamp,
                                     })
                                     .collect(),

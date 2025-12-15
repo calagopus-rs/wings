@@ -19,7 +19,7 @@ mod post {
 
     #[derive(ToSchema, Deserialize)]
     pub struct Params {
-        file: String,
+        file: compact_str::CompactString,
     }
 
     #[derive(ToSchema, Serialize)]

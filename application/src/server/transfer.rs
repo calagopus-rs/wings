@@ -284,7 +284,7 @@ impl OutgoingServerTransfer {
                     .unwrap(),
                 );
 
-            let mut total_bytes = server.filesystem.limiter_usage().await;
+            let mut total_bytes = server.filesystem.get_apparent_cached_size();
 
             for backup in &backups {
                 if let Ok(Some(backup)) = backup_manager.find(*backup).await {

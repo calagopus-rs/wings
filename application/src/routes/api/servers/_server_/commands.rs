@@ -12,7 +12,7 @@ mod post {
 
     #[derive(ToSchema, Deserialize)]
     pub struct Payload {
-        commands: Vec<String>,
+        commands: Vec<compact_str::CompactString>,
     }
 
     #[derive(ToSchema, Serialize)]

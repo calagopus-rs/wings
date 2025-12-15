@@ -1,5 +1,6 @@
 use super::configuration::process::ProcessConfigurationStartup;
 use bollard::container::MemoryStatsStats;
+use compact_str::ToCompactString;
 use futures_util::StreamExt;
 use std::sync::Arc;
 use tokio::{
@@ -24,10 +25,10 @@ pub struct Container {
     pub resource_usage: Arc<RwLock<super::resources::ResourceUsage>>,
     resource_usage_reciever: tokio::task::JoinHandle<()>,
 
-    pub stdin: tokio::sync::mpsc::Sender<String>,
+    pub stdin: tokio::sync::mpsc::Sender<compact_str::CompactString>,
     stdin_reciever: tokio::task::JoinHandle<()>,
 
-    pub stdout: tokio::sync::broadcast::Receiver<Arc<String>>,
+    pub stdout: tokio::sync::broadcast::Receiver<Arc<compact_str::CompactString>>,
     stdout_reciever: tokio::task::JoinHandle<()>,
 }
 
@@ -262,14 +263,14 @@ impl Container {
                         if let Some(pos) = buffer[search_start..].iter().position(|&b| b == b'\n') {
                             let newline_pos = search_start + pos;
 
-                            let check_startup = async |line: &String| {
+                            let check_startup = async |line: &str| {
                                 if server.state.get_state() != super::state::ServerState::Starting {
                                     return;
                                 }
 
                                 if let Some(done_vec) = &startup_configuration.done {
                                     if startup_configuration.strip_ansi {
-                                        let mut result_line = line.clone();
+                                        let mut result_line = line.to_compact_string();
                                         let mut chars = line.chars().peekable();
 
                                         while let Some(c) = chars.next() {
@@ -287,7 +288,7 @@ impl Container {
                                         }
 
                                         for done in done_vec {
-                                            if result_line.contains(done) {
+                                            if result_line.contains(&**done) {
                                                 server
                                                     .state
                                                     .set_state(super::state::ServerState::Running)
@@ -297,7 +298,7 @@ impl Container {
                                         }
                                     } else {
                                         for done in done_vec {
-                                            if line.contains(done) {
+                                            if line.contains(&**done) {
                                                 server
                                                     .state
                                                     .set_state(super::state::ServerState::Running)
@@ -310,14 +311,15 @@ impl Container {
                             };
 
                             if newline_pos - line_start <= 512 {
-                                let line =
-                                    String::from_utf8_lossy(&buffer[line_start..newline_pos])
-                                        .trim()
-                                        .to_string();
+                                let line = compact_str::CompactString::from_utf8_lossy(
+                                    &buffer[line_start..newline_pos],
+                                )
+                                .trim()
+                                .to_compact_string();
 
                                 check_startup(&line).await;
                                 if allow_ratelimit().await
-                                    && let Err(err) = stdout_sender.send(line.into())
+                                    && let Err(err) = stdout_sender.send(Arc::new(line))
                                 {
                                     tracing::error!(
                                         server = %server_uuid,
@@ -329,15 +331,15 @@ impl Container {
                                 line_start = newline_pos + 1;
                                 search_start = line_start;
                             } else {
-                                let line = String::from_utf8_lossy(
+                                let line = compact_str::CompactString::from_utf8_lossy(
                                     &buffer[line_start..(line_start + 512)],
                                 )
                                 .trim()
-                                .to_string();
+                                .to_compact_string();
 
                                 check_startup(&line).await;
                                 if allow_ratelimit().await
-                                    && let Err(err) = stdout_sender.send(line.into())
+                                    && let Err(err) = stdout_sender.send(Arc::new(line))
                                 {
                                     tracing::error!(
                                         server = %server_uuid,
@@ -352,13 +354,14 @@ impl Container {
                         } else {
                             let current_line_length = buffer.len() - line_start;
                             if current_line_length > 512 {
-                                let line = String::from_utf8_lossy(
+                                let line = compact_str::CompactString::from_utf8_lossy(
                                     &buffer[line_start..(line_start + 512)],
                                 )
                                 .trim()
-                                .to_string();
+                                .to_compact_string();
+
                                 if allow_ratelimit().await
-                                    && let Err(err) = stdout_sender.send(line.into())
+                                    && let Err(err) = stdout_sender.send(Arc::new(line))
                                 {
                                     tracing::error!(
                                         server = %server_uuid,
@@ -382,10 +385,11 @@ impl Container {
                 }
 
                 if line_start < buffer.len() {
-                    let line = String::from_utf8_lossy(&buffer[line_start..])
+                    let line = compact_str::CompactString::from_utf8_lossy(&buffer[line_start..])
                         .trim()
-                        .to_string();
-                    if let Err(err) = stdout_sender.send(line.into()) {
+                        .to_compact_string();
+
+                    if let Err(err) = stdout_sender.send(Arc::new(line)) {
                         tracing::error!(
                             server = %server_uuid,
                             error = %err,

@@ -17,7 +17,7 @@ mod post {
         #[schema(value_type = Vec<String>)]
         permissions: Permissions,
         #[serde(default)]
-        ignored_files: Vec<String>,
+        ignored_files: Vec<compact_str::CompactString>,
     }
 
     #[derive(ToSchema, Deserialize)]

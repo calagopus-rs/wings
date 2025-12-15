@@ -124,7 +124,7 @@ impl BackupCreateExt for WingsBackup {
         progress: Arc<AtomicU64>,
         total: Arc<AtomicU64>,
         ignore: ignore::gitignore::Gitignore,
-        _ignore_raw: String,
+        _ignore_raw: compact_str::CompactString,
     ) -> Result<RawServerBackup, anyhow::Error> {
         let file_name = Self::get_file_name(&server.app_state.config, uuid);
         let file = tokio::fs::File::create(&file_name).await?.into_std().await;
@@ -343,7 +343,7 @@ impl BackupExt for WingsBackup {
         server: &crate::server::Server,
         progress: Arc<AtomicU64>,
         total: Arc<AtomicU64>,
-        _download_url: Option<String>,
+        _download_url: Option<compact_str::CompactString>,
     ) -> Result<(), anyhow::Error> {
         let file = tokio::fs::File::open(&self.path).await?.into_std().await;
 
@@ -896,13 +896,13 @@ impl BrowseWingsBackup {
                 .file_name()
                 .unwrap_or_default()
                 .to_string_lossy()
-                .to_string(),
+                .into(),
             created: chrono::DateTime::default(),
             modified: crate::server::filesystem::archive::zip_entry_get_modified_time(&entry)
                 .map(|dt| dt.into_std().into())
                 .unwrap_or_default(),
             mode: encode_mode(mode),
-            mode_bits: format!("{:o}", mode & 0o777),
+            mode_bits: compact_str::format_compact!("{:o}", mode & 0o777),
             size,
             directory: entry.is_dir(),
             file: entry.is_file(),
@@ -957,7 +957,7 @@ impl BrowseWingsBackup {
                 .file_name()
                 .unwrap_or_default()
                 .to_string_lossy()
-                .to_string(),
+                .into(),
             created: if entry.has_creation_date {
                 std::time::SystemTime::from(entry.creation_date).into()
             } else {
@@ -969,7 +969,7 @@ impl BrowseWingsBackup {
                 Default::default()
             },
             mode: encode_mode(mode),
-            mode_bits: format!("{:o}", mode),
+            mode_bits: compact_str::format_compact!("{:o}", mode),
             size,
             directory: entry.is_directory(),
             file: !entry.is_directory(),

@@ -20,7 +20,10 @@ mod get {
             example = "wings.log",
         ),
     ))]
-    pub async fn route(state: GetState, Path(file_path): Path<String>) -> ApiResponseResult {
+    pub async fn route(
+        state: GetState,
+        Path(file_path): Path<compact_str::CompactString>,
+    ) -> ApiResponseResult {
         if file_path.contains("..") {
             return ApiResponse::error("log file not found").ok();
         }

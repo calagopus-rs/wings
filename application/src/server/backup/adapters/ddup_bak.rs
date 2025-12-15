@@ -232,7 +232,7 @@ impl BackupCreateExt for DdupBakBackup {
         progress: Arc<AtomicU64>,
         total: Arc<AtomicU64>,
         ignore: ignore::gitignore::Gitignore,
-        ignore_raw: String,
+        ignore_raw: compact_str::CompactString,
     ) -> Result<RawServerBackup, anyhow::Error> {
         let repository = get_repository(&server.app_state.config).await;
         let path = repository.archive_path(&uuid.to_string());
@@ -477,7 +477,7 @@ impl BackupExt for DdupBakBackup {
         server: &crate::server::Server,
         progress: Arc<AtomicU64>,
         total: Arc<AtomicU64>,
-        _download_url: Option<String>,
+        _download_url: Option<compact_str::CompactString>,
     ) -> Result<(), anyhow::Error> {
         let repository = get_repository(&server.app_state.config).await;
 
@@ -675,7 +675,7 @@ impl BrowseDdupBakBackup {
                 .file_name()
                 .unwrap_or_default()
                 .to_string_lossy()
-                .to_string(),
+                .into(),
             created: chrono::DateTime::from_timestamp(0, 0).unwrap_or_default(),
             modified: chrono::DateTime::from_timestamp(
                 entry
@@ -687,7 +687,7 @@ impl BrowseDdupBakBackup {
             )
             .unwrap_or_default(),
             mode: encode_mode(entry.mode().bits()),
-            mode_bits: format!("{:o}", entry.mode().bits() & 0o777),
+            mode_bits: compact_str::format_compact!("{:o}", entry.mode().bits() & 0o777),
             size,
             directory: entry.is_directory(),
             file: entry.is_file(),

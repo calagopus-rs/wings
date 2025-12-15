@@ -13,7 +13,7 @@ mod get {
 
     #[derive(ToSchema, Serialize)]
     struct ResponseLogFile {
-        name: String,
+        name: compact_str::CompactString,
         size: u64,
         last_modified: chrono::DateTime<chrono::Utc>,
     }
@@ -42,7 +42,7 @@ mod get {
             }
 
             log_files.push(ResponseLogFile {
-                name: entry.file_name().to_string_lossy().to_string(),
+                name: entry.file_name().to_string_lossy().into(),
                 size: metadata.len(),
                 last_modified: chrono::DateTime::from_timestamp(
                     metadata

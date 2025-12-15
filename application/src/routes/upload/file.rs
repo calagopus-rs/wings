@@ -25,7 +25,7 @@ mod post {
     pub struct Params {
         token: String,
         #[serde(default)]
-        directory: String,
+        directory: compact_str::CompactString,
     }
 
     #[derive(ToSchema, Serialize)]
@@ -38,10 +38,10 @@ mod post {
 
         pub server_uuid: uuid::Uuid,
         pub user_uuid: uuid::Uuid,
-        pub unique_id: String,
+        pub unique_id: compact_str::CompactString,
 
         #[serde(default)]
-        pub ignored_files: Vec<String>,
+        pub ignored_files: Vec<compact_str::CompactString>,
     }
 
     #[utoipa::path(post, path = "/", responses(

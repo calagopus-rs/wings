@@ -27,7 +27,7 @@ mod get {
 
         pub server_uuid: Option<uuid::Uuid>,
         pub backup_uuid: uuid::Uuid,
-        pub unique_id: String,
+        pub unique_id: compact_str::CompactString,
     }
 
     #[utoipa::path(get, path = "/", responses(

@@ -67,7 +67,7 @@ impl Backup {
         server: &crate::server::Server,
         progress: Arc<AtomicU64>,
         total: Arc<AtomicU64>,
-        download_url: Option<String>,
+        download_url: Option<compact_str::CompactString>,
     ) -> Result<(), anyhow::Error> {
         match self {
             Backup::Wings(backup) => backup.restore(server, progress, total, download_url).await,
@@ -221,7 +221,7 @@ pub trait BackupCreateExt {
         progress: Arc<AtomicU64>,
         total: Arc<AtomicU64>,
         ignore: ignore::gitignore::Gitignore,
-        ignore_raw: String,
+        ignore_raw: compact_str::CompactString,
     ) -> Result<RawServerBackup, anyhow::Error>;
 }
 
@@ -241,7 +241,7 @@ pub trait BackupExt {
         server: &crate::server::Server,
         progress: Arc<AtomicU64>,
         total: Arc<AtomicU64>,
-        download_url: Option<String>,
+        download_url: Option<compact_str::CompactString>,
     ) -> Result<(), anyhow::Error>;
     async fn delete(&self, config: &Arc<crate::config::Config>) -> Result<(), anyhow::Error>;
 

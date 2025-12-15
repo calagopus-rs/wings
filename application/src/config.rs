@@ -1,5 +1,6 @@
 use anyhow::Context;
 use axum::{extract::ConnectInfo, http::HeaderMap};
+use compact_str::ToCompactString;
 use serde::{Deserialize, Serialize};
 use serde_default::DefaultFromSerde;
 use std::{
@@ -77,21 +78,21 @@ fn system_backup_directory() -> String {
 fn system_tmp_directory() -> String {
     "/tmp/pterodactyl".to_string()
 }
-fn system_username() -> String {
-    "pterodactyl".to_string()
+fn system_username() -> compact_str::CompactString {
+    "pterodactyl".into()
 }
-fn system_timezone() -> String {
+fn system_timezone() -> compact_str::CompactString {
     if let Ok(tz) = std::env::var("TZ") {
-        return tz;
+        return tz.into();
     } else if let Ok(tz) = File::open("/etc/timezone") {
         let mut buf = String::new();
 
         if std::io::BufReader::new(tz).read_line(&mut buf).is_ok() {
-            return buf.trim().to_string();
+            return buf.trim().to_compact_string();
         }
     }
 
-    chrono::Local::now().offset().to_string()
+    chrono::Local::now().offset().to_compact_string()
 }
 fn system_passwd_directory() -> String {
     "/run/wings/etc".to_string()
@@ -378,9 +379,9 @@ nestify::nest! {
             pub tmp_directory: String,
 
             #[serde(default = "system_username")]
-            pub username: String,
+            pub username: compact_str::CompactString,
             #[serde(default = "system_timezone")]
-            pub timezone: String,
+            pub timezone: compact_str::CompactString,
 
             #[serde(default)]
             #[schema(inline)]
@@ -714,7 +715,7 @@ nestify::nest! {
         },
 
         #[serde(default)]
-        pub allowed_mounts: Vec<String>,
+        pub allowed_mounts: Vec<compact_str::CompactString>,
         #[serde(default)]
         pub allowed_origins: Vec<String>,
 
@@ -943,7 +944,7 @@ impl Config {
 
         if release.contains("distroless") {
             self.system.username =
-                std::env::var("WINGS_USERNAME").unwrap_or_else(|_| system_username());
+                std::env::var("WINGS_USERNAME").map_or_else(|_| system_username(), |u| u.into());
             self.system.user.uid = std::env::var("WINGS_UID")
                 .unwrap_or_else(|_| "988".to_string())
                 .parse()?;
@@ -959,7 +960,7 @@ impl Config {
             let group = users::get_current_gid();
 
             if let Some(username) = users::get_current_username() {
-                self.system.username = username.to_string_lossy().to_string();
+                self.system.username = username.to_string_lossy().to_compact_string();
             }
 
             self.system.user.uid = user;

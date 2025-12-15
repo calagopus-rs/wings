@@ -123,7 +123,7 @@ pub async fn create_backup(
     client: &Client,
     server: uuid::Uuid,
     name: Option<&str>,
-    ignored_files: &[String],
+    ignored_files: &[impl Serialize + AsRef<str>],
 ) -> Result<(BackupAdapter, uuid::Uuid), anyhow::Error> {
     let response: Response = super::into_json(
         client

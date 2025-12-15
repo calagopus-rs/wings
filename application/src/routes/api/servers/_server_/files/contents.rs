@@ -17,7 +17,7 @@ mod get {
 
     #[derive(ToSchema, Deserialize)]
     pub struct Params {
-        file: String,
+        file: compact_str::CompactString,
 
         #[schema(default = "false")]
         #[serde(default)]

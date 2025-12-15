@@ -30,7 +30,7 @@ mod get {
 
     #[derive(ToSchema, Serialize)]
     struct Response {
-        hash: String,
+        hash: compact_str::CompactString,
     }
 
     #[utoipa::path(get, path = "/", responses(
@@ -147,7 +147,7 @@ mod get {
                 }
 
                 ApiResponse::json(Response {
-                    hash: format!("{:x}", hasher.finalize()),
+                    hash: compact_str::format_compact!("{:x}", hasher.finalize()),
                 })
                 .ok()
             }

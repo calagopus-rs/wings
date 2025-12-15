@@ -14,13 +14,13 @@ use utoipa::ToSchema;
 
 #[derive(ToSchema, Deserialize, Serialize, Clone)]
 pub struct InstallationScript {
-    pub container_image: String,
-    pub entrypoint: String,
+    pub container_image: compact_str::CompactString,
+    pub entrypoint: compact_str::CompactString,
 
     #[serde(deserialize_with = "crate::deserialize::deserialize_defaultable")]
     pub script: String,
     #[serde(default)]
-    pub environment: HashMap<String, serde_json::Value>,
+    pub environment: HashMap<compact_str::CompactString, serde_json::Value>,
 }
 
 pub struct ServerInstaller {
@@ -887,7 +887,7 @@ impl ServerInstaller {
                 mounts: Some(vec![
                     bollard::models::Mount {
                         typ: Some(bollard::secret::MountTypeEnum::BIND),
-                        source: Some(self.server.filesystem.base()),
+                        source: Some(self.server.filesystem.base().into()),
                         target: Some("/mnt/server".to_string()),
                         ..Default::default()
                     },
@@ -933,7 +933,7 @@ impl ServerInstaller {
                 ..Default::default()
             }),
             cmd: Some(vec![
-                container_script.entrypoint.clone(),
+                container_script.entrypoint.to_string(),
                 "/mnt/install/install.sh".to_string(),
             ]),
             hostname: Some("installer".to_string()),

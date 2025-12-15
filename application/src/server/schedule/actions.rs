@@ -6,6 +6,7 @@ use crate::{
     },
 };
 use cap_std::fs::OpenOptions;
+use compact_str::{CompactStringExt, ToCompactString};
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
@@ -16,20 +17,20 @@ use tokio::io::AsyncWriteExt;
 
 #[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct ScheduleVariable {
-    pub variable: String,
+    pub variable: compact_str::CompactString,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum ScheduleDynamicParameter {
-    Raw(String),
+    Raw(compact_str::CompactString),
     Variable(ScheduleVariable),
 }
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct RenameFile {
-    pub from: String,
-    pub to: String,
+    pub from: compact_str::CompactString,
+    pub to: compact_str::CompactString,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -76,7 +77,7 @@ pub enum ScheduleAction {
         foreground: bool,
 
         name: Option<ScheduleDynamicParameter>,
-        ignored_files: Vec<String>,
+        ignored_files: Vec<compact_str::CompactString>,
     },
     CreateDirectory {
         ignore_failure: bool,
@@ -100,7 +101,7 @@ pub enum ScheduleAction {
     },
     DeleteFiles {
         root: ScheduleDynamicParameter,
-        files: Vec<String>,
+        files: Vec<compact_str::CompactString>,
     },
     RenameFiles {
         root: ScheduleDynamicParameter,
@@ -111,7 +112,7 @@ pub enum ScheduleAction {
         foreground: bool,
 
         root: ScheduleDynamicParameter,
-        files: Vec<String>,
+        files: Vec<compact_str::CompactString>,
         format: ArchiveFormat,
         name: ScheduleDynamicParameter,
     },
@@ -188,7 +189,7 @@ impl ScheduleAction {
                 format,
                 output_into,
             } => {
-                let mut result = String::new();
+                let mut result = compact_str::CompactString::default();
                 let mut chars = format.chars().peekable();
 
                 while let Some(ch) = chars.next() {
@@ -258,8 +259,10 @@ impl ScheduleAction {
                         continue;
                     };
 
-                    execution_context
-                        .store_variable(output_into.clone(), group_match.as_str().to_string());
+                    execution_context.store_variable(
+                        output_into.clone(),
+                        group_match.as_str().to_compact_string(),
+                    );
                 }
             }
             ScheduleAction::WaitForConsoleLine {
@@ -284,8 +287,8 @@ impl ScheduleAction {
 
                 let line_finder = async {
                     while let Ok(line) = stdout.recv().await {
-                        if line.contains(contains) {
-                            return Some(line.to_string());
+                        if line.contains(&**contains) {
+                            return Some(line.to_compact_string());
                         }
                     }
 
@@ -481,7 +484,7 @@ impl ScheduleAction {
                         }
                     };
 
-                    if stdin.send(format!("{}\n", command)).await.is_ok() {
+                    if stdin.send(format!("{command}\n").into()).await.is_ok() {
                         server
                             .activity
                             .log_activity(Activity {
@@ -539,7 +542,7 @@ impl ScheduleAction {
 
                 let thread = tokio::spawn({
                     let state = Arc::clone(state);
-                    let ignored_files = ignored_files.join("\n");
+                    let ignored_files = ignored_files.join_compact("\n");
                     let server = server.clone();
 
                     async move {

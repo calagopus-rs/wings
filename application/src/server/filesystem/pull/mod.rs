@@ -51,8 +51,8 @@ impl Download {
     pub async fn new(
         server: crate::server::Server,
         destination: &Path,
-        file_name: Option<String>,
-        url: String,
+        file_name: Option<compact_str::CompactString>,
+        url: compact_str::CompactString,
         use_header: bool,
     ) -> Result<Self, anyhow::Error> {
         let url = reqwest::Url::parse(&url).context("failed to parse download URL")?;

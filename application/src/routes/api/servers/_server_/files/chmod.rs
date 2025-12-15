@@ -13,14 +13,14 @@ mod post {
 
     #[derive(ToSchema, Deserialize)]
     pub struct ChmodFile {
-        file: String,
-        mode: String,
+        file: compact_str::CompactString,
+        mode: compact_str::CompactString,
     }
 
     #[derive(ToSchema, Deserialize)]
     pub struct Payload {
         #[serde(default)]
-        root: String,
+        root: compact_str::CompactString,
 
         #[schema(inline)]
         files: Vec<ChmodFile>,

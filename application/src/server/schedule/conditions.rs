@@ -45,7 +45,7 @@ pub enum SchedulePreCondition {
         value: u64,
     },
     FileExists {
-        file: String,
+        file: compact_str::CompactString,
     },
 }
 
@@ -253,7 +253,7 @@ impl ScheduleCondition {
                         return false;
                     };
 
-                    value.contains(contains)
+                    value.contains(&**contains)
                 }
                 ScheduleCondition::VariableStartsWith {
                     variable,
@@ -267,7 +267,7 @@ impl ScheduleCondition {
                         return false;
                     };
 
-                    value.starts_with(starts_with)
+                    value.starts_with(&**starts_with)
                 }
                 ScheduleCondition::VariableEndsWith {
                     variable,
@@ -281,7 +281,7 @@ impl ScheduleCondition {
                         return false;
                     };
 
-                    value.ends_with(ends_with)
+                    value.ends_with(&**ends_with)
                 }
             }
         })

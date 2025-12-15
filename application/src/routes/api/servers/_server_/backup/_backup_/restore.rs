@@ -15,7 +15,7 @@ mod post {
     pub struct Payload {
         adapter: BackupAdapter,
         truncate_directory: bool,
-        download_url: Option<String>,
+        download_url: Option<compact_str::CompactString>,
     }
 
     #[derive(ToSchema, Serialize)]

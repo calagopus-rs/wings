@@ -1,6 +1,6 @@
 [package]
 name = "wings-rs"
-version = "0.22.1"
+version = "0.22.2"
 edition = "2024"
 
 [dependencies]
@@ -75,6 +75,7 @@ java-properties = "2.0.0"
 rust-ini = "0.21.3"
 regex = "1.12.2"
 serde_regex = "1.1.0"
+compact_str = { git = "https://github.com/0x7d8/compact_str.git", version = "0.9.0", features = ["serde", "utoipa"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 tikv-jemallocator = "0.6.0"

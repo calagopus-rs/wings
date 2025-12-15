@@ -28,9 +28,9 @@ mod get {
         #[serde(flatten)]
         pub base: crate::remote::jwt::BasePayload,
 
-        pub file_path: String,
+        pub file_path: compact_str::CompactString,
         pub server_uuid: uuid::Uuid,
-        pub unique_id: String,
+        pub unique_id: compact_str::CompactString,
     }
 
     #[utoipa::path(get, path = "/", responses(

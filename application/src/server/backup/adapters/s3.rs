@@ -158,7 +158,7 @@ impl BackupCreateExt for S3Backup {
         progress: Arc<AtomicU64>,
         total: Arc<AtomicU64>,
         ignore: ignore::gitignore::Gitignore,
-        _ignore_raw: String,
+        _ignore_raw: compact_str::CompactString,
     ) -> Result<RawServerBackup, anyhow::Error> {
         let file_name = Self::get_file_name(&server.app_state.config, uuid);
         let mut file = tokio::fs::OpenOptions::new()
@@ -384,7 +384,7 @@ impl BackupExt for S3Backup {
         server: &crate::server::Server,
         progress: Arc<AtomicU64>,
         total: Arc<AtomicU64>,
-        download_url: Option<String>,
+        download_url: Option<compact_str::CompactString>,
     ) -> Result<(), anyhow::Error> {
         let download_url = match download_url {
             Some(download_url) => download_url,
@@ -395,7 +395,11 @@ impl BackupExt for S3Backup {
             }
         };
 
-        let response = get_client(server).await.get(download_url).send().await?;
+        let response = get_client(server)
+            .await
+            .get(download_url.as_str())
+            .send()
+            .await?;
         if let Some(content_length) = response.content_length() {
             total.store(content_length, Ordering::SeqCst);
         }

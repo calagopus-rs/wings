@@ -119,7 +119,7 @@ impl BackupCreateExt for ZfsBackup {
         _progress: Arc<AtomicU64>,
         _total: Arc<AtomicU64>,
         ignore: ignore::gitignore::Gitignore,
-        ignore_raw: String,
+        ignore_raw: compact_str::CompactString,
     ) -> Result<RawServerBackup, anyhow::Error> {
         let backup_path = Self::get_backup_path(&server.app_state.config, uuid);
         let snapshot_name = Self::get_snapshot_name(uuid);
@@ -314,7 +314,7 @@ impl BackupExt for ZfsBackup {
         server: &crate::server::Server,
         progress: Arc<AtomicU64>,
         total: Arc<AtomicU64>,
-        _download_url: Option<String>,
+        _download_url: Option<compact_str::CompactString>,
     ) -> Result<(), anyhow::Error> {
         let snapshot_path =
             Self::get_snapshot_path(&server.app_state.config, self.server_uuid, self.uuid);

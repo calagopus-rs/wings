@@ -59,35 +59,35 @@ pub struct Arg {
 #[derive(Deserialize, Serialize, Clone)]
 pub struct Filter {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    caps: Vec<String>,
+    caps: Vec<compact_str::CompactString>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    arches: Vec<String>,
+    arches: Vec<compact_str::CompactString>,
 }
 
 #[derive(Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Arch {
-    architecture: String,
+    architecture: compact_str::CompactString,
     #[serde(default)]
-    sub_architectures: Vec<String>,
+    sub_architectures: Vec<compact_str::CompactString>,
 }
 
 #[derive(Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Syscall {
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    name: String,
+    #[serde(default, skip_serializing_if = "compact_str::CompactString::is_empty")]
+    name: compact_str::CompactString,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    names: Vec<String>,
+    names: Vec<compact_str::CompactString>,
     action: Action,
     args: Option<Vec<Arg>>,
-    comment: String,
+    comment: compact_str::CompactString,
     includes: Filter,
     excludes: Filter,
     #[serde(default)]
     errno_ret: u32,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    errno: String,
+    #[serde(default, skip_serializing_if = "compact_str::CompactString::is_empty")]
+    errno: compact_str::CompactString,
 }
 
 #[derive(Deserialize, Serialize, Clone)]
@@ -95,7 +95,7 @@ pub struct Syscall {
 pub struct Seccomp {
     default_action: Action,
     default_errno_ret: u32,
-    default_errno: String,
+    default_errno: compact_str::CompactString,
     arch_map: Vec<Arch>,
     syscalls: Vec<Syscall>,
 }
@@ -107,7 +107,11 @@ impl Default for Seccomp {
 }
 
 impl Seccomp {
-    pub fn remove_names(&mut self, names: &[String], action: Action) -> &mut Self {
+    pub fn remove_names(
+        &mut self,
+        names: &[compact_str::CompactString],
+        action: Action,
+    ) -> &mut Self {
         for syscall in self.syscalls.iter_mut() {
             if syscall.action == action {
                 syscall.names.retain(|n| !names.contains(n));

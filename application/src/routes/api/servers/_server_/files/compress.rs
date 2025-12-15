@@ -24,11 +24,11 @@ mod post {
     pub struct Payload {
         #[serde(default)]
         format: ArchiveFormat,
-        name: Option<String>,
+        name: Option<compact_str::CompactString>,
 
         #[serde(default)]
-        root: String,
-        files: Vec<String>,
+        root: compact_str::CompactString,
+        files: Vec<compact_str::CompactString>,
 
         #[serde(default = "foreground")]
         foreground: bool,
@@ -73,7 +73,7 @@ mod post {
         }
 
         let file_name = data.name.unwrap_or_else(|| {
-            format!(
+            compact_str::format_compact!(
                 "archive-{}.{}",
                 chrono::Local::now().format("%Y-%m-%dT%H%M%S%z"),
                 match data.format {
@@ -136,7 +136,7 @@ mod post {
                                         .read()
                                         .await
                                         .get_size(Path::new(file))
-                                        .unwrap_or(0);
+                                        .map_or(0, |s| s.get_apparent());
                                 } else {
                                     total_size += metadata.len();
                                 }

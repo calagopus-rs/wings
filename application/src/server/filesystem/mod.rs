@@ -1,5 +1,6 @@
 use crate::server::backup::BrowseBackup;
 use cap_std::fs::{Metadata, MetadataExt, PermissionsExt};
+use compact_str::ToCompactString;
 use std::{
     collections::{HashMap, HashSet},
     hint::unreachable_unchecked,
@@ -25,10 +26,9 @@ pub mod usage;
 pub mod writer;
 
 #[inline]
-pub fn encode_mode(mode: u32) -> String {
-    let mut mode_str = String::new();
+pub fn encode_mode(mode: u32) -> compact_str::CompactString {
+    let mut mode_str = compact_str::CompactString::default();
 
-    mode_str.reserve_exact(10);
     mode_str.push(match rustix::fs::FileType::from_raw_mode(mode) {
         rustix::fs::FileType::RegularFile => '-',
         rustix::fs::FileType::Directory => 'd',
@@ -67,6 +67,7 @@ pub struct Filesystem {
 
     disk_limit: AtomicI64,
     disk_usage_cached: Arc<AtomicU64>,
+    apparent_disk_usage_cached: Arc<AtomicU64>,
     pub disk_usage: Arc<RwLock<usage::DiskUsage>>,
     disk_ignored: Arc<RwLock<ignore::gitignore::Gitignore>>,
 
@@ -80,11 +81,12 @@ impl Filesystem {
         disk_limit: u64,
         sender: tokio::sync::broadcast::Sender<crate::server::websocket::WebsocketMessage>,
         config: Arc<crate::config::Config>,
-        deny_list: &[String],
+        deny_list: &[compact_str::CompactString],
     ) -> Self {
-        let base_path = Path::new(&config.system.data_directory).join(uuid.to_string());
+        let base_path = Path::new(&config.system.data_directory).join(uuid.to_compact_string());
         let disk_usage = Arc::new(RwLock::new(usage::DiskUsage::default()));
         let disk_usage_cached = Arc::new(AtomicU64::new(0));
+        let apparent_disk_usage_cached = Arc::new(AtomicU64::new(0));
         let mut disk_ignored = ignore::gitignore::GitignoreBuilder::new("/");
 
         for entry in deny_list {
@@ -101,9 +103,12 @@ impl Filesystem {
                 let config = Arc::clone(&config);
                 let disk_usage = Arc::clone(&disk_usage);
                 let disk_usage_cached = Arc::clone(&disk_usage_cached);
+                let apparent_disk_usage_cached = Arc::clone(&apparent_disk_usage_cached);
                 let cap_filesystem = cap_filesystem.clone();
 
                 async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
                     loop {
                         let run_inner = async || -> Result<(), anyhow::Error> {
                             tracing::debug!(
@@ -115,6 +120,7 @@ impl Filesystem {
                                 Arc::new(Mutex::new(Some(usage::DiskUsage::default())));
                             let seen_inodes = Arc::new(RwLock::new(HashSet::new()));
                             let total_size = Arc::new(AtomicU64::new(0));
+                            let apparent_total_size = Arc::new(AtomicU64::new(0));
 
                             cap_filesystem
                                 .async_walk_dir(Path::new(""))
@@ -123,12 +129,15 @@ impl Filesystem {
                                     config.system.disk_check_threads,
                                     Arc::new({
                                         let total_size = Arc::clone(&total_size);
+                                        let apparent_total_size = Arc::clone(&apparent_total_size);
                                         let disk_usage = Arc::clone(&tmp_disk_usage);
                                         let seen_inodes = Arc::clone(&seen_inodes);
                                         let cap_filesystem = cap_filesystem.clone();
 
                                         move |_, path: PathBuf| {
                                             let total_size = Arc::clone(&total_size);
+                                            let apparent_total_size =
+                                                Arc::clone(&apparent_total_size);
                                             let disk_usage = Arc::clone(&disk_usage);
                                             let seen_inodes = Arc::clone(&seen_inodes);
                                             let cap_filesystem = cap_filesystem.clone();
@@ -149,6 +158,17 @@ impl Filesystem {
                                                         .await
                                                         .contains(&metadata.ino())
                                                     {
+                                                        if let Some(disk_usage) =
+                                                            &mut *disk_usage.lock().await
+                                                            && let Some(parent) = path.parent()
+                                                        {
+                                                            disk_usage.update_size(
+                                                                parent,
+                                                                (0, size as i64).into(),
+                                                            );
+                                                        }
+                                                        apparent_total_size
+                                                            .fetch_add(size, Ordering::Relaxed);
                                                         return Ok(());
                                                     } else {
                                                         seen_inodes
@@ -162,15 +182,19 @@ impl Filesystem {
                                                     && let Some(disk_usage) =
                                                         &mut *disk_usage.lock().await
                                                 {
-                                                    disk_usage.update_size(&path, size as i64);
+                                                    disk_usage
+                                                        .update_size(&path, (size as i64).into());
                                                 } else if let Some(parent) = path.parent()
                                                     && let Some(disk_usage) =
                                                         &mut *disk_usage.lock().await
                                                 {
-                                                    disk_usage.update_size(parent, size as i64);
+                                                    disk_usage
+                                                        .update_size(parent, (size as i64).into());
                                                 }
 
                                                 total_size.fetch_add(size, Ordering::Relaxed);
+                                                apparent_total_size
+                                                    .fetch_add(size, Ordering::Relaxed);
                                                 Ok(())
                                             }
                                         }
@@ -190,6 +214,10 @@ impl Filesystem {
                             *disk_usage.write().await = tmp_disk_usage;
                             disk_usage_cached
                                 .store(total_size.load(Ordering::Relaxed), Ordering::Relaxed);
+                            apparent_disk_usage_cached.store(
+                                apparent_total_size.load(Ordering::Relaxed),
+                                Ordering::Relaxed,
+                            );
 
                             tracing::debug!(
                                 path = %cap_filesystem.base_path.display(),
@@ -232,6 +260,7 @@ impl Filesystem {
 
             disk_limit: AtomicI64::new(disk_limit as i64),
             disk_usage_cached,
+            apparent_disk_usage_cached,
             disk_usage,
             disk_ignored: Arc::new(RwLock::new(disk_ignored.build().unwrap())),
 
@@ -241,14 +270,19 @@ impl Filesystem {
     }
 
     #[inline]
+    pub fn get_apparent_cached_size(&self) -> u64 {
+        self.apparent_disk_usage_cached.load(Ordering::Relaxed)
+    }
+
+    #[inline]
     pub fn rerun_disk_checker(&self) {
         self.disk_checker_rescan.notify_one();
     }
 
-    pub async fn update_ignored(&self, deny_list: &[String]) {
+    pub async fn update_ignored(&self, deny_list: &[impl AsRef<str>]) {
         let mut disk_ignored = ignore::gitignore::GitignoreBuilder::new("");
         for entry in deny_list {
-            disk_ignored.add_line(None, entry).ok();
+            disk_ignored.add_line(None, entry.as_ref()).ok();
         }
 
         *self.disk_ignored.write().await = disk_ignored.build().unwrap();
@@ -315,8 +349,8 @@ impl Filesystem {
     }
 
     #[inline]
-    pub fn base(&self) -> String {
-        self.base_path.to_string_lossy().to_string()
+    pub fn base(&self) -> compact_str::CompactString {
+        self.base_path.to_string_lossy().to_compact_string()
     }
 
     #[inline]
@@ -380,7 +414,7 @@ impl Filesystem {
 
         let size = if metadata.is_dir() {
             let disk_usage = self.disk_usage.read().await;
-            disk_usage.get_size(&path).unwrap_or(0)
+            disk_usage.get_size(&path).map_or(0, |s| s.get_real())
         } else {
             metadata.len()
         };
@@ -487,6 +521,8 @@ impl Filesystem {
         if delta > 0 {
             self.disk_usage_cached
                 .fetch_add(delta as u64, Ordering::Relaxed);
+            self.apparent_disk_usage_cached
+                .fetch_add(delta as u64, Ordering::Relaxed);
         } else {
             let abs_size = delta.unsigned_abs();
             let current = self.disk_usage_cached.load(Ordering::Relaxed);
@@ -497,9 +533,21 @@ impl Filesystem {
             } else {
                 self.disk_usage_cached.store(0, Ordering::Relaxed);
             }
+
+            let current_apparent = self.apparent_disk_usage_cached.load(Ordering::Relaxed);
+
+            if current_apparent >= abs_size {
+                self.apparent_disk_usage_cached
+                    .fetch_sub(abs_size, Ordering::Relaxed);
+            } else {
+                self.apparent_disk_usage_cached.store(0, Ordering::Relaxed);
+            }
         }
 
-        self.disk_usage.write().await.update_size(path, delta);
+        self.disk_usage
+            .write()
+            .await
+            .update_size(path, delta.into());
 
         true
     }
@@ -540,12 +588,26 @@ impl Filesystem {
             if current >= abs_size {
                 self.disk_usage_cached
                     .fetch_sub(abs_size, Ordering::Relaxed);
+                self.apparent_disk_usage_cached
+                    .fetch_add(delta as u64, Ordering::Relaxed);
             } else {
                 self.disk_usage_cached.store(0, Ordering::Relaxed);
             }
+
+            let current_apparent = self.apparent_disk_usage_cached.load(Ordering::Relaxed);
+
+            if current_apparent >= abs_size {
+                self.apparent_disk_usage_cached
+                    .fetch_sub(abs_size, Ordering::Relaxed);
+            } else {
+                self.apparent_disk_usage_cached.store(0, Ordering::Relaxed);
+            }
         }
 
-        self.disk_usage.write().await.update_size_slice(path, delta);
+        self.disk_usage
+            .write()
+            .await
+            .update_size_slice(path, delta.into());
 
         true
     }
@@ -574,6 +636,8 @@ impl Filesystem {
         if delta > 0 {
             self.disk_usage_cached
                 .fetch_add(delta as u64, Ordering::Relaxed);
+            self.apparent_disk_usage_cached
+                .fetch_add(delta as u64, Ordering::Relaxed);
         } else {
             let abs_size = delta.unsigned_abs();
             let current = self.disk_usage_cached.load(Ordering::Relaxed);
@@ -584,9 +648,20 @@ impl Filesystem {
             } else {
                 self.disk_usage_cached.store(0, Ordering::Relaxed);
             }
+
+            let current_apparent = self.apparent_disk_usage_cached.load(Ordering::Relaxed);
+
+            if current_apparent >= abs_size {
+                self.apparent_disk_usage_cached
+                    .fetch_sub(abs_size, Ordering::Relaxed);
+            } else {
+                self.apparent_disk_usage_cached.store(0, Ordering::Relaxed);
+            }
         }
 
-        self.disk_usage.blocking_write().update_size(path, delta);
+        self.disk_usage
+            .blocking_write()
+            .update_size(path, delta.into());
 
         true
     }
@@ -615,6 +690,8 @@ impl Filesystem {
         if delta > 0 {
             self.disk_usage_cached
                 .fetch_add(delta as u64, Ordering::Relaxed);
+            self.apparent_disk_usage_cached
+                .fetch_add(delta as u64, Ordering::Relaxed);
         } else {
             let abs_size = delta.unsigned_abs();
             let current = self.disk_usage_cached.load(Ordering::Relaxed);
@@ -625,11 +702,20 @@ impl Filesystem {
             } else {
                 self.disk_usage_cached.store(0, Ordering::Relaxed);
             }
+
+            let current_apparent = self.apparent_disk_usage_cached.load(Ordering::Relaxed);
+
+            if current_apparent >= abs_size {
+                self.apparent_disk_usage_cached
+                    .fetch_sub(abs_size, Ordering::Relaxed);
+            } else {
+                self.apparent_disk_usage_cached.store(0, Ordering::Relaxed);
+            }
         }
 
         self.disk_usage
             .blocking_write()
-            .update_size_slice(path, delta);
+            .update_size_slice(path, delta.into());
 
         true
     }
@@ -831,7 +917,7 @@ impl Filesystem {
                     .read()
                     .await
                     .get_size(real_path)
-                    .unwrap_or(0)
+                    .map_or(0, |s| s.get_real())
             } else {
                 0
             }
@@ -862,7 +948,7 @@ impl Filesystem {
                 .file_name()
                 .unwrap_or_default()
                 .to_string_lossy()
-                .to_string(),
+                .into(),
             created: chrono::DateTime::from_timestamp(
                 metadata
                     .created()
@@ -890,7 +976,7 @@ impl Filesystem {
             )
             .unwrap_or_default(),
             mode: encode_mode(metadata.permissions().mode()),
-            mode_bits: format!("{:o}", metadata.permissions().mode() & 0o777),
+            mode_bits: compact_str::format_compact!("{:o}", metadata.permissions().mode() & 0o777),
             size,
             directory: real_metadata.is_dir(),
             file: real_metadata.is_file(),

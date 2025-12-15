@@ -1,4 +1,5 @@
 use crate::server::websocket::{WebsocketEvent, WebsocketMessage};
+use compact_str::ToCompactString;
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, collections::HashMap, str::FromStr, sync::Arc};
 use tokio::sync::{Mutex, RwLock};
@@ -80,14 +81,14 @@ pub struct ScheduleStatus {
 
 #[derive(Default)]
 pub struct ScheduleExecutionContext {
-    variables: HashMap<String, String>,
+    variables: HashMap<compact_str::CompactString, compact_str::CompactString>,
 }
 
 impl ScheduleExecutionContext {
     pub fn resolve_parameter<'a>(
         &'a self,
         parameter: &'a actions::ScheduleDynamicParameter,
-    ) -> Option<&'a String> {
+    ) -> Option<&'a compact_str::CompactString> {
         match parameter {
             actions::ScheduleDynamicParameter::Raw(value) => Some(value),
             actions::ScheduleDynamicParameter::Variable(variable) => {
@@ -96,15 +97,15 @@ impl ScheduleExecutionContext {
         }
     }
 
-    pub fn get_variable_by_str(&self, variable: &str) -> Option<&String> {
+    pub fn get_variable_by_str(&self, variable: &str) -> Option<&compact_str::CompactString> {
         self.variables.get(variable)
     }
 
     pub fn store_variable(
         &mut self,
         variable: actions::ScheduleVariable,
-        value: String,
-    ) -> Option<String> {
+        value: compact_str::CompactString,
+    ) -> Option<compact_str::CompactString> {
         self.variables.insert(variable.variable, value)
     }
 }
@@ -441,7 +442,7 @@ impl Schedule {
                                                 ScheduleExecutionContext::default();
                                             execution_context.store_variable(
                                                 output_into.clone(),
-                                                line.to_string(),
+                                                line.to_compact_string(),
                                             );
                                             nest_execution_context
                                                 .lock()

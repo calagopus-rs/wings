@@ -7,6 +7,7 @@ mod get {
         routes::api::servers::_server_::GetServer,
     };
     use axum_extra::extract::Query;
+    use compact_str::ToCompactString;
     use serde::{Deserialize, Serialize};
     use sha1::Digest;
     use std::collections::HashMap;
@@ -30,12 +31,12 @@ mod get {
     #[derive(ToSchema, Deserialize)]
     pub struct Params {
         algorithm: Algorithm,
-        files: Vec<String>,
+        files: Vec<compact_str::CompactString>,
     }
 
     #[derive(ToSchema, Serialize)]
     struct Response {
-        fingerprints: HashMap<String, String>,
+        fingerprints: HashMap<compact_str::CompactString, compact_str::CompactString>,
     }
 
     #[utoipa::path(get, path = "/", responses(
@@ -96,7 +97,7 @@ mod get {
                                 hasher.consume(&buffer[..bytes_read]);
                             }
 
-                            format!("{:x}", hasher.finalize())
+                            compact_str::format_compact!("{:x}", hasher.finalize())
                         }
                         Algorithm::Crc32 => {
                             let mut hasher = crc32fast::Hasher::new();
@@ -110,7 +111,7 @@ mod get {
                                 hasher.update(&buffer[..bytes_read]);
                             }
 
-                            format!("{:x}", hasher.finalize())
+                            compact_str::format_compact!("{:x}", hasher.finalize())
                         }
                         Algorithm::Sha1 => {
                             let mut hasher = sha1::Sha1::new();
@@ -124,7 +125,7 @@ mod get {
                                 hasher.update(&buffer[..bytes_read]);
                             }
 
-                            format!("{:x}", hasher.finalize())
+                            compact_str::format_compact!("{:x}", hasher.finalize())
                         }
                         Algorithm::Sha224 => {
                             let mut hasher = sha2::Sha224::new();
@@ -138,7 +139,7 @@ mod get {
                                 hasher.update(&buffer[..bytes_read]);
                             }
 
-                            format!("{:x}", hasher.finalize())
+                            compact_str::format_compact!("{:x}", hasher.finalize())
                         }
                         Algorithm::Sha256 => {
                             let mut hasher = sha2::Sha256::new();
@@ -152,7 +153,7 @@ mod get {
                                 hasher.update(&buffer[..bytes_read]);
                             }
 
-                            format!("{:x}", hasher.finalize())
+                            compact_str::format_compact!("{:x}", hasher.finalize())
                         }
                         Algorithm::Sha384 => {
                             let mut hasher = sha2::Sha384::new();
@@ -166,7 +167,7 @@ mod get {
                                 hasher.update(&buffer[..bytes_read]);
                             }
 
-                            format!("{:x}", hasher.finalize())
+                            compact_str::format_compact!("{:x}", hasher.finalize())
                         }
                         Algorithm::Sha512 => {
                             let mut hasher = sha2::Sha512::new();
@@ -180,7 +181,7 @@ mod get {
                                 hasher.update(&buffer[..bytes_read]);
                             }
 
-                            format!("{:x}", hasher.finalize())
+                            compact_str::format_compact!("{:x}", hasher.finalize())
                         }
                         Algorithm::Curseforge => {
                             #[inline]
@@ -242,7 +243,7 @@ mod get {
                             let num6 = (num2 ^ (num2 >> 13)).wrapping_mul(MULTIPLEX);
                             let result = num6 ^ (num6 >> 15);
 
-                            result.to_string()
+                            result.to_compact_string()
                         }
                     },
                 ))

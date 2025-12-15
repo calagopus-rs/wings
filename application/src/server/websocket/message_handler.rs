@@ -4,6 +4,7 @@ use crate::server::{
     permissions::Permission,
 };
 use anyhow::Context;
+use compact_str::ToCompactString;
 use serde_json::json;
 use std::{net::IpAddr, str::FromStr};
 
@@ -311,7 +312,7 @@ pub async fn handle_message(
 
             let raw_command = message.args.first().map_or("", |v| v.as_str());
             if let Some(stdin) = server.container_stdin().await {
-                let mut command = raw_command.to_string();
+                let mut command = raw_command.to_compact_string();
                 command.push('\n');
 
                 if let Err(err) = stdin.send(command).await {
