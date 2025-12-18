@@ -31,7 +31,7 @@ impl super::ProcessConfigurationFileParser for JsonFileParser {
                     .await?;
 
                     serde_json::from_str(&resolved)
-                        .unwrap_or_else(|_| serde_json::Value::String(resolved))
+                        .unwrap_or_else(|_| serde_json::Value::String(resolved.into()))
                 }
                 other => other.clone(),
             };

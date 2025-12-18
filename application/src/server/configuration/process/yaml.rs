@@ -31,7 +31,8 @@ impl super::ProcessConfigurationFileParser for YamlFileParser {
                         &replacement.replace_with,
                     )
                     .await?;
-                    serde_json::from_str(&resolved).unwrap_or(serde_json::Value::String(resolved))
+                    serde_json::from_str(&resolved)
+                        .unwrap_or(serde_json::Value::String(resolved.into()))
                 }
                 other => other.clone(),
             };

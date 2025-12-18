@@ -1,4 +1,5 @@
 use anyhow::Context;
+use compact_str::ToCompactString;
 use serde::Deserialize;
 use serde_default::DefaultFromSerde;
 use std::path::Path;
@@ -54,17 +55,17 @@ impl ServerConfigurationFile {
     async fn lookup_value(
         server: &crate::server::Server,
         replacement: &serde_json::Value,
-    ) -> Result<String, anyhow::Error> {
+    ) -> Result<compact_str::CompactString, anyhow::Error> {
         let value = match replacement {
             serde_json::Value::String(s) => s.as_str(),
-            serde_json::Value::Number(n) => return Ok(n.to_string()),
-            serde_json::Value::Bool(b) => return Ok(b.to_string()),
-            serde_json::Value::Null => return Ok(String::new()),
-            _ => return Ok(replacement.to_string()),
+            serde_json::Value::Number(n) => return Ok(n.to_compact_string()),
+            serde_json::Value::Bool(b) => return Ok(b.to_compact_string()),
+            serde_json::Value::Null => return Ok(compact_str::CompactString::default()),
+            _ => return Ok(replacement.to_compact_string()),
         };
 
         if !value.starts_with("{{") || !value.ends_with("}}") {
-            return Ok(value.to_string());
+            return Ok(value.to_compact_string());
         }
 
         let variable = value.trim_start_matches("{{").trim_end_matches("}}").trim();
@@ -81,19 +82,38 @@ impl ServerConfigurationFile {
                 server = %server.uuid,
                 "empty variable path"
             );
-            return Ok(String::new());
+            return Ok(compact_str::CompactString::default());
         }
 
         match parts[0] {
             "server" => Self::lookup_server_variable(server, &parts[1..]).await,
             "config" => Self::lookup_config_variable(&server.app_state.config, &parts[1..]).await,
+            "env" => {
+                if parts.len() < 2 {
+                    return Ok(compact_str::CompactString::default());
+                }
+                let config = server.configuration.read().await;
+                let env_var = parts[1];
+                if let Some(value) = config.environment.get(env_var) {
+                    Ok(value
+                        .as_str()
+                        .map_or_else(|| value.to_compact_string(), |v| v.into()))
+                } else {
+                    tracing::warn!(
+                        server = %server.uuid,
+                        "environment variable not found: {}",
+                        env_var
+                    );
+                    Ok(compact_str::CompactString::default())
+                }
+            }
             _ => {
                 tracing::error!(
                     server = %server.uuid,
                     "unknown variable prefix: {}",
                     parts[0]
                 );
-                Ok(String::new())
+                Ok(compact_str::CompactString::default())
             }
         }
     }
@@ -101,9 +121,9 @@ impl ServerConfigurationFile {
     async fn lookup_server_variable(
         server: &crate::server::Server,
         parts: &[&str],
-    ) -> Result<String, anyhow::Error> {
+    ) -> Result<compact_str::CompactString, anyhow::Error> {
         if parts.is_empty() {
-            return Ok(String::new());
+            return Ok(compact_str::CompactString::default());
         }
 
         let config = server.configuration.read().await;
@@ -111,40 +131,35 @@ impl ServerConfigurationFile {
         match parts[0] {
             "build" => {
                 if parts.len() < 2 {
-                    return Ok(String::new());
+                    return Ok(compact_str::CompactString::default());
                 }
 
                 match parts[1] {
-                    "memory" => Ok(config.build.memory_limit.to_string()),
-                    "swap" => Ok(config.build.swap.to_string()),
+                    "memory" => Ok(config.build.memory_limit.to_compact_string()),
+                    "swap" => Ok(config.build.swap.to_compact_string()),
                     "io" => Ok(config
                         .build
                         .io_weight
-                        .map_or_else(|| "500".to_string(), |v| v.to_string())),
-                    "cpu" => Ok(config.build.cpu_limit.to_string()),
-                    "disk" => Ok(config.build.disk_space.to_string()),
-                    "threads" => Ok(config
-                        .build
-                        .threads
-                        .clone()
-                        .map(|t| t.into())
-                        .unwrap_or_default()),
+                        .map_or_else(|| "500".into(), |v| v.to_compact_string())),
+                    "cpu" => Ok(config.build.cpu_limit.to_compact_string()),
+                    "disk" => Ok(config.build.disk_space.to_compact_string()),
+                    "threads" => Ok(config.build.threads.clone().unwrap_or_default()),
                     "default" => {
                         if parts.len() < 3 {
-                            return Ok(String::new());
+                            return Ok(compact_str::CompactString::default());
                         }
                         match parts[2] {
                             "port" => Ok(config
                                 .allocations
                                 .default
                                 .as_ref()
-                                .map(|d| d.port.to_string())
+                                .map(|d| d.port.to_compact_string())
                                 .unwrap_or_default()),
                             "ip" => Ok(config
                                 .allocations
                                 .default
                                 .as_ref()
-                                .map(|d| d.ip.to_string())
+                                .map(|d| d.ip.to_compact_string())
                                 .unwrap_or_default()),
                             _ => {
                                 tracing::error!(
@@ -152,8 +167,26 @@ impl ServerConfigurationFile {
                                     "unknown server.build.default subpath: {}",
                                     parts[2]
                                 );
-                                Ok(String::new())
+                                Ok(compact_str::CompactString::default())
                             }
+                        }
+                    }
+                    "env" => {
+                        if parts.len() < 3 {
+                            return Ok(compact_str::CompactString::default());
+                        }
+                        let env_var = parts[2];
+                        if let Some(value) = config.environment.get(env_var) {
+                            Ok(value
+                                .as_str()
+                                .map_or_else(|| value.to_compact_string(), |v| v.into()))
+                        } else {
+                            tracing::warn!(
+                                server = %server.uuid,
+                                "environment variable not found: {}",
+                                env_var
+                            );
+                            Ok(compact_str::CompactString::default())
                         }
                     }
                     _ => {
@@ -162,26 +195,26 @@ impl ServerConfigurationFile {
                             "unknown server.build subpath: {}",
                             parts[1]
                         );
-                        Ok(String::new())
+                        Ok(compact_str::CompactString::default())
                     }
                 }
             }
             "env" => {
                 if parts.len() < 2 {
-                    return Ok(String::new());
+                    return Ok(compact_str::CompactString::default());
                 }
                 let env_var = parts[1];
                 if let Some(value) = config.environment.get(env_var) {
                     Ok(value
                         .as_str()
-                        .map_or_else(|| value.to_string(), |v| v.to_string()))
+                        .map_or_else(|| value.to_compact_string(), |v| v.into()))
                 } else {
                     tracing::warn!(
                         server = %server.uuid,
                         "environment variable not found: {}",
                         env_var
                     );
-                    Ok(String::new())
+                    Ok(compact_str::CompactString::default())
                 }
             }
             _ => {
@@ -190,7 +223,7 @@ impl ServerConfigurationFile {
                     "unknown server section: {}",
                     parts[0]
                 );
-                Ok(String::new())
+                Ok(compact_str::CompactString::default())
             }
         }
     }
@@ -198,9 +231,9 @@ impl ServerConfigurationFile {
     async fn lookup_config_variable(
         config: &crate::config::Config,
         parts: &[&str],
-    ) -> Result<String, anyhow::Error> {
+    ) -> Result<compact_str::CompactString, anyhow::Error> {
         if parts.is_empty() || parts[0] == "token_id" || parts[0] == "token" {
-            return Ok(String::new());
+            return Ok(compact_str::CompactString::default());
         }
 
         let config_json =
@@ -212,36 +245,36 @@ impl ServerConfigurationFile {
                 Some(value) => current = value,
                 None => {
                     tracing::warn!("config path not found: {}", parts.join("."));
-                    return Ok(String::new());
+                    return Ok(compact_str::CompactString::default());
                 }
             }
         }
 
         Ok(match current {
-            serde_json::Value::String(s) => s.clone(),
-            serde_json::Value::Number(n) => n.to_string(),
-            serde_json::Value::Bool(b) => b.to_string(),
-            serde_json::Value::Null => String::new(),
-            _ => current.to_string(),
+            serde_json::Value::String(s) => s.to_compact_string(),
+            serde_json::Value::Number(n) => n.to_compact_string(),
+            serde_json::Value::Bool(b) => b.to_compact_string(),
+            serde_json::Value::Null => compact_str::CompactString::default(),
+            _ => current.to_compact_string(),
         })
     }
 
     async fn replace_all_placeholders(
         server: &crate::server::Server,
         input: &serde_json::Value,
-    ) -> Result<String, anyhow::Error> {
+    ) -> Result<compact_str::CompactString, anyhow::Error> {
         let input = match input.as_str() {
             Some(s) => s,
             None => return Self::lookup_value(server, input).await,
         };
 
-        let mut result = String::new();
+        let mut result = compact_str::CompactString::default();
         let mut chars = input.chars().peekable();
 
         while let Some(ch) = chars.next() {
             if ch == '{' && chars.peek() == Some(&'{') {
                 chars.next();
-                let mut placeholder = String::from("{{");
+                let mut placeholder = compact_str::CompactString::from("{{");
                 let mut found_end = false;
 
                 while let Some(ch) = chars.next() {
@@ -255,7 +288,7 @@ impl ServerConfigurationFile {
                 }
 
                 if found_end {
-                    let value = serde_json::Value::String(placeholder.clone());
+                    let value = serde_json::Value::String(placeholder.to_string());
                     match Self::lookup_value(server, &value).await {
                         Ok(replacement) => result.push_str(&replacement),
                         Err(e) => {

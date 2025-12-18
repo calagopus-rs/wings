@@ -25,7 +25,9 @@ impl super::ProcessConfigurationFileParser for PropertiesFileParser {
                 java_properties::LineContent::Comment(comment) => {
                     properties.write_comment(&comment)?;
                 }
-                java_properties::LineContent::KVPair(key, mut existing_value) => {
+                java_properties::LineContent::KVPair(key, existing_value) => {
+                    let mut existing_value = compact_str::CompactString::from(existing_value);
+
                     for replacement in &config.replace {
                         if replacement.r#match != key || !replacement.update_existing {
                             continue;
@@ -38,7 +40,7 @@ impl super::ProcessConfigurationFileParser for PropertiesFileParser {
                         .await?;
 
                         if let Some(if_value) = &replacement.if_value
-                            && &existing_value != if_value
+                            && existing_value != if_value
                         {
                             tracing::debug!(
                                 server = %server.uuid,
