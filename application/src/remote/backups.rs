@@ -1,5 +1,6 @@
 use super::client::Client;
 use crate::server::backup::adapters::BackupAdapter;
+use compact_str::ToCompactString;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -14,7 +15,7 @@ pub struct RawServerBackupPart {
 #[derive(Debug, Default, ToSchema, Serialize)]
 pub struct RawServerBackup {
     pub checksum: String,
-    pub checksum_type: String,
+    pub checksum_type: compact_str::CompactString,
     pub size: u64,
     pub files: u64,
     pub successful: bool,
@@ -33,9 +34,9 @@ pub struct ResticBackupConfiguration {
 
 impl ResticBackupConfiguration {
     #[inline]
-    pub fn password(&self) -> Vec<String> {
+    pub fn password(&self) -> Vec<compact_str::CompactString> {
         if let Some(password_file) = &self.password_file {
-            vec!["--password-file".into(), password_file.clone()]
+            vec!["--password-file".into(), password_file.to_compact_string()]
         } else {
             Vec::new()
         }

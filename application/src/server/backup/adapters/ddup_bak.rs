@@ -378,7 +378,7 @@ impl BackupCreateExt for DdupBakBackup {
 
         Ok(RawServerBackup {
             checksum: format!("{}-{:x}", file.metadata().await?.len(), sha1.finalize()),
-            checksum_type: "ddup-sha1".to_string(),
+            checksum_type: "ddup-sha1".into(),
             size: total_size,
             files: total_files,
             successful: true,

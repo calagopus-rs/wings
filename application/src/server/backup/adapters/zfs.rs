@@ -201,7 +201,7 @@ impl BackupCreateExt for ZfsBackup {
 
         Ok(RawServerBackup {
             checksum: dataset_name,
-            checksum_type: "zfs-subvolume".to_string(),
+            checksum_type: "zfs-subvolume".into(),
             size: total_size,
             files: total_files,
             successful: true,

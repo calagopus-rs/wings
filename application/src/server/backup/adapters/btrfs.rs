@@ -214,7 +214,7 @@ impl BackupCreateExt for BtrfsBackup {
                 generation.unwrap_or_default(),
                 uuid.unwrap_or_default()
             ),
-            checksum_type: "btrfs-subvolume".to_string(),
+            checksum_type: "btrfs-subvolume".into(),
             size: total_size,
             files: total_files,
             successful: true,

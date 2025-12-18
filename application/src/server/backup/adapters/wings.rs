@@ -268,7 +268,7 @@ impl BackupCreateExt for WingsBackup {
 
         Ok(RawServerBackup {
             checksum: format!("{:x}", checksum_writer.finalize()),
-            checksum_type: "sha1".to_string(),
+            checksum_type: "sha1".into(),
             size,
             files: total_files,
             successful: true,

@@ -534,7 +534,7 @@ impl BackupCreateExt for ResticBackup {
 
         Ok(RawServerBackup {
             checksum: snapshot_id.unwrap_or_else(|| "unknown".to_string()),
-            checksum_type: "restic".to_string(),
+            checksum_type: "restic".into(),
             size: total_bytes_processed,
             files: total_files_processed,
             successful: true,

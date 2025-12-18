@@ -183,12 +183,14 @@ impl BackupCreateExt for S3Backup {
 
                 sha1.update(&buffer[..bytes_read]);
                 file.write_all(&buffer[..bytes_read]).await?;
+                total.fetch_add(bytes_read as u64, Ordering::Relaxed);
             }
 
             Ok::<_, anyhow::Error>(format!("{:x}", sha1.finalize()))
         };
 
         let total_task = {
+            let total = Arc::clone(&total);
             let server = server.clone();
             let ignore = ignore.clone();
 
@@ -350,7 +352,7 @@ impl BackupCreateExt for S3Backup {
 
         Ok(RawServerBackup {
             checksum,
-            checksum_type: "sha1".to_string(),
+            checksum_type: "sha1".into(),
             size,
             files: total_files,
             successful: true,
