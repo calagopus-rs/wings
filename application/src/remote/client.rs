@@ -287,13 +287,14 @@ impl Client {
     #[tracing::instrument(skip(self))]
     pub async fn set_backup_restore_status(
         &self,
+        server: uuid::Uuid,
         uuid: uuid::Uuid,
         successful: bool,
     ) -> Result<(), anyhow::Error> {
         tracing::info!("setting backup restore status");
 
         self.retry(
-            || super::backups::set_backup_restore_status(self, uuid, successful),
+            || super::backups::set_backup_restore_status(self, server, uuid, successful),
             Self::skip_client_errors,
         )
         .await

@@ -60,6 +60,7 @@ pub async fn set_backup_status(
 
 pub async fn set_backup_restore_status(
     client: &Client,
+    server: uuid::Uuid,
     uuid: uuid::Uuid,
     successful: bool,
 ) -> Result<(), anyhow::Error> {
@@ -67,6 +68,7 @@ pub async fn set_backup_restore_status(
         .client
         .post(format!("{}/backups/{}/restore", client.url, uuid))
         .json(&json!({
+            "server_uuid": server,
             "successful": successful,
         }))
         .send()

@@ -301,7 +301,7 @@ impl BackupManager {
                 .app_state
                 .config
                 .client
-                .set_backup_restore_status(backup.uuid(), false)
+                .set_backup_restore_status(server.uuid, backup.uuid(), false)
                 .await?;
 
             return Err(err);
@@ -320,7 +320,7 @@ impl BackupManager {
                 .app_state
                 .config
                 .client
-                .set_backup_restore_status(backup.uuid(), false)
+                .set_backup_restore_status(server.uuid, backup.uuid(), false)
                 .await?;
 
             return Err(err.context("failed to truncate root directory before restoring backup"));
@@ -380,7 +380,7 @@ impl BackupManager {
                     .app_state
                     .config
                     .client
-                    .set_backup_restore_status(backup.uuid(), true)
+                    .set_backup_restore_status(server.uuid, backup.uuid(), true)
                     .await?;
                 server
                     .websocket
@@ -406,7 +406,7 @@ impl BackupManager {
                     .app_state
                     .config
                     .client
-                    .set_backup_restore_status(backup.uuid(), false)
+                    .set_backup_restore_status(server.uuid, backup.uuid(), false)
                     .await?;
 
                 Err(err)
