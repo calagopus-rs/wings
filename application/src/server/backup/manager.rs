@@ -164,6 +164,12 @@ impl BackupManager {
         });
 
         server
+            .websocket
+            .send(crate::server::websocket::WebsocketMessage::new(
+                crate::server::websocket::WebsocketEvent::ServerBackupStarted,
+                [uuid.to_string()].into(),
+            ))?;
+        server
             .schedules
             .execute_backup_status_trigger(crate::models::ServerBackupStatus::Starting)
             .await;
@@ -181,20 +187,16 @@ impl BackupManager {
         {
             Ok(backup) => {
                 progress_task.abort();
-                server
-                    .schedules
-                    .execute_backup_status_trigger(crate::models::ServerBackupStatus::Finished)
-                    .await;
 
                 backup
             }
             Err(e) => {
                 progress_task.abort();
+
                 server
                     .schedules
                     .execute_backup_status_trigger(crate::models::ServerBackupStatus::Failed)
                     .await;
-
                 server
                     .app_state
                     .config
@@ -233,6 +235,10 @@ impl BackupManager {
             }
         };
 
+        server
+            .schedules
+            .execute_backup_status_trigger(crate::models::ServerBackupStatus::Finished)
+            .await;
         server
             .app_state
             .config
@@ -357,6 +363,13 @@ impl BackupManager {
             }
         });
 
+        server
+            .websocket
+            .send(crate::server::websocket::WebsocketMessage::new(
+                crate::server::websocket::WebsocketEvent::ServerBackupRestoreStarted,
+                [].into(),
+            ))?;
+
         match backup
             .restore(
                 server,
@@ -408,6 +421,12 @@ impl BackupManager {
                     .client
                     .set_backup_restore_status(server.uuid, backup.uuid(), false)
                     .await?;
+                server
+                    .websocket
+                    .send(crate::server::websocket::WebsocketMessage::new(
+                        crate::server::websocket::WebsocketEvent::ServerBackupRestoreCompleted,
+                        [].into(),
+                    ))?;
 
                 Err(err)
             }

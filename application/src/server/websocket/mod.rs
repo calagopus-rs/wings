@@ -67,10 +67,14 @@ pub enum WebsocketEvent {
     ServerInstallCompleted,
     #[serde(rename = "daemon message")]
     ServerDaemonMessage,
+    #[serde(rename = "backup started")]
+    ServerBackupStarted,
     #[serde(rename = "backup progress")]
     ServerBackupProgress,
     #[serde(rename = "backup completed")]
     ServerBackupCompleted,
+    #[serde(rename = "backup restore started")]
+    ServerBackupRestoreStarted,
     #[serde(rename = "backup restore progress")]
     ServerBackupRestoreProgress,
     #[serde(rename = "backup restore completed")]
@@ -79,16 +83,20 @@ pub enum WebsocketEvent {
     ServerTransferLogs,
     #[serde(rename = "transfer status")]
     ServerTransferStatus,
-    #[serde(rename = "schedule status")]
-    ServerScheduleStatus,
+    #[serde(rename = "schedule started")]
+    ServerScheduleStarted,
+    #[serde(rename = "schedule step status")]
+    ServerScheduleStepStatus,
     #[serde(rename = "schedule step error")]
     ServerScheduleStepError,
+    #[serde(rename = "schedule completed")]
+    ServerScheduleCompleted,
     #[serde(rename = "operation progress")]
     ServerOperationProgress,
-    #[serde(rename = "operation completed")]
-    ServerOperationCompleted,
     #[serde(rename = "operation error")]
     ServerOperationError,
+    #[serde(rename = "operation completed")]
+    ServerOperationCompleted,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

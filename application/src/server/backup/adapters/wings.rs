@@ -450,11 +450,15 @@ impl BackupExt for WingsBackup {
                     }
 
                     for (destination_path, modified_time) in directory_entries {
-                        server.filesystem.set_times(
-                            &destination_path,
-                            std::time::UNIX_EPOCH + std::time::Duration::from_secs(modified_time),
-                            None,
-                        )?;
+                        server
+                            .filesystem
+                            .set_times(
+                                &destination_path,
+                                std::time::UNIX_EPOCH
+                                    + std::time::Duration::from_secs(modified_time),
+                                None,
+                            )
+                            .ok();
                     }
 
                     Ok(())
@@ -615,7 +619,7 @@ impl BackupExt for WingsBackup {
                                     &path,
                                     modified_time.into_std(),
                                     None,
-                                )?;
+                                ).ok();
                             }
                         }
                     }
@@ -767,7 +771,7 @@ impl BackupExt for WingsBackup {
                                     destination_path,
                                     entry.last_modified_date.into(),
                                     None,
-                                )?;
+                                ).ok();
                             }
                         }
 

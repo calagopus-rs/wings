@@ -76,6 +76,7 @@ pub struct ApiScheduleCompletionStatus {
 #[derive(ToSchema, Serialize)]
 pub struct ScheduleStatus {
     pub running: bool,
+    pub errors: HashMap<uuid::Uuid, Cow<'static, str>>,
     pub step: Option<uuid::Uuid>,
 }
 
@@ -138,6 +139,7 @@ impl Schedule {
         let raw_actions = Arc::new(RwLock::new(Arc::new(raw_schedule.actions)));
         let status = Arc::new(RwLock::new(ScheduleStatus {
             running: false,
+            errors: HashMap::new(),
             step: None,
         }));
         let completion_status = Arc::new(Mutex::new(None));
@@ -285,20 +287,25 @@ impl Schedule {
                 let mut errors = HashMap::new();
                 let mut successful = true;
 
+                server
+                    .websocket
+                    .send(WebsocketMessage::new(
+                        WebsocketEvent::ServerScheduleStarted,
+                        [uuid.to_string()].into(),
+                    ))
+                    .ok();
+
                 for raw_action in raw_actions.iter() {
-                    *status.write().await = ScheduleStatus {
-                        running: true,
-                        step: Some(raw_action.uuid),
-                    };
+                    let mut status_lock = status.write().await;
+                    status_lock.running = true;
+                    status_lock.step = Some(raw_action.uuid);
+                    drop(status_lock);
+
                     server
                         .websocket
                         .send(WebsocketMessage::new(
-                            WebsocketEvent::ServerScheduleStatus,
-                            [
-                                uuid.to_string(),
-                                serde_json::to_string(&*status.read().await).unwrap(),
-                            ]
-                            .into(),
+                            WebsocketEvent::ServerScheduleStepStatus,
+                            [uuid.to_string(), raw_action.uuid.to_string()].into(),
                         ))
                         .ok();
 
@@ -310,11 +317,22 @@ impl Schedule {
                         Ok(()) => {}
                         Err(err) => {
                             errors.insert(raw_action.uuid, err.clone());
+                            status
+                                .write()
+                                .await
+                                .errors
+                                .insert(raw_action.uuid, err.clone());
+
                             server
                                 .websocket
                                 .send(WebsocketMessage::new(
                                     WebsocketEvent::ServerScheduleStepError,
-                                    [raw_action.uuid.to_string(), err.to_string()].into(),
+                                    [
+                                        uuid.to_string(),
+                                        raw_action.uuid.to_string(),
+                                        err.to_string(),
+                                    ]
+                                    .into(),
                                 ))
                                 .ok();
 
@@ -328,19 +346,16 @@ impl Schedule {
 
                 tracing::debug!(server = %server.uuid, schedule = %uuid, errors = ?errors, "schedule actions executed");
 
-                *status.write().await = ScheduleStatus {
-                    running: false,
-                    step: None,
-                };
+                let mut status_lock = status.write().await;
+                status_lock.running = false;
+                status_lock.step = None;
+                drop(status_lock);
+
                 server
                     .websocket
                     .send(WebsocketMessage::new(
-                        WebsocketEvent::ServerScheduleStatus,
-                        [
-                            uuid.to_string(),
-                            serde_json::to_string(&*status.read().await).unwrap(),
-                        ]
-                        .into(),
+                        WebsocketEvent::ServerScheduleCompleted,
+                        [uuid.to_string()].into(),
                     ))
                     .ok();
 
