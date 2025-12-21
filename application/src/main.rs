@@ -420,119 +420,121 @@ async fn main() {
         );
     }
 
-    tracing::info!("starting http/sftp server");
-
     rustls::crypto::ring::default_provider()
         .install_default()
         .expect("Failed to install rustls crypto provider");
 
-    tokio::spawn({
-        let state = Arc::clone(&state);
+    if config.system.sftp.enabled {
+        tracing::info!("starting http/sftp server");
 
-        async move {
-            let mut server = wings_rs::ssh::Server {
-                state: Arc::clone(&state),
-            };
+        tokio::spawn({
+            let state = Arc::clone(&state);
 
-            let key_file = Path::new(&state.config.system.data_directory)
-                .join(".sftp")
-                .join(format!(
-                    "id_{}",
-                    state.config.system.sftp.key_algorithm.replace("-", "_")
-                ));
-            let key = match tokio::fs::read(&key_file)
-                .await
-                .map(russh::keys::PrivateKey::from_openssh)
-            {
-                Ok(Ok(key)) => {
-                    tracing::info!(
-                        algorithm = %key.algorithm().to_string(),
-                        "loaded existing sftp host key"
-                    );
+            async move {
+                let mut server = wings_rs::ssh::Server {
+                    state: Arc::clone(&state),
+                };
 
-                    key
-                }
-                _ => {
-                    tracing::info!(
-                        algorithm = %state.config.system.sftp.key_algorithm,
-                        "generating new sftp host key"
-                    );
-
-                    let key = russh::keys::PrivateKey::random(
-                        &mut OsRng,
-                        state
-                            .config
-                            .system
-                            .sftp
-                            .key_algorithm
-                            .parse()
-                            .context("failed to parse sftp key algorithm")
-                            .unwrap(),
-                    )
-                    .unwrap();
-
-                    if let Some(parent) = key_file.parent() {
-                        tokio::fs::create_dir_all(parent)
-                            .await
-                            .context("failed to create sftp host key directory")
-                            .unwrap();
-                    }
-                    tokio::fs::write(
-                        key_file,
-                        key.to_openssh(russh::keys::ssh_key::LineEnding::LF)
-                            .unwrap(),
-                    )
+                let key_file = Path::new(&state.config.system.data_directory)
+                    .join(".sftp")
+                    .join(format!(
+                        "id_{}",
+                        state.config.system.sftp.key_algorithm.replace("-", "_")
+                    ));
+                let key = match tokio::fs::read(&key_file)
                     .await
-                    .context("failed to write sftp host key")
-                    .unwrap();
+                    .map(russh::keys::PrivateKey::from_openssh)
+                {
+                    Ok(Ok(key)) => {
+                        tracing::info!(
+                            algorithm = %key.algorithm().to_string(),
+                            "loaded existing sftp host key"
+                        );
 
-                    key
-                }
-            };
-
-            let config = russh::server::Config {
-                auth_rejection_time: std::time::Duration::from_secs(0),
-                auth_rejection_time_initial: Some(std::time::Duration::from_secs(0)),
-                maximum_packet_size: 32 * 1024,
-                keepalive_interval: Some(std::time::Duration::from_secs(60)),
-                max_auth_attempts: 6,
-                channel_buffer_size: 1024,
-                event_buffer_size: 1024,
-                keys: vec![key],
-                ..Default::default()
-            };
-
-            let address = SocketAddr::from((
-                state.config.system.sftp.bind_address,
-                state.config.system.sftp.bind_port,
-            ));
-
-            tracing::info!(
-                "{} listening on {} {}",
-                "ssh server".yellow(),
-                address.to_string().cyan(),
-                format!(
-                    "(app@{}, {}ms)",
-                    wings_rs::VERSION,
-                    state.start_time.elapsed().as_millis()
-                )
-                .bright_black()
-            );
-
-            match server.run_on_address(Arc::new(config), address).await {
-                Ok(_) => {}
-                Err(err) => {
-                    if err.kind() == std::io::ErrorKind::AddrInUse {
-                        tracing::error!("failed to start ssh server (address already in use)");
-                    } else {
-                        tracing::error!("failed to start ssh server: {:?}", err);
+                        key
                     }
+                    _ => {
+                        tracing::info!(
+                            algorithm = %state.config.system.sftp.key_algorithm,
+                            "generating new sftp host key"
+                        );
 
-                    std::process::exit(1);
+                        let key = russh::keys::PrivateKey::random(
+                            &mut OsRng,
+                            state
+                                .config
+                                .system
+                                .sftp
+                                .key_algorithm
+                                .parse()
+                                .context("failed to parse sftp key algorithm")
+                                .unwrap(),
+                        )
+                        .unwrap();
+
+                        if let Some(parent) = key_file.parent() {
+                            tokio::fs::create_dir_all(parent)
+                                .await
+                                .context("failed to create sftp host key directory")
+                                .unwrap();
+                        }
+                        tokio::fs::write(
+                            key_file,
+                            key.to_openssh(russh::keys::ssh_key::LineEnding::LF)
+                                .unwrap(),
+                        )
+                        .await
+                        .context("failed to write sftp host key")
+                        .unwrap();
+
+                        key
+                    }
+                };
+
+                let config = russh::server::Config {
+                    auth_rejection_time: std::time::Duration::from_secs(0),
+                    auth_rejection_time_initial: Some(std::time::Duration::from_secs(0)),
+                    maximum_packet_size: 32 * 1024,
+                    keepalive_interval: Some(std::time::Duration::from_secs(60)),
+                    max_auth_attempts: 6,
+                    channel_buffer_size: 1024,
+                    event_buffer_size: 1024,
+                    keys: vec![key],
+                    ..Default::default()
+                };
+
+                let address = SocketAddr::from((
+                    state.config.system.sftp.bind_address,
+                    state.config.system.sftp.bind_port,
+                ));
+
+                tracing::info!(
+                    "{} listening on {} {}",
+                    "ssh server".yellow(),
+                    address.to_string().cyan(),
+                    format!(
+                        "(app@{}, {}ms)",
+                        wings_rs::VERSION,
+                        state.start_time.elapsed().as_millis()
+                    )
+                    .bright_black()
+                );
+
+                match server.run_on_address(Arc::new(config), address).await {
+                    Ok(_) => {}
+                    Err(err) => {
+                        if err.kind() == std::io::ErrorKind::AddrInUse {
+                            tracing::error!("failed to start ssh server (address already in use)");
+                        } else {
+                            tracing::error!("failed to start ssh server: {:?}", err);
+                        }
+
+                        std::process::exit(1);
+                    }
                 }
             }
-        }
-    });
+        });
+    }
 
     tokio::spawn(async move {
         let mut signal =

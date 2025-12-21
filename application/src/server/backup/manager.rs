@@ -193,6 +193,10 @@ impl BackupManager {
             Err(e) => {
                 progress_task.abort();
 
+                if let Err(err) = adapter.clean(server, uuid).await {
+                    tracing::error!(server = %server.uuid, adapter = ?adapter, "failed to clean up backup {} after error: {:#?}", uuid, err);
+                }
+
                 server
                     .schedules
                     .execute_backup_status_trigger(crate::models::ServerBackupStatus::Failed)
@@ -226,10 +230,6 @@ impl BackupManager {
                     .write()
                     .await
                     .insert(uuid, adapter);
-
-                if let Err(err) = adapter.clean(server, uuid).await {
-                    tracing::error!(server = %server.uuid, adapter = ?adapter, "failed to clean up backup {} after error: {:#?}", uuid, err);
-                }
 
                 return Err(e);
             }

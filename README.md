@@ -57,9 +57,11 @@ system:
   check_permissions_on_boot_threads: 4
 
   sftp:
+    # whether to even enable to sftp (ssh) server
+    enabled: true
     # the algorithm to use for the ssh host key
     key_algorithm: ssh-ed25519
-    # whether to disable password auth for the sftp server
+    # whether to disable password auth for the sftp (ssh) server
     disable_password_auth: false
     # how many entries can be listed on readdir, 0 means unlimited
     directory_entry_limit: 20000

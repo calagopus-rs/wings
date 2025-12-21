@@ -119,6 +119,9 @@ fn system_websocket_log_count() -> usize {
     150
 }
 
+fn system_sftp_enabled() -> bool {
+    true
+}
 fn system_sftp_bind_address() -> std::net::IpAddr {
     std::net::IpAddr::from([0, 0, 0, 0])
 }
@@ -438,6 +441,9 @@ nestify::nest! {
             #[serde(default)]
             #[schema(inline)]
             pub sftp: #[derive(ToSchema, Deserialize, Serialize, DefaultFromSerde)] #[serde(default)] pub struct SystemSftp {
+                #[serde(default = "system_sftp_enabled")]
+                pub enabled: bool,
+
                 #[serde(default = "system_sftp_bind_address")]
                 #[schema(value_type = String)]
                 pub bind_address: std::net::IpAddr,
