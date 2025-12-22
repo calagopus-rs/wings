@@ -77,6 +77,8 @@ system:
         name: ".wings"
 
   backups:
+    # what compression level to use? best_speed, good_speed, good_compression, best_compression
+    compression_level: best_speed
     # allow browsing backups via the web file manager
     mounting:
       # whether backup "mounting" is enabled
