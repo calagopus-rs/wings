@@ -177,7 +177,7 @@ impl BackupCreateExt for S3Backup {
             let mut buffer = vec![0; crate::BUFFER_SIZE];
             loop {
                 let bytes_read = checksum_reader.read(&mut buffer).await?;
-                if bytes_read == 0 {
+                if crate::unlikely(bytes_read == 0) {
                     break;
                 }
 
@@ -227,7 +227,7 @@ impl BackupCreateExt for S3Backup {
                 server.app_state.config.system.backups.write_limit * 1024 * 1024,
             );
 
-            crate::server::filesystem::archive::create::create_tar(
+            let file = crate::server::filesystem::archive::create::create_tar(
                 server.filesystem.clone(),
                 writer,
                 Path::new(""),
@@ -240,7 +240,11 @@ impl BackupCreateExt for S3Backup {
                     threads: server.app_state.config.system.backups.s3.create_threads,
                 },
             )
-            .await
+            .await?;
+
+            file.into_inner().into_inner().shutdown().await?;
+
+            Ok(())
         };
 
         let (checksum, total_files, _) = tokio::try_join!(checksum_task, total_task, archive_task)?;

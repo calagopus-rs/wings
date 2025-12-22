@@ -413,6 +413,26 @@ async fn main() {
         SecurityScheme::ApiKey(ApiKey::Header(ApiKeyValue::new("Authorization"))),
     );
 
+    for (path, item) in openapi.paths.paths.iter_mut() {
+        let operations = [
+            ("get", &mut item.get),
+            ("post", &mut item.post),
+            ("put", &mut item.put),
+            ("patch", &mut item.patch),
+            ("delete", &mut item.delete),
+        ];
+
+        let path = path
+            .replace('/', "_")
+            .replace(|c| ['{', '}'].contains(&c), "");
+
+        for (method, operation) in operations {
+            if let Some(operation) = operation {
+                operation.operation_id = Some(format!("{method}{path}"))
+            }
+        }
+    }
+
     if !config.api.disable_openapi_docs {
         router = router.route(
             "/openapi.json",

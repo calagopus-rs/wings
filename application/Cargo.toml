@@ -1,6 +1,6 @@
 [package]
 name = "wings-rs"
-version = "0.22.5"
+version = "0.22.6"
 edition = "2024"
 
 [dependencies]
@@ -31,7 +31,7 @@ tokio-util = { workspace = true }
 uuid = { workspace = true }
 rand = { workspace = true }
 tar = "0.4.44"
-zip = { version = "6.0.0", default-features = false, features = ["bzip2", "deflate", "sha1", "time", "zstd", "lzma", "xz"] }
+zip = { version = "7.0.0", default-features = false, features = ["bzip2", "deflate", "time", "zstd", "lzma", "xz"] }
 sevenz-rust2 = { version = "0.20.0", features = ["deflate", "compress", "brotli", "zstd", "bzip2", "ppmd", "lz4"] }
 flate2 = { version = "1.1.1", features = ["zlib-rs"], default-features = false }
 jwt = "0.16.0"
@@ -76,6 +76,7 @@ rust-ini = "0.21.3"
 regex = "1.12.2"
 serde_regex = "1.1.0"
 compact_str = { git = "https://github.com/0x7d8/compact_str.git", version = "0.9.0", features = ["serde", "utoipa"] }
+memchr = "2.7.6"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 tikv-jemallocator = "0.6.0"

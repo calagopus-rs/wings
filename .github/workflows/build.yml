@@ -8,7 +8,7 @@ on:
 env:
   BIN_NAME: wings-rs
   PROJECT_NAME: wings-rs
-  REPO_NAME: calagopus-rs/wings
+  REPO_NAME: calagopus/wings
 
 jobs:
   dist:
@@ -21,7 +21,7 @@ jobs:
           - x86_64-linux
           - aarch64-linux
           - riscv64-linux
-          - powerpc64le-linux
+          - ppc64le-linux
         include:
           - build: x86_64-linux
             os: ubuntu-24.04
@@ -32,7 +32,7 @@ jobs:
           - build: riscv64-linux
             os: ubuntu-24.04
             target: riscv64gc-unknown-linux-gnu
-          - build: powerpc64le-linux
+          - build: ppc64le-linux
             os: ubuntu-24.04
             target: powerpc64le-unknown-linux-gnu
 
@@ -138,7 +138,7 @@ jobs:
           cp dist/${{ env.PROJECT_NAME }}-x86_64-linux/${{ env.BIN_NAME }}-x86_64-linux .docker/amd64/wings-rs
           cp dist/${{ env.PROJECT_NAME }}-aarch64-linux/${{ env.BIN_NAME }}-aarch64-linux .docker/arm64/wings-rs
           cp dist/${{ env.PROJECT_NAME }}-riscv64-linux/${{ env.BIN_NAME }}-riscv64-linux .docker/riscv64/wings-rs
-          cp dist/${{ env.PROJECT_NAME }}-powerpc64le-linux/${{ env.BIN_NAME }}-powerpc64le-linux .docker/ppc64le/wings-rs
+          cp dist/${{ env.PROJECT_NAME }}-ppc64le-linux/${{ env.BIN_NAME }}-ppc64le-linux .docker/ppc64le/wings-rs
 
           chmod +x .docker/*/wings-rs
 
