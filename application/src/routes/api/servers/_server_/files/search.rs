@@ -134,7 +134,7 @@ mod post {
         #[schema(inline)]
         content_filter: Option<ContentFilter>,
 
-        limit: usize,
+        per_page: usize,
     }
 
     #[derive(Deserialize)]
@@ -224,12 +224,14 @@ mod post {
                             let results_count = Arc::clone(&results_count);
                             let results = Arc::clone(&results);
                             let data = Arc::new(data);
+                            let root = Arc::new(root);
 
                             move |is_dir, path: PathBuf| {
                                 let server = server.clone();
                                 let results_count = Arc::clone(&results_count);
                                 let results = Arc::clone(&results);
                                 let data = Arc::clone(&data);
+                                let root = Arc::clone(&root);
 
                                 async move {
                                     if is_dir || results_count.load(Ordering::Relaxed) >= limit {
@@ -294,7 +296,7 @@ mod post {
                                                     None,
                                                 )
                                                 .await;
-                                            entry.name = match path.strip_prefix(&data.root) {
+                                            entry.name = match path.strip_prefix(&*root) {
                                                 Ok(path) => path.to_string_lossy().into(),
                                                 Err(_) => return Ok(()),
                                             };
@@ -328,8 +330,8 @@ mod post {
                         .ok();
                 }
 
-                let mut override_builder = OverrideBuilder::new("");
-                let mut ignore_builder = GitignoreBuilder::new("");
+                let mut override_builder = OverrideBuilder::new("/");
+                let mut ignore_builder = GitignoreBuilder::new("/");
 
                 if let Some(path_filter) = &data.path_filter {
                     for glob in &path_filter.include {
@@ -360,16 +362,19 @@ mod post {
                             let results_count = Arc::clone(&results_count);
                             let results = Arc::clone(&results);
                             let data = Arc::new(data);
+                            let root = Arc::new(root);
 
                             move |is_dir, path: PathBuf| {
                                 let server = server.clone();
                                 let results_count = Arc::clone(&results_count);
                                 let results = Arc::clone(&results);
-                                let data = Arc::clone(&data);
                                 let path_includes = Arc::clone(&path_includes);
+                                let data = Arc::clone(&data);
+                                let root = Arc::clone(&root);
 
                                 async move {
-                                    if is_dir || results_count.load(Ordering::Relaxed) >= data.limit
+                                    if is_dir
+                                        || results_count.load(Ordering::Relaxed) >= data.per_page
                                     {
                                         return Ok(());
                                     }
@@ -465,7 +470,7 @@ mod post {
                                             None,
                                         )
                                         .await;
-                                    entry.name = match path.strip_prefix(&data.root) {
+                                    entry.name = match path.strip_prefix(&*root) {
                                         Ok(path) => path.to_string_lossy().into(),
                                         Err(_) => return Ok(()),
                                     };
