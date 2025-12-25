@@ -87,9 +87,9 @@ system:
 
     activity:
       # whether to log successful sftp logins in server activity
-      log_logins: true
+      log_logins: false
       # whether to log file read actions in server activity
-      log_file_reads: true
+      log_file_reads: false
 
   backups:
     # what compression level to use? best_speed, good_speed, good_compression, best_compression (higher compression = more CPU usage, better compression)
