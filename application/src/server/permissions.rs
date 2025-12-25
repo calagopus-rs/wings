@@ -8,7 +8,7 @@ use std::{
     ops::{Deref, DerefMut},
     sync::Arc,
 };
-use tokio::sync::RwLock;
+use tokio::sync::Mutex;
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Hash)]
 pub enum Permission {
@@ -77,13 +77,13 @@ type UserPermissions = (
     std::time::Instant,
 );
 pub struct UserPermissionsMap {
-    map: Arc<RwLock<HashMap<uuid::Uuid, UserPermissions>>>,
+    map: Arc<Mutex<HashMap<uuid::Uuid, UserPermissions>>>,
     task: tokio::task::JoinHandle<()>,
 }
 
 impl Default for UserPermissionsMap {
     fn default() -> Self {
-        let map = Arc::new(RwLock::new(HashMap::new()));
+        let map = Arc::new(Mutex::new(HashMap::new()));
 
         Self {
             map: Arc::clone(&map),
@@ -91,7 +91,7 @@ impl Default for UserPermissionsMap {
                 loop {
                     tokio::time::sleep(std::time::Duration::from_secs(60)).await;
 
-                    let mut map = map.write().await;
+                    let mut map = map.lock().await;
                     map.retain(|_, (_, _, last_access)| {
                         last_access.elapsed().as_secs() < 60 * 60 * 24
                     });
@@ -103,7 +103,7 @@ impl Default for UserPermissionsMap {
 
 impl UserPermissionsMap {
     pub async fn has_permission(&self, user_uuid: uuid::Uuid, permission: Permission) -> bool {
-        let mut map = self.map.write().await;
+        let mut map = self.map.lock().await;
         if let Some((permissions, _, last_access)) = map.get_mut(&user_uuid) {
             *last_access = std::time::Instant::now();
 
@@ -119,7 +119,7 @@ impl UserPermissionsMap {
         path: impl AsRef<std::path::Path>,
         is_dir: bool,
     ) -> bool {
-        let mut map = self.map.write().await;
+        let mut map = self.map.lock().await;
         if let Some((_, ignored, last_access)) = map.get_mut(&user_uuid) {
             *last_access = std::time::Instant::now();
 
@@ -143,7 +143,7 @@ impl UserPermissionsMap {
             overrides.add(file.as_ref()).ok();
         }
 
-        self.map.write().await.insert(
+        self.map.lock().await.insert(
             user_uuid,
             (
                 permissions,
