@@ -286,6 +286,26 @@ impl OutgoingServerTransfer {
 
             let mut total_bytes = server.filesystem.get_apparent_cached_size();
 
+            if let Ok(install_logs) = crate::server::installation::ServerInstaller::get_install_logs(&server).await {
+                total_bytes += install_logs.metadata().await.map(|m| m.len()).unwrap_or(0);
+
+                form = form.part(
+                    "install-logs",
+                    reqwest::multipart::Part::stream(reqwest::Body::wrap_stream(
+                        tokio_util::io::ReaderStream::with_capacity(
+                            AsyncCountingReader::new_with_bytes_read(
+                                install_logs,
+                                Arc::clone(&bytes_archived),
+                            ),
+                            crate::BUFFER_SIZE,
+                        ),
+                    ))
+                    .file_name("install.log")
+                    .mime_str("text/plain")
+                    .unwrap(),
+                );
+            }
+
             for backup in &backups {
                 if let Ok(Some(backup)) = backup_manager.find(*backup).await {
                     match backup.adapter() {
@@ -604,10 +624,12 @@ impl OutgoingServerTransfer {
 
             Self::log(&server, "Finished streaming archive to destination.");
 
-            for backup in backups {
-                match backup_manager.find(backup).await {
-                    Ok(Some(backup)) => {
-                        if delete_backups {
+            crate::server::installation::ServerInstaller::delete_install_logs(&server).await;
+
+            if delete_backups {
+                for backup in backups {
+                    match backup_manager.find(backup).await {
+                        Ok(Some(backup)) => {
                             if let Err(err) = backup.delete(&server.app_state.config).await {
                                 tracing::error!(
                                     server = %server.uuid,
@@ -623,21 +645,21 @@ impl OutgoingServerTransfer {
                                 );
                             }
                         }
-                    }
-                    Ok(None) => {
-                        tracing::warn!(
-                            server = %server.uuid,
-                            "requested backup {} does not exist",
-                            backup
-                        );
-                    }
-                    Err(err) => {
-                        tracing::error!(
-                            server = %server.uuid,
-                            "failed to find backup {}: {:#?}",
-                            backup,
-                            err
-                        );
+                        Ok(None) => {
+                            tracing::warn!(
+                                server = %server.uuid,
+                                "requested backup {} does not exist",
+                                backup
+                            );
+                        }
+                        Err(err) => {
+                            tracing::error!(
+                                server = %server.uuid,
+                                "failed to find backup {}: {:#?}",
+                                backup,
+                                err
+                            );
+                        }
                     }
                 }
             }

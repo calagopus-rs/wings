@@ -643,32 +643,35 @@ impl Server {
 
     pub async fn read_log(
         &self,
-        client: &bollard::Docker,
-        lines: usize,
-    ) -> Result<String, bollard::errors::Error> {
+        lines: Option<usize>,
+    ) -> Box<
+        dyn futures::Stream<Item = Result<compact_str::CompactString, anyhow::Error>>
+            + Unpin
+            + Send,
+    > {
         let container = match &*self.container.read().await {
             Some(container) => container.docker_id.clone(),
-            None => return Ok("".to_string()),
+            None => return Box::new(futures::stream::empty()),
         };
 
-        let mut logs_stream = client.logs(
+        let logs_stream = self.app_state.docker.logs(
             &container,
             Some(bollard::container::LogsOptions {
                 follow: false,
                 stdout: true,
                 stderr: true,
                 timestamps: false,
-                tail: lines.to_string(),
+                tail: lines.map_or_else(|| "all".to_string(), |l| l.to_string()),
                 ..Default::default()
             }),
         );
 
-        let mut logs = String::new();
-        while let Some(Ok(log)) = logs_stream.next().await {
-            logs.push_str(String::from_utf8_lossy(&log.into_bytes()).as_ref());
-        }
-
-        Ok(logs)
+        Box::new(logs_stream.map(|log| match log {
+            Ok(log) => Ok(compact_str::CompactString::from_utf8_lossy(
+                &log.into_bytes(),
+            )),
+            Err(err) => Err(err.into()),
+        }))
     }
 
     pub async fn log_daemon(&self, message: String) {

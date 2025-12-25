@@ -6,6 +6,7 @@ use crate::{
         websocket::WebsocketEvent,
     },
 };
+use futures::StreamExt;
 use russh::{Channel, ChannelWriteHalf, server::Msg};
 use serde_json::json;
 use std::{pin::Pin, sync::Arc};
@@ -620,14 +621,10 @@ impl ShellSession {
             let (mut reader, writer) = channel.split();
             let mut reader = reader.make_reader();
 
-            let logs = self
+            let mut log_stream = self
                 .server
-                .read_log(
-                    &self.state.docker,
-                    self.state.config.system.websocket_log_count,
-                )
-                .await
-                .unwrap_or_default();
+                .read_log(Some(self.state.config.system.websocket_log_count))
+                .await;
 
             {
                 let prelude = ansi_term::Color::Yellow
@@ -650,11 +647,13 @@ impl ShellSession {
             if self.server.state.get_state() != crate::server::state::ServerState::Offline
                 || self.state.config.api.send_offline_server_logs
             {
-                writer
-                    .make_writer()
-                    .write_all(logs.as_bytes())
-                    .await
-                    .unwrap_or_default();
+                while let Some(Ok(line)) = log_stream.next().await {
+                    writer
+                        .make_writer()
+                        .write_all(line.as_bytes())
+                        .await
+                        .unwrap_or_default();
+                }
             }
 
             let mut futures: Vec<Pin<Box<dyn futures_util::Future<Output = ()> + Send>>> =

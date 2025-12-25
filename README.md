@@ -187,6 +187,7 @@ remote_query:
 - `POST /api/servers/{server}/script` api endpoint for running custom scripts async on the server
 - `POST /api/servers/{server}/ws/permissions` api endpoint for live updating user permissions on a server
 - `POST /api/servers/{server}/install/abort` api endpoint for aborting a server installation process
+- `GET /api/servers/{server}/logs/install` api endpoint for getting server installation logs
 - `GET /api/servers/{server}/version` api endpoint for getting a version hash for a server
 - `GET /api/servers/{server}/files/fingerprints` api endpoint for getting fingerprints for many files at once
 - `GET /api/servers/{server}/files/list` api endpoint for listing files with pagination

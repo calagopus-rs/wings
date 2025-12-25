@@ -3,8 +3,8 @@ use crate::server::{
     activity::{Activity, ActivityEvent},
     permissions::Permission,
 };
-use anyhow::Context;
 use compact_str::ToCompactString;
+use futures::StreamExt;
 use serde_json::json;
 use std::{net::IpAddr, str::FromStr};
 
@@ -41,12 +41,11 @@ pub async fn handle_message(
                 }
                 drop(socket_jwt);
 
-                let logs = server
-                    .read_log(&state.docker, state.config.system.websocket_log_count)
-                    .await
-                    .context("failed to read server logs")?;
+                let mut log_stream = server
+                    .read_log(Some(state.config.system.websocket_log_count))
+                    .await;
 
-                for line in logs.lines() {
+                while let Some(Ok(line)) = log_stream.next().await {
                     websocket_handler
                         .send_message(WebsocketMessage::new(
                             WebsocketEvent::ServerConsoleOutput,

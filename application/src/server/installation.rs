@@ -54,6 +54,43 @@ impl ServerInstaller {
         }
     }
 
+    pub fn get_install_logs_path(server: &super::Server) -> std::path::PathBuf {
+        std::path::PathBuf::from(&server.app_state.config.system.log_directory)
+            .join(server.uuid.to_string())
+            .join("install.log")
+    }
+
+    pub async fn get_install_logs(
+        server: &super::Server,
+    ) -> Result<tokio::fs::File, std::io::Error> {
+        let log_path = Self::get_install_logs_path(server);
+
+        tokio::fs::File::open(&log_path).await
+    }
+
+    pub async fn create_install_logs(
+        server: &super::Server,
+    ) -> Result<tokio::fs::File, std::io::Error> {
+        let log_path = Self::get_install_logs_path(server);
+
+        if let Some(parent) = log_path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+
+        tokio::fs::File::create(&log_path).await
+    }
+
+    pub async fn delete_install_logs(server: &super::Server) {
+        let log_path = Self::get_install_logs_path(server);
+
+        tokio::fs::remove_file(&log_path).await.ok();
+
+        if let Some(parent) = log_path.parent() {
+            // Remove the parent directory if it's empty
+            tokio::fs::remove_dir(parent).await.ok();
+        }
+    }
+
     pub fn get_installation_script(&self) -> Result<Arc<InstallationScript>, anyhow::Error> {
         match &self.installation_script {
             Some(installation_script) => Ok(Arc::clone(installation_script)),
@@ -756,14 +793,7 @@ impl ServerInstaller {
             env.push_str(&format!("  {var}\n"));
         }
 
-        let log_path = Path::new(&self.server.app_state.config.system.log_directory)
-            .join("install")
-            .join(format!("{}.log", self.server.uuid));
-        if let Some(parent) = log_path.parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
-
-        let mut file = tokio::io::BufWriter::new(tokio::fs::File::create(&log_path).await?);
+        let mut file = ServerInstaller::create_install_logs(&self.server).await?;
         file.write_all(
             format!(
                 r"Server Installation Log
@@ -794,7 +824,7 @@ impl ServerInstaller {
             file.write_all(&log.into_bytes()).await?;
         }
 
-        file.flush().await?;
+        file.shutdown().await?;
 
         Ok(self
             .server

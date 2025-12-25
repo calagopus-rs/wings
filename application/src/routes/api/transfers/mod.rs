@@ -175,7 +175,7 @@ mod post {
                         let mut archive_checksum = None;
                         let mut backup_checksum = None;
 
-                        while let Ok(Some(field)) = runtime.block_on(multipart.next_field()) {
+                        while let Ok(Some(mut field)) = runtime.block_on(multipart.next_field()) {
                             if field.name() == Some("archive") {
                                 let file_name =
                                     field.file_name().unwrap_or("archive.tar.gz").to_string();
@@ -331,6 +331,35 @@ mod post {
                                     return Err(anyhow::anyhow!(
                                         "archive checksum does not match multipart checksum, {checksum} != {archive_checksum}"
                                     ));
+                                }
+                            } else if field.name() == Some("install-logs") {
+                                let file = match runtime.block_on(crate::server::installation::ServerInstaller::create_install_logs(&server)) {
+                                    Ok(file) => file,
+                                    Err(err) => {
+                                        tracing::error!(
+                                            "failed to create install logs file: {:#?}",
+                                            err
+                                        );
+                                        continue;
+                                    }
+                                };
+                                let mut file = runtime.block_on(file.into_std());
+
+                                while let Some(chunk) = runtime.block_on(field.chunk())? {
+                                    if let Err(err) = file.write_all(&chunk) {
+                                        tracing::error!(
+                                            "failed to write install logs chunk: {:#?}",
+                                            err
+                                        );
+                                        break;
+                                    }
+                                }
+
+                                if let Err(err) = file.flush() {
+                                    tracing::error!(
+                                        "failed to flush install logs file: {:#?}",
+                                        err
+                                    );
                                 }
                             } else if field.name().is_some_and(|n| n.starts_with("backup-")) {
                                 tracing::debug!(
