@@ -127,7 +127,7 @@ mod post {
 
         let user_ip = Some(state.config.find_ip(&headers, connect_info));
 
-        while let Ok(Some(mut field)) = multipart.next_field().await {
+        while let Some(mut field) = multipart.next_field().await? {
             let filename = match field.file_name() {
                 Some(name) => name,
                 None => {
@@ -176,7 +176,7 @@ mod post {
                 })
                 .await;
 
-            while let Ok(Some(chunk)) = field.chunk().await {
+            while let Some(chunk) = field.chunk().await? {
                 if crate::unlikely(
                     written_size + chunk.len() > state.config.api.upload_limit * 1024 * 1024,
                 ) {
@@ -192,7 +192,7 @@ mod post {
                 written_size += chunk.len();
             }
 
-            writer.flush().await?;
+            writer.shutdown().await?;
         }
 
         ApiResponse::json(Response {}).ok()

@@ -6,6 +6,7 @@ use crate::{
     },
 };
 use cap_std::fs::{Metadata, OpenOptions, PermissionsExt};
+use compact_str::ToCompactString;
 use russh_sftp::protocol::{
     Data, File, FileAttributes, Handle, Name, OpenFlags, Status, StatusCode,
 };
@@ -62,7 +63,7 @@ pub struct SftpSession {
     pub user_uuid: uuid::Uuid,
 
     pub handle_id: u64,
-    pub handles: HashMap<String, ServerHandle>,
+    pub handles: HashMap<compact_str::CompactString, ServerHandle>,
 }
 
 impl SftpSession {
@@ -194,7 +195,7 @@ impl russh_sftp::server::Handler for SftpSession {
     }
 
     async fn close(&mut self, id: u32, handle: String) -> Result<Status, Self::Error> {
-        self.handles.remove(&handle);
+        self.handles.remove(handle.as_str());
 
         Ok(Status {
             id,
@@ -261,7 +262,7 @@ impl russh_sftp::server::Handler for SftpSession {
         let handle = self.next_handle_id();
 
         self.handles.insert(
-            handle.clone(),
+            handle.to_compact_string(),
             ServerHandle::Dir(DirHandle {
                 path,
                 dir,
@@ -277,7 +278,7 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
-        let handle = match self.handles.get_mut(&handle) {
+        let handle = match self.handles.get_mut(handle.as_str()) {
             Some(ServerHandle::Dir(handle)) => handle,
             _ => return Err(StatusCode::NoSuchFile),
         };
@@ -673,7 +674,7 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
-        let handle = match self.handles.get(&handle) {
+        let handle = match self.handles.get(handle.as_str()) {
             Some(ServerHandle::File(handle)) => handle,
             _ => return Err(StatusCode::NoSuchFile),
         };
@@ -726,7 +727,7 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
-        let handle = match self.handles.get(&handle) {
+        let handle = match self.handles.get(handle.as_str()) {
             Some(handle) => handle,
             None => return Err(StatusCode::NoSuchFile),
         };
@@ -1003,7 +1004,7 @@ impl russh_sftp::server::Handler for SftpSession {
         let handle = self.next_handle_id();
 
         self.handles.insert(
-            handle.clone(),
+            handle.to_compact_string(),
             ServerHandle::File(FileHandle {
                 path,
                 path_components,
@@ -1025,7 +1026,7 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
-        let handle = match self.handles.get_mut(&handle) {
+        let handle = match self.handles.get_mut(handle.as_str()) {
             Some(ServerHandle::File(handle)) => handle,
             _ => return Err(StatusCode::NoSuchFile),
         };
@@ -1063,7 +1064,7 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
-        let handle = match self.handles.get_mut(&handle) {
+        let handle = match self.handles.get_mut(handle.as_str()) {
             Some(ServerHandle::File(handle)) => handle,
             _ => return Err(StatusCode::NoSuchFile),
         };
@@ -1137,7 +1138,7 @@ impl russh_sftp::server::Handler for SftpSession {
                 let file_name = if command == "check-file-name" {
                     request.file_name
                 } else {
-                    match self.handles.get(&request.file_name) {
+                    match self.handles.get(request.file_name.as_str()) {
                         Some(ServerHandle::File(handle)) => {
                             handle.path.to_string_lossy().to_string()
                         }
@@ -1704,7 +1705,7 @@ impl russh_sftp::server::Handler for SftpSession {
                     return Err(StatusCode::PermissionDenied);
                 }
 
-                let handle = match self.handles.get_mut(&request.handle) {
+                let handle = match self.handles.get_mut(request.handle.as_str()) {
                     Some(ServerHandle::File(handle)) => handle,
                     _ => return Err(StatusCode::NoSuchFile),
                 };
@@ -1745,7 +1746,7 @@ impl russh_sftp::server::Handler for SftpSession {
                     return Err(StatusCode::PermissionDenied);
                 }
 
-                let handle = match self.handles.get_mut(&request.handle) {
+                let handle = match self.handles.get_mut(request.handle.as_str()) {
                     Some(ServerHandle::File(handle)) => handle,
                     _ => return Err(StatusCode::NoSuchFile),
                 };

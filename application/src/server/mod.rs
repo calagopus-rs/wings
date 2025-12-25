@@ -79,6 +79,7 @@ impl Server {
 
         let filesystem = filesystem::Filesystem::new(
             configuration.uuid,
+            app_state.clone(),
             configuration.build.disk_space * 1024 * 1024,
             rx.clone(),
             Arc::clone(&app_state.config),

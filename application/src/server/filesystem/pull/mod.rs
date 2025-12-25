@@ -201,7 +201,7 @@ impl Download {
                             progress.fetch_add(chunk.len() as u64, Ordering::Relaxed);
                         }
 
-                        writer.flush().await?;
+                        writer.shutdown().await?;
                         Ok(())
                     };
 

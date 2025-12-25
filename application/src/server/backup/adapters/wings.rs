@@ -800,7 +800,10 @@ impl BackupExt for WingsBackup {
 
                 Ok(BrowseBackup::Wings(BrowseWingsBackup {
                     server: server.clone(),
-                    archive: BrowseWingsBackupArchive::Zip(archive),
+                    archive: BrowseWingsBackupArchive::Zip {
+                        archive,
+                        mime_cache: Arc::new(crate::server::filesystem::mime::MimeCache::default()),
+                    },
                 }))
             }
             ArchiveFormat::SevenZip => {
@@ -815,7 +818,11 @@ impl BackupExt for WingsBackup {
 
                 Ok(BrowseBackup::Wings(BrowseWingsBackup {
                     server: server.clone(),
-                    archive: BrowseWingsBackupArchive::SevenZip(Arc::new(archive), reader),
+                    archive: BrowseWingsBackupArchive::SevenZip {
+                        archive: Arc::new(archive),
+                        mime_cache: Arc::new(crate::server::filesystem::mime::MimeCache::default()),
+                        reader,
+                    },
                 }))
             }
             _ => Err(anyhow::anyhow!(
@@ -841,8 +848,15 @@ impl BackupCleanExt for WingsBackup {
 
 #[derive(Clone)]
 pub enum BrowseWingsBackupArchive {
-    Zip(zip::ZipArchive<Arc<std::fs::File>>),
-    SevenZip(Arc<sevenz_rust2::Archive>, Arc<std::fs::File>),
+    Zip {
+        archive: zip::ZipArchive<Arc<std::fs::File>>,
+        mime_cache: Arc<crate::server::filesystem::mime::MimeCache<usize>>,
+    },
+    SevenZip {
+        archive: Arc<sevenz_rust2::Archive>,
+        mime_cache: Arc<crate::server::filesystem::mime::MimeCache<usize>>,
+        reader: Arc<std::fs::File>,
+    },
 }
 
 pub struct BrowseWingsBackup {
@@ -853,6 +867,8 @@ pub struct BrowseWingsBackup {
 impl BrowseWingsBackup {
     fn zip_entry_to_directory_entry(
         path: &Path,
+        entry_index: usize,
+        mime_cache: &crate::server::filesystem::mime::MimeCache<usize>,
         sizes: &[(u64, PathBuf)],
         mut entry: zip::read::ZipFile<impl Read + Seek>,
     ) -> DirectoryEntry {
@@ -866,29 +882,38 @@ impl BrowseWingsBackup {
             entry.size()
         };
 
-        let mut buffer = [0; 64];
-        let buffer = if entry.read(&mut buffer).is_err() {
-            None
-        } else {
-            Some(&buffer)
-        };
-
-        let mime = if entry.is_dir() {
+        let mime_type = if entry.is_dir() {
             "inode/directory"
         } else if entry.is_symlink() {
             "inode/symlink"
-        } else if let Some(buffer) = buffer {
-            if let Some(mime) = infer::get(buffer) {
-                mime.mime_type()
-            } else if let Some(mime) = new_mime_guess::from_path(entry.name()).iter_raw().next() {
-                mime
-            } else if crate::utils::is_valid_utf8_slice(buffer) || buffer.is_empty() {
-                "text/plain"
+        } else if let Some(mime_type) = mime_cache.sync_get_mime(&entry_index) {
+            mime_type
+        } else {
+            let mut buffer = [0; 64];
+            let buffer = if entry.read(&mut buffer).is_err() {
+                None
+            } else {
+                Some(&buffer)
+            };
+
+            let mime_type = if let Some(buffer) = buffer {
+                if let Some(mime) = infer::get(buffer) {
+                    mime.mime_type()
+                } else if let Some(mime) = new_mime_guess::from_path(entry.name()).iter_raw().next()
+                {
+                    mime
+                } else if crate::utils::is_valid_utf8_slice(buffer) || buffer.is_empty() {
+                    "text/plain"
+                } else {
+                    "application/octet-stream"
+                }
             } else {
                 "application/octet-stream"
-            }
-        } else {
-            "application/octet-stream"
+            };
+
+            mime_cache.sync_insert_mime(entry_index, mime_type);
+
+            mime_type
         };
 
         let mode = entry
@@ -911,12 +936,14 @@ impl BrowseWingsBackup {
             directory: entry.is_dir(),
             file: entry.is_file(),
             symlink: entry.is_symlink(),
-            mime,
+            mime: mime_type,
         }
     }
 
     fn seven_zip_entry_to_directory_entry(
         path: &Path,
+        entry_index: usize,
+        mime_cache: &crate::server::filesystem::mime::MimeCache<usize>,
         sizes: &[(u64, PathBuf)],
         entry: &sevenz_rust2::ArchiveEntry,
         reader: &mut dyn Read,
@@ -931,27 +958,36 @@ impl BrowseWingsBackup {
             entry.size()
         };
 
-        let mut buffer = [0; 64];
-        let buffer = if reader.read(&mut buffer).is_err() {
-            None
-        } else {
-            Some(&buffer)
-        };
-
-        let mime = if entry.is_directory() {
+        let mime_type = if entry.is_directory() {
             "inode/directory"
-        } else if let Some(buffer) = buffer {
-            if let Some(mime) = infer::get(buffer) {
-                mime.mime_type()
-            } else if let Some(mime) = new_mime_guess::from_path(entry.name()).iter_raw().next() {
-                mime
-            } else if crate::utils::is_valid_utf8_slice(buffer) || buffer.is_empty() {
-                "text/plain"
+        } else if let Some(mime_type) = mime_cache.sync_get_mime(&entry_index) {
+            mime_type
+        } else {
+            let mut buffer = [0; 64];
+            let buffer = if reader.read(&mut buffer).is_err() {
+                None
+            } else {
+                Some(&buffer)
+            };
+
+            let mime_type = if let Some(buffer) = buffer {
+                if let Some(mime) = infer::get(buffer) {
+                    mime.mime_type()
+                } else if let Some(mime) = new_mime_guess::from_path(entry.name()).iter_raw().next()
+                {
+                    mime
+                } else if crate::utils::is_valid_utf8_slice(buffer) || buffer.is_empty() {
+                    "text/plain"
+                } else {
+                    "application/octet-stream"
+                }
             } else {
                 "application/octet-stream"
-            }
-        } else {
-            "application/octet-stream"
+            };
+
+            mime_cache.sync_insert_mime(entry_index, mime_type);
+
+            mime_type
         };
 
         let mode = if entry.is_directory() { 0o755 } else { 0o644 };
@@ -978,7 +1014,7 @@ impl BrowseWingsBackup {
             directory: entry.is_directory(),
             file: !entry.is_directory(),
             symlink: false,
-            mime,
+            mime: mime_type,
         }
     }
 }
@@ -997,7 +1033,10 @@ impl BackupBrowseExt for BrowseWingsBackup {
         let entries = tokio::task::spawn_blocking(
             move || -> Result<(usize, Vec<DirectoryEntry>), anyhow::Error> {
                 match archive {
-                    BrowseWingsBackupArchive::Zip(mut archive) => {
+                    BrowseWingsBackupArchive::Zip {
+                        mut archive,
+                        mime_cache,
+                    } => {
                         let names = archive
                             .file_names()
                             .map(|name| name.to_string())
@@ -1055,13 +1094,13 @@ impl BackupBrowseExt for BrowseWingsBackup {
                         if let Some(per_page) = per_page {
                             let start = (page - 1) * per_page;
 
-                            for entry in directory_entries
+                            for (entry_index, _) in directory_entries
                                 .into_iter()
                                 .chain(other_entries.into_iter())
                                 .skip(start)
                                 .take(per_page)
                             {
-                                let entry = archive.by_index(entry.0)?;
+                                let entry = archive.by_index(entry_index)?;
                                 let entry_path = match entry.enclosed_name() {
                                     Some(name) => name,
                                     None => continue,
@@ -1069,16 +1108,18 @@ impl BackupBrowseExt for BrowseWingsBackup {
 
                                 entries.push(Self::zip_entry_to_directory_entry(
                                     &entry_path,
+                                    entry_index,
+                                    &mime_cache,
                                     &sizes,
                                     entry,
                                 ));
                             }
                         } else {
-                            for entry in directory_entries
+                            for (entry_index, _) in directory_entries
                                 .into_iter()
                                 .chain(other_entries.into_iter())
                             {
-                                let entry = archive.by_index(entry.0)?;
+                                let entry = archive.by_index(entry_index)?;
                                 let entry_path = match entry.enclosed_name() {
                                     Some(name) => name,
                                     None => continue,
@@ -1086,6 +1127,8 @@ impl BackupBrowseExt for BrowseWingsBackup {
 
                                 entries.push(Self::zip_entry_to_directory_entry(
                                     &entry_path,
+                                    entry_index,
+                                    &mime_cache,
                                     &sizes,
                                     entry,
                                 ));
@@ -1094,7 +1137,11 @@ impl BackupBrowseExt for BrowseWingsBackup {
 
                         Ok((total_entries, entries))
                     }
-                    BrowseWingsBackupArchive::SevenZip(archive, mut archive_reader) => {
+                    BrowseWingsBackupArchive::SevenZip {
+                        archive,
+                        mime_cache,
+                        mut reader,
+                    } => {
                         let sizes = archive
                             .files
                             .iter()
@@ -1137,16 +1184,16 @@ impl BackupBrowseExt for BrowseWingsBackup {
                         if let Some(per_page) = per_page {
                             let start = (page - 1) * per_page;
 
-                            for entry in directory_entries
+                            for (entry_index, _) in directory_entries
                                 .into_iter()
                                 .chain(other_entries.into_iter())
                                 .skip(start)
                                 .take(per_page)
                             {
-                                let archive_entry = &archive.files[entry.0];
+                                let archive_entry = &archive.files[entry_index];
                                 let entry_path = Path::new(archive_entry.name());
 
-                                match archive.stream_map.file_block_index[entry.0] {
+                                match archive.stream_map.file_block_index[entry_index] {
                                     Some(block_index) => {
                                         let password = sevenz_rust2::Password::empty();
                                         let folder = sevenz_rust2::BlockDecoder::new(
@@ -1154,7 +1201,7 @@ impl BackupBrowseExt for BrowseWingsBackup {
                                             block_index,
                                             &archive,
                                             &password,
-                                            &mut archive_reader,
+                                            &mut reader,
                                         );
 
                                         folder.for_each_entries(&mut |entry, reader| {
@@ -1167,6 +1214,8 @@ impl BackupBrowseExt for BrowseWingsBackup {
 
                                             entries.push(Self::seven_zip_entry_to_directory_entry(
                                                 entry_path,
+                                                entry_index,
+                                                &mime_cache,
                                                 &sizes,
                                                 archive_entry,
                                                 reader,
@@ -1177,6 +1226,8 @@ impl BackupBrowseExt for BrowseWingsBackup {
                                     }
                                     None => entries.push(Self::seven_zip_entry_to_directory_entry(
                                         entry_path,
+                                        entry_index,
+                                        &mime_cache,
                                         &sizes,
                                         archive_entry,
                                         &mut std::io::empty(),
@@ -1184,14 +1235,14 @@ impl BackupBrowseExt for BrowseWingsBackup {
                                 };
                             }
                         } else {
-                            for entry in directory_entries
+                            for (entry_index, _) in directory_entries
                                 .into_iter()
                                 .chain(other_entries.into_iter())
                             {
-                                let archive_entry = &archive.files[entry.0];
+                                let archive_entry = &archive.files[entry_index];
                                 let entry_path = Path::new(archive_entry.name());
 
-                                match archive.stream_map.file_block_index[entry.0] {
+                                match archive.stream_map.file_block_index[entry_index] {
                                     Some(block_index) => {
                                         let password = sevenz_rust2::Password::empty();
                                         let folder = sevenz_rust2::BlockDecoder::new(
@@ -1199,7 +1250,7 @@ impl BackupBrowseExt for BrowseWingsBackup {
                                             block_index,
                                             &archive,
                                             &password,
-                                            &mut archive_reader,
+                                            &mut reader,
                                         );
 
                                         folder.for_each_entries(&mut |entry, reader| {
@@ -1212,6 +1263,8 @@ impl BackupBrowseExt for BrowseWingsBackup {
 
                                             entries.push(Self::seven_zip_entry_to_directory_entry(
                                                 entry_path,
+                                                entry_index,
+                                                &mime_cache,
                                                 &sizes,
                                                 archive_entry,
                                                 reader,
@@ -1222,6 +1275,8 @@ impl BackupBrowseExt for BrowseWingsBackup {
                                     }
                                     None => entries.push(Self::seven_zip_entry_to_directory_entry(
                                         entry_path,
+                                        entry_index,
+                                        &mime_cache,
                                         &sizes,
                                         archive_entry,
                                         &mut std::io::empty(),
@@ -1248,7 +1303,7 @@ impl BackupBrowseExt for BrowseWingsBackup {
         let archive = self.archive.clone();
 
         match archive {
-            BrowseWingsBackupArchive::Zip(mut archive) => {
+            BrowseWingsBackupArchive::Zip { mut archive, .. } => {
                 let size = archive.by_name(&path.to_string_lossy())?.size();
                 let (reader, mut writer) = tokio::io::duplex(crate::BUFFER_SIZE);
 
@@ -1278,7 +1333,11 @@ impl BackupBrowseExt for BrowseWingsBackup {
 
                 Ok((headers, Box::new(reader)))
             }
-            BrowseWingsBackupArchive::SevenZip(archive, mut archive_reader) => {
+            BrowseWingsBackupArchive::SevenZip {
+                archive,
+                mut reader,
+                ..
+            } => {
                 let (entry_index, size) = match archive
                     .files
                     .iter()
@@ -1288,7 +1347,7 @@ impl BackupBrowseExt for BrowseWingsBackup {
                     Some((i, entry)) => (i, entry.size),
                     None => return Err(anyhow::anyhow!("7z archive entry not found")),
                 };
-                let (reader, mut writer) = tokio::io::duplex(crate::BUFFER_SIZE);
+                let (file_reader, mut file_writer) = tokio::io::duplex(crate::BUFFER_SIZE);
 
                 tokio::task::spawn_blocking(move || {
                     let runtime = tokio::runtime::Handle::current();
@@ -1300,7 +1359,7 @@ impl BackupBrowseExt for BrowseWingsBackup {
                             block_index,
                             &archive,
                             &password,
-                            &mut archive_reader,
+                            &mut reader,
                         );
 
                         folder
@@ -1318,7 +1377,7 @@ impl BackupBrowseExt for BrowseWingsBackup {
                                         Ok(0) => break,
                                         Ok(n) => {
                                             if runtime
-                                                .block_on(writer.write_all(&buffer[..n]))
+                                                .block_on(file_writer.write_all(&buffer[..n]))
                                                 .is_err()
                                             {
                                                 break;
@@ -1343,7 +1402,7 @@ impl BackupBrowseExt for BrowseWingsBackup {
                 let mut headers = HeaderMap::new();
                 headers.insert("Content-Length", size.into());
 
-                Ok((headers, Box::new(reader)))
+                Ok((headers, Box::new(file_reader)))
             }
         }
     }
@@ -1365,7 +1424,7 @@ impl BackupBrowseExt for BrowseWingsBackup {
             .compression_level;
 
         match archive {
-            BrowseWingsBackupArchive::Zip(mut archive) => match archive_format {
+            BrowseWingsBackupArchive::Zip { mut archive, .. } => match archive_format {
                 StreamableArchiveFormat::Zip => {
                     tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
                         let writer = tokio_util::io::SyncIoBridge::new(writer);
@@ -1459,8 +1518,11 @@ impl BackupBrowseExt for BrowseWingsBackup {
                     });
                 }
             },
-            BrowseWingsBackupArchive::SevenZip(archive, mut archive_reader) => match archive_format
-            {
+            BrowseWingsBackupArchive::SevenZip {
+                archive,
+                mut reader,
+                ..
+            } => match archive_format {
                 StreamableArchiveFormat::Zip => {
                     tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
                         let writer = tokio_util::io::SyncIoBridge::new(writer);
@@ -1513,7 +1575,7 @@ impl BackupBrowseExt for BrowseWingsBackup {
                                         block_index,
                                         &archive,
                                         &password,
-                                        &mut archive_reader,
+                                        &mut reader,
                                     );
 
                                     folder
@@ -1587,7 +1649,7 @@ impl BackupBrowseExt for BrowseWingsBackup {
                                         block_index,
                                         &archive,
                                         &password,
-                                        &mut archive_reader,
+                                        &mut reader,
                                     );
 
                                     folder
@@ -1634,7 +1696,7 @@ impl BackupBrowseExt for BrowseWingsBackup {
             .compression_level;
 
         match archive {
-            BrowseWingsBackupArchive::Zip(mut archive) => {
+            BrowseWingsBackupArchive::Zip { mut archive, .. } => {
                 match archive_format {
                     StreamableArchiveFormat::Zip => {
                         tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
@@ -1738,8 +1800,11 @@ impl BackupBrowseExt for BrowseWingsBackup {
                     }
                 }
             }
-            BrowseWingsBackupArchive::SevenZip(archive, mut archive_reader) => match archive_format
-            {
+            BrowseWingsBackupArchive::SevenZip {
+                archive,
+                mut reader,
+                ..
+            } => match archive_format {
                 StreamableArchiveFormat::Zip => {
                     tokio::task::spawn_blocking(move || -> Result<(), anyhow::Error> {
                         let writer = tokio_util::io::SyncIoBridge::new(writer);
@@ -1796,7 +1861,7 @@ impl BackupBrowseExt for BrowseWingsBackup {
                                         block_index,
                                         &archive,
                                         &password,
-                                        &mut archive_reader,
+                                        &mut reader,
                                     );
 
                                     folder
@@ -1874,7 +1939,7 @@ impl BackupBrowseExt for BrowseWingsBackup {
                                         block_index,
                                         &archive,
                                         &password,
-                                        &mut archive_reader,
+                                        &mut reader,
                                     );
 
                                     folder

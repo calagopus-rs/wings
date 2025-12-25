@@ -3,7 +3,6 @@ use russh::{
     Channel, ChannelId, MethodSet,
     server::{Auth, Msg, Session},
 };
-use russh_sftp::protocol::StatusCode;
 use std::{
     collections::{HashMap, HashSet},
     net::IpAddr,
@@ -11,20 +10,15 @@ use std::{
 };
 
 fn validate_username(username: &str) -> bool {
-    let splits = username.split('.').collect::<Vec<_>>();
-    if splits.len() < 2 {
-        return false;
+    let mut last = "";
+    let mut segments = 0;
+
+    for segment in username.split('.') {
+        last = segment;
+        segments += 1;
     }
 
-    let server = match splits.last() {
-        Some(server) => server,
-        None => return false,
-    };
-    if server.len() != 8 || !server.chars().all(|c| c.is_ascii_hexdigit()) {
-        return false;
-    }
-
-    true
+    segments >= 2 && last.len() == 8 && last.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 pub struct SshSession {
@@ -49,13 +43,13 @@ impl SshSession {
         methods
     }
 
-    pub async fn get_channel(&mut self, channel_id: ChannelId) -> Option<Channel<Msg>> {
+    pub fn get_channel(&mut self, channel_id: ChannelId) -> Option<Channel<Msg>> {
         self.clients.remove(&channel_id)
     }
 }
 
 impl russh::server::Handler for SshSession {
-    type Error = Box<dyn std::error::Error + Send + Sync>;
+    type Error = russh::Error;
 
     async fn auth_none(&mut self, _user: &str) -> Result<Auth, Self::Error> {
         Ok(Auth::Reject {
@@ -236,22 +230,22 @@ impl russh::server::Handler for SshSession {
         tracing::debug!("channel shell request: {}", channel_id);
 
         if !self.state.config.system.sftp.shell.enabled {
-            return Err(Box::new(StatusCode::PermissionDenied));
+            return Err(russh::Error::RequestDenied);
         }
 
         let user_uuid = match self.user_uuid {
             Some(uuid) => uuid,
-            None => return Err(Box::new(StatusCode::PermissionDenied)),
+            None => return Err(russh::Error::RequestDenied),
         };
 
         let server = match &self.server {
             Some(server) => server.clone(),
-            None => return Err(Box::new(StatusCode::PermissionDenied)),
+            None => return Err(russh::Error::UnsupportedAuthMethod),
         };
 
-        let channel = match self.get_channel(channel_id).await {
+        let channel = match self.get_channel(channel_id) {
             Some(channel) => channel,
-            None => return Err(Box::new(StatusCode::PermissionDenied)),
+            None => return Err(russh::Error::WrongChannel),
         };
 
         self.shell_clients.insert(channel_id);
@@ -280,17 +274,17 @@ impl russh::server::Handler for SshSession {
 
         let user_uuid = match self.user_uuid {
             Some(uuid) => uuid,
-            None => return Err(Box::new(StatusCode::PermissionDenied)),
+            None => return Err(russh::Error::RequestDenied),
         };
 
         let server = match &self.server {
             Some(server) => server.clone(),
-            None => return Err(Box::new(StatusCode::PermissionDenied)),
+            None => return Err(russh::Error::UnsupportedAuthMethod),
         };
 
-        let channel = match self.get_channel(channel_id).await {
+        let channel = match self.get_channel(channel_id) {
             Some(channel) => channel,
-            None => return Err(Box::new(StatusCode::PermissionDenied)),
+            None => return Err(russh::Error::WrongChannel),
         };
 
         tracing::debug!("recieved command from exec: {}", command);
@@ -315,7 +309,7 @@ impl russh::server::Handler for SshSession {
         _session: &mut Session,
     ) -> Result<(), Self::Error> {
         if data == [3] && self.shell_clients.contains(&channel_id) {
-            return Err(Box::new(russh::Error::Disconnect));
+            return Err(russh::Error::Disconnect);
         }
 
         Ok(())
@@ -329,18 +323,18 @@ impl russh::server::Handler for SshSession {
     ) -> Result<(), Self::Error> {
         let user_uuid = match self.user_uuid {
             Some(uuid) => uuid,
-            None => return Err(Box::new(StatusCode::PermissionDenied)),
+            None => return Err(russh::Error::RequestDenied),
         };
 
         let server = match &self.server {
             Some(server) => server.clone(),
-            None => return Err(Box::new(StatusCode::PermissionDenied)),
+            None => return Err(russh::Error::UnsupportedAuthMethod),
         };
 
         if name == "sftp" {
-            let channel = match self.get_channel(channel_id).await {
+            let channel = match self.get_channel(channel_id) {
                 Some(channel) => channel,
-                None => return Err(Box::new(StatusCode::PermissionDenied)),
+                None => return Err(russh::Error::WrongChannel),
             };
             let sftp = super::sftp::SftpSession {
                 state: Arc::clone(&self.state),

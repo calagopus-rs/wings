@@ -104,6 +104,8 @@ mod post {
         include: Vec<compact_str::CompactString>,
         #[serde(default)]
         exclude: Vec<compact_str::CompactString>,
+        #[serde(default)]
+        case_insensitive: bool,
     }
 
     #[derive(ToSchema, Deserialize)]
@@ -334,6 +336,9 @@ mod post {
                 let mut ignore_builder = GitignoreBuilder::new("/");
 
                 if let Some(path_filter) = &data.path_filter {
+                    override_builder.case_insensitive(path_filter.case_insensitive)?;
+                    ignore_builder.case_insensitive(path_filter.case_insensitive)?;
+
                     for glob in &path_filter.include {
                         override_builder.add(glob).ok();
                     }

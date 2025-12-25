@@ -3,19 +3,19 @@ use std::path::Path;
 
 #[derive(Default, Clone, Copy)]
 pub struct UsedSpace {
-    data: [u32; 3],
+    real: u64,
+    apparent: u64,
 }
 
 impl UsedSpace {
     #[inline]
     pub fn get_real(&self) -> u64 {
-        ((self.data[0] as u64) | ((self.data[1] as u64) << 32)) & 0xFFFF_FFFF_FFFF
+        self.real
     }
 
+    #[inline]
     pub fn set_real(&mut self, val: u64) {
-        assert!(val <= 0xFFFF_FFFF_FFFF);
-        self.data[0] = val as u32;
-        self.data[1] = ((val >> 32) & 0xFFFF) as u32;
+        self.real = val;
     }
 
     #[inline]
@@ -27,18 +27,17 @@ impl UsedSpace {
     #[inline]
     pub fn add_real(&mut self, val: u64) {
         let real = self.get_real();
-        self.set_real(real.saturating_add(val).min(0xFFFF_FFFF_FFFF));
+        self.set_real(real.saturating_add(val));
     }
 
     #[inline]
     pub fn get_apparent(&self) -> u64 {
-        (((self.data[1] >> 16) as u64) | ((self.data[2] as u64) << 16)) & 0xFFFF_FFFF_FFFF
+        self.apparent
     }
 
+    #[inline]
     pub fn set_apparent(&mut self, val: u64) {
-        assert!(val <= 0xFFFF_FFFF_FFFF);
-        self.data[1] = (self.data[1] & 0xFFFF) | ((val & 0xFFFF) << 16) as u32;
-        self.data[2] = (val >> 16) as u32;
+        self.apparent = val;
     }
 
     #[inline]
@@ -50,7 +49,7 @@ impl UsedSpace {
     #[inline]
     pub fn add_apparent(&mut self, val: u64) {
         let real = self.get_apparent();
-        self.set_apparent(real.saturating_add(val).min(0xFFFF_FFFF_FFFF));
+        self.set_apparent(real.saturating_add(val));
     }
 }
 
@@ -83,7 +82,7 @@ impl From<(i64, i64)> for SpaceDelta {
 #[derive(Default)]
 pub struct DiskUsage {
     pub space: UsedSpace,
-    entries: Vec<(compact_str::CompactString, DiskUsage)>,
+    entries: thin_vec::ThinVec<(compact_str::CompactString, DiskUsage)>,
 }
 
 impl DiskUsage {
@@ -112,6 +111,11 @@ impl DiskUsage {
         } else {
             None
         }
+    }
+
+    #[inline]
+    pub fn get_entries(&self) -> &[(compact_str::CompactString, DiskUsage)] {
+        &self.entries
     }
 
     pub fn get_size(&self, path: &Path) -> Option<UsedSpace> {
@@ -157,11 +161,11 @@ impl DiskUsage {
         }
     }
 
-    pub fn update_size_slice(&mut self, path: &[impl AsRef<str>], delta: SpaceDelta) {
-        if crate::unlikely(path.is_empty()) {
-            return;
-        }
-
+    pub fn update_size_iterator(
+        &mut self,
+        path: impl IntoIterator<Item = impl AsRef<str>>,
+        delta: SpaceDelta,
+    ) {
         let mut current = self;
         for component in path {
             let entry = current.upsert_entry(component.as_ref());

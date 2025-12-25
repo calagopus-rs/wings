@@ -383,6 +383,7 @@ async fn main() {
         backup_manager: Arc::new(wings_rs::server::backup::manager::BackupManager::new(
             Arc::clone(&config),
         )),
+        mime_cache: Arc::new(wings_rs::server::filesystem::mime::MimeCache::default()),
     });
 
     state.server_manager.boot(&state, servers).await;

@@ -416,7 +416,7 @@ impl BackupExt for BtrfsBackup {
                                     );
 
                                     tokio::io::copy(&mut reader, &mut writer).await?;
-                                    writer.flush().await?;
+                                    writer.shutdown().await?;
                                 } else if metadata.is_dir() {
                                     server.filesystem.async_create_dir_all(&path).await?;
                                     server

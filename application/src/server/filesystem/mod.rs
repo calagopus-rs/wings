@@ -20,6 +20,7 @@ use tokio::{
 pub mod archive;
 pub mod cap;
 pub mod limiter;
+pub mod mime;
 pub mod operations;
 pub mod pull;
 pub mod usage;
@@ -58,6 +59,8 @@ pub fn encode_mode(mode: u32) -> compact_str::CompactString {
 
 pub struct Filesystem {
     uuid: uuid::Uuid,
+    app_state: crate::routes::State,
+
     disk_checker_rescan: Arc<tokio::sync::Notify>,
     disk_checker: tokio::task::JoinHandle<()>,
     config: Arc<crate::config::Config>,
@@ -78,6 +81,7 @@ pub struct Filesystem {
 impl Filesystem {
     pub fn new(
         uuid: uuid::Uuid,
+        app_state: crate::routes::State,
         disk_limit: u64,
         sender: tokio::sync::broadcast::Sender<crate::server::websocket::WebsocketMessage>,
         config: Arc<crate::config::Config>,
@@ -98,6 +102,7 @@ impl Filesystem {
 
         Self {
             uuid,
+            app_state,
             disk_checker_rescan: Arc::clone(&disk_checker_rescan),
             disk_checker: tokio::task::spawn({
                 let config = Arc::clone(&config);
@@ -607,7 +612,7 @@ impl Filesystem {
         self.disk_usage
             .write()
             .await
-            .update_size_slice(path, delta.into());
+            .update_size_iterator(path, delta.into());
 
         true
     }
@@ -715,7 +720,7 @@ impl Filesystem {
 
         self.disk_usage
             .blocking_write()
-            .update_size_slice(path, delta.into());
+            .update_size_iterator(path, delta.into());
 
         true
     }
@@ -898,7 +903,6 @@ impl Filesystem {
         }
     }
 
-    #[inline]
     pub async fn to_api_entry_buffer(
         &self,
         path: PathBuf,
@@ -985,6 +989,82 @@ impl Filesystem {
         }
     }
 
+    pub async fn to_api_entry_mime_type(
+        &self,
+        path: PathBuf,
+        metadata: &Metadata,
+        no_directory_size: bool,
+        mime_type: Option<&'static str>,
+        symlink_destination: Option<PathBuf>,
+        symlink_destination_metadata: Option<Metadata>,
+    ) -> crate::models::DirectoryEntry {
+        let real_metadata = symlink_destination_metadata.as_ref().unwrap_or(metadata);
+        let real_path = symlink_destination.as_ref().unwrap_or(&path);
+
+        let size = if real_metadata.is_dir() {
+            if !no_directory_size && !self.config.api.disable_directory_size {
+                self.disk_usage
+                    .read()
+                    .await
+                    .get_size(real_path)
+                    .map_or(0, |s| s.get_real())
+            } else {
+                0
+            }
+        } else {
+            real_metadata.len()
+        };
+
+        let mime_type = if real_metadata.is_dir() {
+            "inode/directory"
+        } else if real_metadata.is_symlink() {
+            "inode/symlink"
+        } else {
+            mime_type.unwrap_or("application/octet-stream")
+        };
+
+        crate::models::DirectoryEntry {
+            name: path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into(),
+            created: chrono::DateTime::from_timestamp(
+                metadata
+                    .created()
+                    .map(|t| {
+                        t.into_std()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                    })
+                    .unwrap_or_default()
+                    .as_secs() as i64,
+                0,
+            )
+            .unwrap_or_default(),
+            modified: chrono::DateTime::from_timestamp(
+                metadata
+                    .modified()
+                    .map(|t| {
+                        t.into_std()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                    })
+                    .unwrap_or_default()
+                    .as_secs() as i64,
+                0,
+            )
+            .unwrap_or_default(),
+            mode: encode_mode(metadata.permissions().mode()),
+            mode_bits: compact_str::format_compact!("{:o}", metadata.permissions().mode() & 0o777),
+            size,
+            directory: real_metadata.is_dir(),
+            file: real_metadata.is_file(),
+            symlink: metadata.is_symlink(),
+            mime: mime_type,
+        }
+    }
+
     pub async fn to_api_entry(
         &self,
         path: PathBuf,
@@ -1006,33 +1086,67 @@ impl Filesystem {
                 None
             };
 
-        let mut buffer = [0; 64];
-        let buffer = if metadata.is_file()
-            || (symlink_destination.is_some()
-                && symlink_destination_metadata
-                    .as_ref()
-                    .is_some_and(|m| m.is_file()))
+        let mime_type = if let Some(mime_type) = self
+            .app_state
+            .mime_cache
+            .get_mime(&(metadata.dev(), metadata.ino()))
+            .await
         {
-            match self
-                .async_open(symlink_destination.as_ref().unwrap_or(&path))
-                .await
-            {
-                Ok(mut file) => {
-                    let bytes_read = file.read(&mut buffer).await.unwrap_or(0);
-
-                    Some(&buffer[..bytes_read])
-                }
-                Err(_) => None,
-            }
+            mime_type
         } else {
-            None
+            let mut buffer = [0; 64];
+            let buffer = if metadata.is_file()
+                || (symlink_destination.is_some()
+                    && symlink_destination_metadata
+                        .as_ref()
+                        .is_some_and(|m| m.is_file()))
+            {
+                match self
+                    .async_open(symlink_destination.as_ref().unwrap_or(&path))
+                    .await
+                {
+                    Ok(mut file) => {
+                        let bytes_read = file.read(&mut buffer).await.unwrap_or(0);
+
+                        Some(&buffer[..bytes_read])
+                    }
+                    Err(_) => None,
+                }
+            } else {
+                None
+            };
+
+            let mime_type = if let Some(buffer) = buffer {
+                if let Some(mime) = infer::get(buffer) {
+                    mime.mime_type()
+                } else if let Some(mime) =
+                    new_mime_guess::from_path(symlink_destination.as_ref().unwrap_or(&path))
+                        .iter_raw()
+                        .next()
+                {
+                    mime
+                } else if crate::utils::is_valid_utf8_slice(buffer) || buffer.is_empty() {
+                    "text/plain"
+                } else {
+                    "application/octet-stream"
+                }
+            } else {
+                "application/octet-stream"
+            };
+
+            self.app_state
+                .mime_cache
+                .insert_mime((metadata.dev(), metadata.ino()), mime_type)
+                .await;
+
+            mime_type
         };
 
-        self.to_api_entry_buffer(
+        self.to_api_entry_mime_type(
             path,
             &metadata,
             false,
-            buffer,
+            Some(mime_type),
             symlink_destination,
             symlink_destination_metadata,
         )
@@ -1064,33 +1178,67 @@ impl Filesystem {
                 None
             };
 
-        let mut buffer = [0; 64];
-        let buffer = if metadata.is_file()
-            || (symlink_destination.is_some()
-                && symlink_destination_metadata
-                    .as_ref()
-                    .is_some_and(|m| m.is_file()))
+        let mime_type = if let Some(mime_type) = self
+            .app_state
+            .mime_cache
+            .get_mime(&(metadata.dev(), metadata.ino()))
+            .await
         {
-            match filesystem
-                .async_open(symlink_destination.as_ref().unwrap_or(&path))
-                .await
-            {
-                Ok(mut file) => {
-                    let bytes_read = file.read(&mut buffer).await.unwrap_or(0);
-
-                    Some(&buffer[..bytes_read])
-                }
-                Err(_) => None,
-            }
+            mime_type
         } else {
-            None
+            let mut buffer = [0; 64];
+            let buffer = if metadata.is_file()
+                || (symlink_destination.is_some()
+                    && symlink_destination_metadata
+                        .as_ref()
+                        .is_some_and(|m| m.is_file()))
+            {
+                match self
+                    .async_open(symlink_destination.as_ref().unwrap_or(&path))
+                    .await
+                {
+                    Ok(mut file) => {
+                        let bytes_read = file.read(&mut buffer).await.unwrap_or(0);
+
+                        Some(&buffer[..bytes_read])
+                    }
+                    Err(_) => None,
+                }
+            } else {
+                None
+            };
+
+            let mime_type = if let Some(buffer) = buffer {
+                if let Some(mime) = infer::get(buffer) {
+                    mime.mime_type()
+                } else if let Some(mime) =
+                    new_mime_guess::from_path(symlink_destination.as_ref().unwrap_or(&path))
+                        .iter_raw()
+                        .next()
+                {
+                    mime
+                } else if crate::utils::is_valid_utf8_slice(buffer) || buffer.is_empty() {
+                    "text/plain"
+                } else {
+                    "application/octet-stream"
+                }
+            } else {
+                "application/octet-stream"
+            };
+
+            self.app_state
+                .mime_cache
+                .insert_mime((metadata.dev(), metadata.ino()), mime_type)
+                .await;
+
+            mime_type
         };
 
-        self.to_api_entry_buffer(
+        self.to_api_entry_mime_type(
             path,
             &metadata,
             true,
-            buffer,
+            Some(mime_type),
             symlink_destination,
             symlink_destination_metadata,
         )
