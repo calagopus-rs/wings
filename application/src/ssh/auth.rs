@@ -1,8 +1,13 @@
-use crate::{remote::AuthenticationType, routes::State};
+use crate::{
+    remote::AuthenticationType,
+    routes::State,
+    server::activity::{Activity, ActivityEvent},
+};
 use russh::{
     Channel, ChannelId, MethodSet,
     server::{Auth, Msg, Session},
 };
+use serde_json::json;
 use std::{
     collections::{HashMap, HashSet},
     net::IpAddr,
@@ -22,10 +27,11 @@ fn validate_username(username: &str) -> bool {
 }
 
 pub struct SshSession {
+    pub ratelimiter: Arc<super::ratelimiter::SshRatelimiter>,
     pub state: State,
     pub server: Option<crate::server::Server>,
 
-    pub user_ip: Option<IpAddr>,
+    pub user_ip: IpAddr,
     pub user_uuid: Option<uuid::Uuid>,
 
     pub clients: HashMap<ChannelId, Channel<Msg>>,
@@ -60,10 +66,7 @@ impl russh::server::Handler for SshSession {
 
     async fn auth_password(&mut self, username: &str, password: &str) -> Result<Auth, Self::Error> {
         if self.state.config.system.sftp.disable_password_auth {
-            return Ok(Auth::Reject {
-                proceed_with_methods: Some(self.get_auth_methods()),
-                partial_success: false,
-            });
+            return Ok(Auth::UnsupportedMethod);
         }
 
         if !validate_username(username) {
@@ -72,6 +75,10 @@ impl russh::server::Handler for SshSession {
                 partial_success: false,
             });
         }
+
+        self.ratelimiter
+            .check_attempt(self.user_ip, AuthenticationType::Password)
+            .await?;
 
         let (user, server, permissions, ignored_files) = match self
             .state
@@ -93,6 +100,9 @@ impl russh::server::Handler for SshSession {
         };
 
         self.user_uuid = Some(user);
+        self.ratelimiter
+            .finish_attempt(&self.user_ip, AuthenticationType::Password)
+            .await;
 
         let server = match self
             .state
@@ -112,17 +122,30 @@ impl russh::server::Handler for SshSession {
             }
         };
 
-        tracing::debug!("user {} authenticated with password", username);
-
         if server.is_locked_state() {
             return Ok(Auth::reject());
         }
+
+        tracing::debug!(server = %server.uuid, %user, "user authenticated with password");
 
         server
             .user_permissions
             .set_permissions(user, permissions, &ignored_files)
             .await;
-
+        if self.state.config.system.sftp.activity.log_logins {
+            server
+                .activity
+                .log_activity(Activity {
+                    event: ActivityEvent::SftpLogin,
+                    user: Some(user),
+                    ip: Some(self.user_ip),
+                    metadata: Some(json!({
+                        "method": "password",
+                    })),
+                    timestamp: chrono::Utc::now(),
+                })
+                .await;
+        }
         self.server = Some(server);
 
         Ok(Auth::Accept)
@@ -139,6 +162,10 @@ impl russh::server::Handler for SshSession {
                 partial_success: false,
             });
         }
+
+        self.ratelimiter
+            .check_attempt(self.user_ip, AuthenticationType::PublicKey)
+            .await?;
 
         let (user, server, permissions, ignored_files) = match self
             .state
@@ -167,6 +194,9 @@ impl russh::server::Handler for SshSession {
         };
 
         self.user_uuid = Some(user);
+        self.ratelimiter
+            .finish_attempt(&self.user_ip, AuthenticationType::PublicKey)
+            .await;
 
         let server = match self
             .state
@@ -181,17 +211,30 @@ impl russh::server::Handler for SshSession {
             None => return Ok(Auth::reject()),
         };
 
-        tracing::debug!("user {} authenticated with public key", username);
-
         if server.is_locked_state() {
             return Ok(Auth::reject());
         }
+
+        tracing::debug!(server = %server.uuid, %user, "user authenticated with public key");
 
         server
             .user_permissions
             .set_permissions(user, permissions, &ignored_files)
             .await;
-
+        if self.state.config.system.sftp.activity.log_logins {
+            server
+                .activity
+                .log_activity(Activity {
+                    event: ActivityEvent::SftpLogin,
+                    user: Some(user),
+                    ip: Some(self.user_ip),
+                    metadata: Some(json!({
+                        "method": "public_key",
+                    })),
+                    timestamp: chrono::Utc::now(),
+                })
+                .await;
+        }
         self.server = Some(server);
 
         Ok(Auth::Accept)

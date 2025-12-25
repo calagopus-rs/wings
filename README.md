@@ -68,6 +68,15 @@ system:
     # how many entries to send on each readdir call (chunk size)
     directory_entry_send_amount: 500
 
+    limits:
+      # how many failed password authentication attempts within cooldown
+      authentication_password_attempts: 3
+      # how many failed public key authentication attempts within cooldown
+      authentication_pubkey_attempts: 20
+      # how long in seconds to cooldown after reaching max authentication attempts (if 0, no cooldown is applied)
+      # the cooldown is a sliding window, so if you make 3 failed attempts in 1 minute, you will have to wait 60 seconds from the last attempt
+      authentication_cooldown: 60
+
     shell:
       # whether to enable the wings remote shell (allows server management over ssh)
       enabled: true
@@ -75,6 +84,12 @@ system:
       cli:
         # what to call the internal cli for managing server actions (e.g. ".wings help")
         name: ".wings"
+
+    activity:
+      # whether to log successful sftp logins in server activity
+      log_logins: true
+      # whether to log file read actions in server activity
+      log_file_reads: true
 
   backups:
     # what compression level to use? best_speed, good_speed, good_compression, best_compression (higher compression = more CPU usage, better compression)

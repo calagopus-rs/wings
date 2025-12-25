@@ -138,6 +138,16 @@ fn system_sftp_directory_entry_send_amount() -> usize {
     500
 }
 
+fn system_sftp_limits_authentication_password_attempts() -> usize {
+    3
+}
+fn system_sftp_limits_authentication_pubkey_attempts() -> usize {
+    20
+}
+fn system_sftp_limits_authentication_cooldown() -> u64 {
+    60
+}
+
 fn system_sftp_shell_enabled() -> bool {
     true
 }
@@ -463,6 +473,17 @@ nestify::nest! {
 
                 #[serde(default)]
                 #[schema(inline)]
+                pub limits: #[derive(ToSchema, Deserialize, Serialize, DefaultFromSerde)] #[serde(default)] pub struct SystemSftpLimits {
+                    #[serde(default = "system_sftp_limits_authentication_password_attempts")]
+                    pub authentication_password_attempts: usize,
+                    #[serde(default = "system_sftp_limits_authentication_pubkey_attempts")]
+                    pub authentication_pubkey_attempts: usize,
+                    #[serde(default = "system_sftp_limits_authentication_cooldown")]
+                    pub authentication_cooldown: u64,
+                },
+
+                #[serde(default)]
+                #[schema(inline)]
                 pub shell: #[derive(ToSchema, Deserialize, Serialize, DefaultFromSerde)] #[serde(default)] pub struct SystemSftpShell {
                     #[serde(default = "system_sftp_shell_enabled")]
                     pub enabled: bool,
@@ -473,6 +494,15 @@ nestify::nest! {
                         #[serde(default = "system_sftp_shell_cli_name")]
                         pub name: String,
                     },
+                },
+
+                #[serde(default)]
+                #[schema(inline)]
+                pub activity: #[derive(ToSchema, Deserialize, Serialize, DefaultFromSerde)] #[serde(default)] pub struct SystemSftpActivity {
+                    #[serde(default)]
+                    pub log_logins: bool,
+                    #[serde(default)]
+                    pub log_file_reads: bool,
                 },
             },
 

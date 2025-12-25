@@ -8,7 +8,7 @@ use crate::{
 };
 use russh::{Channel, ChannelWriteHalf, server::Msg};
 use serde_json::json;
-use std::{net::IpAddr, pin::Pin, sync::Arc};
+use std::{pin::Pin, sync::Arc};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     sync::broadcast::error::RecvError,
@@ -24,7 +24,7 @@ pub struct ShellSession {
     pub state: State,
     pub server: crate::server::Server,
 
-    pub user_ip: Option<IpAddr>,
+    pub user_ip: std::net::IpAddr,
     pub user_uuid: uuid::Uuid,
     pub mode: ShellMode,
 }
@@ -101,7 +101,7 @@ impl ShellSession {
                                 .log_activity(Activity {
                                     event: ActivityEvent::PowerStart,
                                     user: Some(self.user_uuid),
-                                    ip: self.user_ip,
+                                    ip: Some(self.user_ip),
                                     metadata: None,
                                     timestamp: chrono::Utc::now(),
                                 })
@@ -152,7 +152,7 @@ impl ShellSession {
                                 .log_activity(Activity {
                                     event: ActivityEvent::PowerRestart,
                                     user: Some(self.user_uuid),
-                                    ip: self.user_ip,
+                                    ip: Some(self.user_ip),
                                     metadata: None,
                                     timestamp: chrono::Utc::now(),
                                 })
@@ -204,7 +204,7 @@ impl ShellSession {
                                 .log_activity(Activity {
                                     event: ActivityEvent::PowerStop,
                                     user: Some(self.user_uuid),
-                                    ip: self.user_ip,
+                                    ip: Some(self.user_ip),
                                     metadata: None,
                                     timestamp: chrono::Utc::now(),
                                 })
@@ -238,7 +238,7 @@ impl ShellSession {
                                 .log_activity(Activity {
                                     event: ActivityEvent::PowerKill,
                                     user: Some(self.user_uuid),
-                                    ip: self.user_ip,
+                                    ip: Some(self.user_ip),
                                     metadata: None,
                                     timestamp: chrono::Utc::now(),
                                 })
@@ -489,7 +489,7 @@ impl ShellSession {
                                             .log_activity(Activity {
                                                 event: ActivityEvent::ConsoleCommand,
                                                 user: Some(self.user_uuid),
-                                                ip: self.user_ip,
+                                                ip: Some(self.user_ip),
                                                 metadata: Some(json!({
                                                     "command": line,
                                                 })),

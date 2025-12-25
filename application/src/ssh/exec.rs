@@ -8,17 +8,14 @@ use crate::{
 };
 use russh::{Channel, server::Msg};
 use serde_json::json;
-use std::{
-    net::IpAddr,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 use tokio::io::AsyncWriteExt;
 
 pub struct ExecSession {
     pub state: State,
     pub server: crate::server::Server,
 
-    pub user_ip: Option<IpAddr>,
+    pub user_ip: std::net::IpAddr,
     pub user_uuid: uuid::Uuid,
 }
 
@@ -81,7 +78,7 @@ impl ExecSession {
                                 .log_activity(Activity {
                                     event: ActivityEvent::FileDecompress,
                                     user: Some(self.user_uuid),
-                                    ip: self.user_ip,
+                                    ip: Some(self.user_ip),
                                     metadata: Some(json!({
                                         "directory": destination.trim(),
                                         "file": path.trim(),
@@ -147,7 +144,7 @@ impl ExecSession {
                                 .log_activity(Activity {
                                     event: ActivityEvent::FileCompress,
                                     user: Some(self.user_uuid),
-                                    ip: self.user_ip,
+                                    ip: Some(self.user_ip),
                                     metadata: Some(json!({
                                         "files": paths.iter().map(|p| p.strip_prefix(base).unwrap_or(p).to_string_lossy().to_string()).collect::<Vec<_>>(),
                                         "directory": base.to_string_lossy(),
@@ -235,7 +232,7 @@ impl ExecSession {
                                 .log_activity(Activity {
                                     event: ActivityEvent::ConsoleCommand,
                                     user: Some(self.user_uuid),
-                                    ip: self.user_ip,
+                                    ip: Some(self.user_ip),
                                     metadata: Some(json!({
                                         "command": command,
                                     })),

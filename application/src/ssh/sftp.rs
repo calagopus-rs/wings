@@ -16,7 +16,6 @@ use sha1::Digest;
 use std::{
     collections::HashMap,
     io::SeekFrom,
-    net::IpAddr,
     os::unix::fs::FileExt,
     path::{Path, PathBuf},
     sync::Arc,
@@ -59,7 +58,7 @@ pub struct SftpSession {
     pub state: State,
     pub server: crate::server::Server,
 
-    pub user_ip: Option<IpAddr>,
+    pub user_ip: std::net::IpAddr,
     pub user_uuid: uuid::Uuid,
 
     pub handle_id: u64,
@@ -373,7 +372,7 @@ impl russh_sftp::server::Handler for SftpSession {
                 .log_activity(Activity {
                     event: ActivityEvent::SftpDelete,
                     user: Some(self.user_uuid),
-                    ip: self.user_ip,
+                    ip: Some(self.user_ip),
                     metadata: Some(json!({
                         "files": [self.server.filesystem.relative_path(&path)],
                     })),
@@ -428,7 +427,7 @@ impl russh_sftp::server::Handler for SftpSession {
                 .log_activity(Activity {
                     event: ActivityEvent::SftpDelete,
                     user: Some(self.user_uuid),
-                    ip: self.user_ip,
+                    ip: Some(self.user_ip),
                     metadata: Some(json!({
                         "files": [self.server.filesystem.relative_path(&path)],
                     })),
@@ -516,7 +515,7 @@ impl russh_sftp::server::Handler for SftpSession {
             .log_activity(Activity {
                 event: ActivityEvent::SftpCreateDirectory,
                 user: Some(self.user_uuid),
-                ip: self.user_ip,
+                ip: Some(self.user_ip),
                 metadata: Some(json!({
                     "files": [self.server.filesystem.relative_path(path)],
                 })),
@@ -581,7 +580,7 @@ impl russh_sftp::server::Handler for SftpSession {
         let activity = Activity {
             event: ActivityEvent::SftpRename,
             user: Some(self.user_uuid),
-            ip: self.user_ip,
+            ip: Some(self.user_ip),
             metadata: Some(json!({
                 "files": [
                     {
@@ -871,7 +870,7 @@ impl russh_sftp::server::Handler for SftpSession {
             .log_activity(Activity {
                 event: ActivityEvent::SftpCreate,
                 user: Some(self.user_uuid),
-                ip: self.user_ip,
+                ip: Some(self.user_ip),
                 metadata: Some(json!({
                     "files": [self.server.filesystem.relative_path(&linkpath)],
                 })),
@@ -949,6 +948,10 @@ impl russh_sftp::server::Handler for SftpSession {
             activity_event = Some(ActivityEvent::SftpCreate);
         } else if pflags.contains(OpenFlags::WRITE) || pflags.contains(OpenFlags::APPEND) {
             activity_event = Some(ActivityEvent::SftpWrite);
+        } else if pflags.contains(OpenFlags::READ)
+            && self.state.config.system.sftp.activity.log_file_reads
+        {
+            activity_event = Some(ActivityEvent::SftpRead);
         }
 
         let file = tokio::task::spawn_blocking({
@@ -992,7 +995,7 @@ impl russh_sftp::server::Handler for SftpSession {
                 .log_activity(Activity {
                     event,
                     user: Some(self.user_uuid),
-                    ip: self.user_ip,
+                    ip: Some(self.user_ip),
                     metadata: Some(json!({
                         "files": [self.server.filesystem.relative_path(&path)],
                     })),
@@ -1446,7 +1449,7 @@ impl russh_sftp::server::Handler for SftpSession {
                     .log_activity(Activity {
                         event: ActivityEvent::SftpCreate,
                         user: Some(self.user_uuid),
-                        ip: self.user_ip,
+                        ip: Some(self.user_ip),
                         metadata: Some(json!({
                             "files": [self.server.filesystem.relative_path(destination_path)],
                         })),
@@ -1671,7 +1674,7 @@ impl russh_sftp::server::Handler for SftpSession {
                     .log_activity(Activity {
                         event: ActivityEvent::SftpCreate,
                         user: Some(self.user_uuid),
-                        ip: self.user_ip,
+                        ip: Some(self.user_ip),
                         metadata: Some(json!({
                             "files": [self.server.filesystem.relative_path(&linkpath)],
                         })),

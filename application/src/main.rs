@@ -452,9 +452,7 @@ async fn main() {
             let state = Arc::clone(&state);
 
             async move {
-                let mut server = wings_rs::ssh::Server {
-                    state: Arc::clone(&state),
-                };
+                let mut server = wings_rs::ssh::Server::new(Arc::clone(&state));
 
                 let key_file = Path::new(&state.config.system.data_directory)
                     .join(".sftp")

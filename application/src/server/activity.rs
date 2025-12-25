@@ -21,8 +21,12 @@ pub enum ActivityEvent {
     #[serde(rename = "server:console.command")]
     ConsoleCommand,
 
+    #[serde(rename = "server:sftp.login")]
+    SftpLogin,
     #[serde(rename = "server:sftp.write")]
     SftpWrite,
+    #[serde(rename = "server:sftp.read")]
+    SftpRead,
     #[serde(rename = "server:sftp.create")]
     SftpCreate,
     #[serde(rename = "server:sftp.create-directory")]
@@ -58,6 +62,7 @@ impl ActivityEvent {
         matches!(
             self,
             ActivityEvent::SftpWrite
+                | ActivityEvent::SftpRead
                 | ActivityEvent::SftpCreate
                 | ActivityEvent::SftpCreateDirectory
                 | ActivityEvent::SftpRename
@@ -89,7 +94,8 @@ pub struct Activity {
 
 pub struct ActivityManager {
     activities: Arc<Mutex<VecDeque<Activity>>>,
-    schedule_handle: tokio::task::JoinHandle<()>,
+
+    task: tokio::task::JoinHandle<()>,
 }
 
 impl ActivityManager {
@@ -98,7 +104,7 @@ impl ActivityManager {
 
         Self {
             activities: Arc::clone(&activities),
-            schedule_handle: tokio::spawn({
+            task: tokio::spawn({
                 let config = Arc::clone(config);
 
                 async move {
@@ -282,12 +288,16 @@ impl ActivityManager {
 
     #[inline]
     pub async fn log_activity(&self, activity: Activity) {
-        self.activities.lock().await.push_back(activity);
+        let mut activities = self.activities.lock().await;
+        if activities.len() >= 5000 {
+            activities.pop_front();
+        }
+        activities.push_back(activity);
     }
 }
 
 impl Drop for ActivityManager {
     fn drop(&mut self) {
-        self.schedule_handle.abort();
+        self.task.abort();
     }
 }
