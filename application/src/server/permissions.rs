@@ -50,6 +50,8 @@ pub enum Permission {
     FileDelete,
     #[serde(rename = "file.archive", alias = "files.archive")]
     FileArchive,
+    #[serde(rename = "file.sftp", alias = "files.sftp")]
+    FileSftp,
 }
 
 impl Permission {
@@ -149,11 +151,6 @@ impl UserPermissionsMap {
                 std::time::Instant::now(),
             ),
         );
-    }
-
-    #[inline]
-    pub async fn is_contained(&self, user_id: uuid::Uuid) -> bool {
-        self.map.read().await.contains_key(&user_id)
     }
 }
 

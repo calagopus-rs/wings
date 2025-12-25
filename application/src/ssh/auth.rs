@@ -1,7 +1,10 @@
 use crate::{
     remote::AuthenticationType,
     routes::State,
-    server::activity::{Activity, ActivityEvent},
+    server::{
+        activity::{Activity, ActivityEvent},
+        permissions::Permission,
+    },
 };
 use russh::{
     Channel, ChannelId, MethodSet,
@@ -99,6 +102,10 @@ impl russh::server::Handler for SshSession {
             }
         };
 
+        if !permissions.has_permission(Permission::FileSftp) {
+            return Ok(Auth::reject());
+        }
+
         self.user_uuid = Some(user);
         self.ratelimiter
             .finish_attempt(&self.user_ip, AuthenticationType::Password)
@@ -192,6 +199,10 @@ impl russh::server::Handler for SshSession {
                 });
             }
         };
+
+        if !permissions.has_permission(Permission::FileSftp) {
+            return Ok(Auth::reject());
+        }
 
         self.user_uuid = Some(user);
         self.ratelimiter

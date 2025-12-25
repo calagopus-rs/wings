@@ -160,7 +160,7 @@ impl SftpSession {
             && self
                 .server
                 .user_permissions
-                .is_contained(self.user_uuid)
+                .has_permission(self.user_uuid, Permission::FileSftp)
                 .await
     }
 }
