@@ -1,12 +1,19 @@
 use super::permissions::Permissions;
-use axum::extract::ws::{Message, WebSocket};
+use axum::extract::ws::{CloseFrame, Message, WebSocket};
 use futures_util::{SinkExt, stream::SplitSink};
 use serde::{
     Deserialize, Deserializer, Serialize,
     de::{SeqAccess, Visitor},
     ser::SerializeSeq,
 };
-use std::{borrow::Cow, marker::PhantomData, sync::Arc};
+use std::{
+    borrow::Cow,
+    marker::PhantomData,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 use tokio::sync::{Mutex, RwLock};
 
 pub mod handler;
@@ -167,9 +174,21 @@ impl WebsocketMessage {
 pub struct ServerWebsocketHandler {
     sender: Arc<Mutex<SplitSink<WebSocket, Message>>>,
     socket_jwt: Arc<RwLock<Option<Arc<WebsocketJwtPayload>>>>,
+    closed: AtomicBool,
 }
 
 impl ServerWebsocketHandler {
+    fn new(
+        sender: Arc<Mutex<SplitSink<WebSocket, Message>>>,
+        socket_jwt: Arc<RwLock<Option<Arc<WebsocketJwtPayload>>>>,
+    ) -> Self {
+        Self {
+            sender,
+            socket_jwt,
+            closed: AtomicBool::new(false),
+        }
+    }
+
     async fn get_jwt(&self) -> Result<Arc<WebsocketJwtPayload>, anyhow::Error> {
         if let Some(socket_jwt) = &*self.socket_jwt.read().await {
             Ok(Arc::clone(socket_jwt))
@@ -178,7 +197,31 @@ impl ServerWebsocketHandler {
         }
     }
 
+    async fn close(&self, reason: &str) {
+        if self.closed.load(Ordering::SeqCst) {
+            return;
+        }
+        self.closed.store(true, Ordering::SeqCst);
+
+        if let Err(err) = self
+            .sender
+            .lock()
+            .await
+            .send(Message::Close(Some(CloseFrame {
+                code: axum::extract::ws::close_code::NORMAL,
+                reason: reason.into(),
+            })))
+            .await
+        {
+            tracing::error!("failed to close websocket: {:?}", err);
+        }
+    }
+
     async fn send_message(&self, message: WebsocketMessage) {
+        if self.closed.load(Ordering::SeqCst) {
+            return;
+        }
+
         let message = match serde_json::to_string(&message) {
             Ok(message) => message,
             Err(err) => {

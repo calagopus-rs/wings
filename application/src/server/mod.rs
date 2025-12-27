@@ -75,13 +75,13 @@ impl Server {
             "creating server instance"
         );
 
-        let (rx, tx) = tokio::sync::broadcast::channel(128);
+        let (tx, rx) = tokio::sync::broadcast::channel(128);
 
         let filesystem = filesystem::Filesystem::new(
             configuration.uuid,
             app_state.clone(),
             configuration.build.disk_space * 1024 * 1024,
-            rx.clone(),
+            tx.clone(),
             Arc::clone(&app_state.config),
             &configuration.egg.file_denylist,
         );
@@ -98,15 +98,15 @@ impl Server {
             configuration: RwLock::new(configuration),
             process_configuration: RwLock::new(process_configuration),
 
-            websocket: rx.clone(),
-            _websocket_receiver: tx,
+            websocket: tx.clone(),
+            _websocket_receiver: rx,
             websocket_sender: RwLock::new(None),
 
             container: RwLock::new(None),
             schedules: Arc::clone(&schedules),
             activity,
 
-            state: state::ServerStateLock::new(rx, schedules),
+            state: state::ServerStateLock::new(tx, schedules),
             outgoing_transfer: RwLock::new(None),
             incoming_transfer: RwLock::new(None),
             installer: RwLock::new(None),

@@ -11,6 +11,7 @@ use axum::{
 use utoipa_axum::router::OpenApiRouter;
 
 mod backups;
+mod deauthorize_user;
 pub mod servers;
 mod system;
 mod transfers;
@@ -71,6 +72,11 @@ pub fn router(state: &State) -> OpenApiRouter<State> {
         .nest(
             "/backups",
             backups::router(state)
+                .route_layer(axum::middleware::from_fn_with_state(state.clone(), auth)),
+        )
+        .nest(
+            "/deauthorize-user",
+            deauthorize_user::router(state)
                 .route_layer(axum::middleware::from_fn_with_state(state.clone(), auth)),
         )
         .route(

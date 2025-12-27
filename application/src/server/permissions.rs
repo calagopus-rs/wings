@@ -78,6 +78,9 @@ type UserPermissions = (
 );
 pub struct UserPermissionsMap {
     map: Arc<Mutex<HashMap<uuid::Uuid, UserPermissions>>>,
+    removal_sender: tokio::sync::broadcast::Sender<uuid::Uuid>,
+    _removal_receiver: tokio::sync::broadcast::Receiver<uuid::Uuid>,
+
     task: tokio::task::JoinHandle<()>,
 }
 
@@ -85,8 +88,12 @@ impl Default for UserPermissionsMap {
     fn default() -> Self {
         let map = Arc::new(Mutex::new(HashMap::new()));
 
+        let (tx, rx) = tokio::sync::broadcast::channel(32);
+
         Self {
             map: Arc::clone(&map),
+            removal_sender: tx,
+            _removal_receiver: rx,
             task: tokio::spawn(async move {
                 loop {
                     tokio::time::sleep(std::time::Duration::from_secs(60)).await;
@@ -102,6 +109,16 @@ impl Default for UserPermissionsMap {
 }
 
 impl UserPermissionsMap {
+    pub async fn wait_for_removal(&self, user_uuid: uuid::Uuid) {
+        let mut receiver = self.removal_sender.subscribe();
+
+        while let Ok(uuid) = receiver.recv().await {
+            if uuid == user_uuid {
+                break;
+            }
+        }
+    }
+
     pub async fn has_permission(&self, user_uuid: uuid::Uuid, permission: Permission) -> bool {
         let mut map = self.map.lock().await;
         if let Some((permissions, _, last_access)) = map.get_mut(&user_uuid) {
@@ -138,6 +155,12 @@ impl UserPermissionsMap {
         permissions: Permissions,
         ignored_files: &[impl AsRef<str>],
     ) {
+        if permissions.is_empty() {
+            self.map.lock().await.remove(&user_uuid);
+            self.removal_sender.send(user_uuid).ok();
+            return;
+        }
+
         let mut overrides = ignore::overrides::OverrideBuilder::new("/");
         for file in ignored_files {
             overrides.add(file.as_ref()).ok();

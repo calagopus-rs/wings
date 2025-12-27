@@ -44,29 +44,47 @@ pub async fn handle_ws(
         let sender = Arc::new(Mutex::new(sender));
         let socket_jwt = Arc::new(RwLock::new(None));
 
-        let websocket_handler = Arc::new(super::ServerWebsocketHandler {
-            sender: Arc::clone(&sender),
-            socket_jwt: Arc::clone(&socket_jwt)
-        });
+        let websocket_handler = Arc::new(super::ServerWebsocketHandler::new(
+            Arc::clone(&sender),
+            Arc::clone(&socket_jwt),
+        ));
 
         let writer = {
             let state = Arc::clone(&state);
+            let socket_jwt = Arc::clone(&socket_jwt);
             let websocket_handler = Arc::clone(&websocket_handler);
             let server = server.clone();
 
             async move {
                 loop {
-                    let ws_data = match reciever.next().await {
-                        Some(Ok(data)) => data,
-                        Some(Err(err)) => {
+                    let user_removal_fut: Pin<Box<dyn futures_util::Future<Output = ()> + Send>> = if let Some(jwt) = socket_jwt.read().await.as_ref() {
+                        Box::pin(server
+                            .user_permissions
+                            .wait_for_removal(jwt.user_uuid))
+                    } else {
+                        Box::pin(futures_util::future::pending())
+                    };
+                    let ws_data = tokio::select! {
+                        _ = user_removal_fut => {
                             tracing::debug!(
                                 server = %server.uuid,
-                                "error receiving websocket message: {}",
-                                err
+                                "closing websocket due to user permissions removal",
                             );
+                            websocket_handler.close("permission revoked").await;
                             break;
                         }
-                        None => break,
+                        data = reciever.next() => match data {
+                            Some(Ok(data)) => data,
+                            Some(Err(err)) => {
+                                tracing::debug!(
+                                    server = %server.uuid,
+                                    "error receiving websocket message: {}",
+                                    err
+                                );
+                                break;
+                            }
+                            None => break,
+                        }
                     };
 
                     if let Message::Close(_) = ws_data {
