@@ -471,6 +471,13 @@ impl Server {
             || self.transferring.load(Ordering::SeqCst)
     }
 
+    #[inline]
+    pub fn is_system_locked_state(&self) -> bool {
+        self.installing.load(Ordering::SeqCst)
+            || self.restoring.load(Ordering::SeqCst)
+            || self.transferring.load(Ordering::SeqCst)
+    }
+
     pub async fn setup_container(&self) -> Result<(), bollard::errors::Error> {
         self.crash_handled.store(false, Ordering::SeqCst);
 

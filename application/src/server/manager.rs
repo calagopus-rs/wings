@@ -10,11 +10,11 @@ use tokio::{
     sync::{RwLock, Semaphore},
 };
 
-pub struct Manager {
-    pub servers: Arc<RwLock<Vec<Server>>>,
+pub struct ServerManager {
+    servers: Arc<RwLock<Vec<Server>>>,
 }
 
-impl Manager {
+impl ServerManager {
     pub fn new(raw_servers: &[crate::remote::servers::RawServer]) -> Self {
         let servers = Vec::with_capacity(raw_servers.len());
 

@@ -49,7 +49,7 @@ mod post {
         server: GetServer,
         axum::Json(data): axum::Json<Payload>,
     ) -> ApiResponseResult {
-        if server.is_locked_state() {
+        if server.is_system_locked_state() {
             return ApiResponse::error("server is locked")
                 .with_status(StatusCode::CONFLICT)
                 .ok();
