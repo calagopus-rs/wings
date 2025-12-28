@@ -261,7 +261,7 @@ impl ServerManager {
 
                 async move {
                     let mut installer = Arc::new(
-                        super::installation::ServerInstaller::new(&server, true, None).await,
+                        super::installation::ServerInstaller::new(&server, false, None).await,
                     );
 
                     if let Err(err) = installer.start(false).await {
@@ -275,12 +275,19 @@ impl ServerManager {
                     server.installer.write().await.replace(installer);
                 }
             });
-        } else if server
-            .configuration
-            .read()
-            .await
-            .start_on_completion
-            .is_some_and(|s| s)
+        } else {
+            let installer = super::installation::ServerInstaller::new(&server, false, None).await;
+
+            installer.unset_installing(true).await.ok();
+        }
+
+        if !install_server
+            && server
+                .configuration
+                .read()
+                .await
+                .start_on_completion
+                .is_some_and(|s| s)
             && let Err(err) = server.start(None, false).await
         {
             tracing::error!(
