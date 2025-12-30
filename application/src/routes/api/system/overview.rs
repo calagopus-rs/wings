@@ -7,7 +7,6 @@ mod get {
         routes::GetState,
     };
     use serde::Serialize;
-    use std::sync::LazyLock;
     use sysinfo::System;
     use utoipa::ToSchema;
 
@@ -47,7 +46,7 @@ mod get {
         servers: ResponseServers,
 
         architecture: &'static str,
-        kernel_version: &'a str,
+        kernel_version: String,
     }
 
     #[utoipa::path(get, path = "/", responses(
@@ -56,13 +55,6 @@ mod get {
     pub async fn route(state: GetState) -> ApiResponseResult {
         let mut sys = System::new_all();
         sys.refresh_cpu_all();
-
-        static KERNEL_VERSION: LazyLock<String> = LazyLock::new(|| {
-            rustix::system::uname()
-                .release()
-                .to_string_lossy()
-                .to_string()
-        });
 
         let cpu = &sys.cpus()[0];
         let mut servers = ResponseServers {
@@ -97,7 +89,7 @@ mod get {
             },
             servers,
             architecture: std::env::consts::ARCH,
-            kernel_version: &KERNEL_VERSION,
+            kernel_version: sysinfo::System::kernel_long_version(),
         })
         .ok()
     }
