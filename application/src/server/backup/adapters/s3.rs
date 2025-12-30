@@ -49,7 +49,7 @@ async fn get_client(server: &crate::server::Server) -> Arc<reqwest::Client> {
                     .s3
                     .part_upload_timeout,
             ))
-            .danger_accept_invalid_certs(server.app_state.config.ignore_certificate_errors)
+            .tls_danger_accept_invalid_certs(server.app_state.config.ignore_certificate_errors)
             .build()
             .unwrap(),
     );

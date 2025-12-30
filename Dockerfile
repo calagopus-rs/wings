@@ -7,4 +7,6 @@ RUN apk add --no-cache ca-certificates coreutils curl btrfs-progs xfsprogs-extra
 ARG TARGETPLATFORM
 COPY .docker/${TARGETPLATFORM#linux/}/wings-rs /usr/bin/wings-rs
 
+ENV OCI_CONTAINER=official
+
 ENTRYPOINT ["/usr/bin/wings-rs"]

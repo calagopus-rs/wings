@@ -94,7 +94,7 @@ pub async fn configure(
         };
 
         let client = reqwest::Client::builder()
-            .danger_accept_invalid_certs(allow_insecure)
+            .tls_danger_accept_invalid_certs(allow_insecure)
             .build()?;
         let response = client
             .get(format!(

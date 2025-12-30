@@ -373,10 +373,15 @@ async fn main() {
         .unwrap();
 
     let state = Arc::new(wings_rs::routes::AppState {
-        config: Arc::clone(&config),
         start_time: Instant::now(),
+        container_type: match std::env::var("OCI_CONTAINER").as_deref() {
+            Ok("official") => wings_rs::routes::AppContainerType::Official,
+            Ok(_) => wings_rs::routes::AppContainerType::Unknown,
+            Err(_) => wings_rs::routes::AppContainerType::None,
+        },
         version: format!("{}:{}", wings_rs::VERSION, wings_rs::GIT_COMMIT),
 
+        config: Arc::clone(&config),
         docker: Arc::clone(&docker),
         stats_manager: Arc::new(wings_rs::stats::StatsManager::default()),
         server_manager: Arc::new(wings_rs::server::manager::ServerManager::new(&servers)),

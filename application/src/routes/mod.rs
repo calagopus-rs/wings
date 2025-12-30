@@ -8,11 +8,20 @@ pub mod api;
 mod download;
 mod upload;
 
+#[derive(Debug, ToSchema, Serialize, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+pub enum AppContainerType {
+    Official,
+    Unknown,
+    None,
+}
+
 pub struct AppState {
-    pub config: Arc<crate::config::Config>,
     pub start_time: Instant,
+    pub container_type: AppContainerType,
     pub version: String,
 
+    pub config: Arc<crate::config::Config>,
     pub docker: Arc<Docker>,
     pub stats_manager: Arc<crate::stats::StatsManager>,
     pub server_manager: Arc<crate::server::manager::ServerManager>,
