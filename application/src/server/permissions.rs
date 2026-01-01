@@ -184,6 +184,7 @@ impl Drop for UserPermissionsMap {
 }
 
 #[derive(Debug, Default, Clone, Serialize)]
+#[repr(transparent)]
 pub struct Permissions(HashSet<Permission>);
 
 impl Permissions {

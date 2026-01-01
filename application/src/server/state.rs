@@ -8,6 +8,7 @@ use utoipa::ToSchema;
 #[derive(ToSchema, Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 #[schema(rename_all = "lowercase")]
+#[repr(u8)]
 pub enum ServerState {
     #[default]
     Offline,
@@ -24,31 +25,6 @@ impl ServerState {
             ServerState::Starting => "starting",
             ServerState::Stopping => "stopping",
             ServerState::Running => "running",
-        }
-    }
-}
-
-impl From<u8> for ServerState {
-    #[inline]
-    fn from(value: u8) -> Self {
-        match value {
-            0 => ServerState::Offline,
-            1 => ServerState::Starting,
-            2 => ServerState::Stopping,
-            3 => ServerState::Running,
-            _ => ServerState::Offline,
-        }
-    }
-}
-
-impl From<ServerState> for u8 {
-    #[inline]
-    fn from(value: ServerState) -> Self {
-        match value {
-            ServerState::Offline => 0,
-            ServerState::Starting => 1,
-            ServerState::Stopping => 2,
-            ServerState::Running => 3,
         }
     }
 }
@@ -79,7 +55,7 @@ impl ServerStateLock {
             return;
         }
 
-        self.state.store(state.into(), Ordering::SeqCst);
+        self.state.store(state as u8, Ordering::SeqCst);
         self.schedule_manager
             .execute_server_state_trigger(state)
             .await;
@@ -94,7 +70,13 @@ impl ServerStateLock {
 
     #[inline]
     pub fn get_state(&self) -> ServerState {
-        ServerState::from(self.state.load(Ordering::SeqCst))
+        match self.state.load(Ordering::SeqCst) {
+            0 => ServerState::Offline,
+            1 => ServerState::Starting,
+            2 => ServerState::Stopping,
+            3 => ServerState::Running,
+            _ => ServerState::Offline,
+        }
     }
 
     /// Executes an action with the server state locked.

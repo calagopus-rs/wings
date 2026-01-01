@@ -11,7 +11,7 @@ use russh::{keys::ssh_key::rand_core::OsRng, server::Server};
 use std::{net::SocketAddr, path::Path, sync::Arc, time::Instant};
 use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityScheme};
 use utoipa_axum::router::OpenApiRouter;
-use wings_rs::routes::ApiError;
+use wings_rs::{response::ApiResponse, routes::GetState};
 
 #[cfg(target_os = "linux")]
 #[global_allocator]
@@ -310,7 +310,7 @@ async fn main() {
                 "{: >25} |_|  |___/",
                 format!("{} (git-{})", wings_rs::VERSION, wings_rs::GIT_COMMIT)
             );
-            tracing::info!("github.com/calagopus-rs/wings\n");
+            tracing::info!("github.com/calagopus/wings\n");
         }
         _ => {
             cli().print_help().unwrap();
@@ -395,11 +395,17 @@ async fn main() {
 
     let app = OpenApiRouter::new()
         .merge(wings_rs::routes::router(&state))
-        .fallback(|| async {
-            (
-                StatusCode::NOT_FOUND,
-                axum::Json(ApiError::new("route not found")),
-            )
+        .fallback(|state: GetState, req: Request| async move {
+            if let Some(redirect) = state.config.api.redirects.get(req.uri().path()) {
+                return ApiResponse::new(Body::empty())
+                    .with_status(StatusCode::FOUND)
+                    .with_header("Location", redirect)
+                    .ok();
+            }
+
+            ApiResponse::error("route not found")
+                .with_status(StatusCode::NOT_FOUND)
+                .ok()
         })
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),

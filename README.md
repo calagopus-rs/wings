@@ -19,6 +19,8 @@ wings version
 
 ```yml
 api:
+  # custom redirects for the api server, e.g. / -> https://yourpanel.com
+  redirects: {}
   # max amount of active file pulls per server
   server_remote_download_limit: 3
   # cidrs to block on the remote download pull endpoint
