@@ -336,6 +336,11 @@ pub async fn handle_message(
                 }
             }
         }
+        WebsocketEvent::Ping => {
+            websocket_handler
+                .send_message(WebsocketMessage::new(WebsocketEvent::Pong, message.args))
+                .await;
+        }
         _ => {
             tracing::debug!(
                 "received websocket message that will not be handled: {:?}",

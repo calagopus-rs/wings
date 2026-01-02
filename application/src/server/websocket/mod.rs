@@ -56,6 +56,11 @@ pub enum WebsocketEvent {
     #[serde(rename = "jwt error")]
     JwtError,
 
+    #[serde(rename = "ping")]
+    Ping,
+    #[serde(rename = "pong")]
+    Pong,
+
     #[serde(rename = "stats")]
     ServerStats,
     #[serde(rename = "status")]
