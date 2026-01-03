@@ -29,7 +29,18 @@ pub async fn handle_jwt(
 ) -> Result<Option<WebsocketMessage>, JwtError> {
     match message {
         Message::Text(text) => {
-            let message: WebsocketMessage = serde_json::from_str(&text)?;
+            let message: WebsocketMessage = match serde_json::from_str(&text) {
+                Ok(msg) => msg,
+                Err(err) => {
+                    tracing::debug!(
+                        server = %server.uuid,
+                        "failed to deserialize websocket message: {:?}",
+                        err
+                    );
+
+                    return Ok(None);
+                }
+            };
 
             match message.event {
                 WebsocketEvent::Authentication => {
