@@ -4,8 +4,8 @@ use std::str::FromStr;
 use utoipa::ToSchema;
 
 #[derive(ToSchema, Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-#[schema(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
+#[schema(rename_all = "snake_case")]
 pub enum ServerPowerAction {
     Start,
     Stop,
@@ -31,8 +31,8 @@ impl FromStr for ServerPowerAction {
 }
 
 #[derive(ToSchema, Default, Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-#[schema(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
+#[schema(rename_all = "snake_case")]
 pub enum ServerAutostartBehavior {
     Always,
     #[default]
@@ -41,8 +41,8 @@ pub enum ServerAutostartBehavior {
 }
 
 #[derive(ToSchema, Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-#[schema(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
+#[schema(rename_all = "snake_case")]
 pub enum ServerBackupStatus {
     Starting,
     Finished,
