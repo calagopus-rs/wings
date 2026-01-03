@@ -125,7 +125,7 @@ nestify::nest! {
         },
 
         #[serde(default)]
-        pub autostart_behavior: crate::models::ServerAutostartBehavior,
+        pub auto_start_behavior: crate::models::ServerAutoStartBehavior,
     }
 }
 

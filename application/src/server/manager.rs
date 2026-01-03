@@ -121,12 +121,12 @@ impl ServerManager {
                         }
 
                         let do_autostart =
-                            match server.configuration.read().await.autostart_behavior {
-                                crate::models::ServerAutostartBehavior::Always => true,
-                                crate::models::ServerAutostartBehavior::UnlessStopped => {
+                            match server.configuration.read().await.auto_start_behavior {
+                                crate::models::ServerAutoStartBehavior::Always => true,
+                                crate::models::ServerAutoStartBehavior::UnlessStopped => {
                                     matches!(state, ServerState::Running | ServerState::Starting)
                                 }
-                                crate::models::ServerAutostartBehavior::Never => false,
+                                crate::models::ServerAutoStartBehavior::Never => false,
                             };
 
                         tokio::time::sleep(std::time::Duration::from_secs(5)).await;

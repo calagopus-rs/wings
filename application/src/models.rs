@@ -33,7 +33,7 @@ impl FromStr for ServerPowerAction {
 #[derive(ToSchema, Default, Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 #[schema(rename_all = "snake_case")]
-pub enum ServerAutostartBehavior {
+pub enum ServerAutoStartBehavior {
     Always,
     #[default]
     UnlessStopped,
