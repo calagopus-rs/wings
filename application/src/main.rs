@@ -395,16 +395,10 @@ async fn main() {
 
     let app = OpenApiRouter::new()
         .merge(wings_rs::routes::router(&state))
-        .fallback(|state: GetState, req: Request| async move {
-            if let Some(redirect) = state.config.api.redirects.get(req.uri().path()) {
-                return ApiResponse::new(Body::empty())
-                    .with_status(StatusCode::FOUND)
-                    .with_header("Location", redirect)
-                    .ok();
-            }
-
-            ApiResponse::error("route not found")
-                .with_status(StatusCode::NOT_FOUND)
+        .fallback(|state: GetState, _req: Request<Body>| async move {
+            ApiResponse::new(Body::empty())
+                .with_status(StatusCode::MOVED_PERMANENTLY)
+                .with_header("Location", &state.config.remote)
                 .ok()
         })
         .layer(axum::middleware::from_fn_with_state(
