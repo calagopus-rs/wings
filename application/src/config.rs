@@ -346,10 +346,6 @@ nestify::nest! {
             },
 
             #[serde(default)]
-            #[schema(inline)]
-            pub redirects: HashMap<String, String>,
-
-            #[serde(default)]
             pub disable_openapi_docs: bool,
             #[serde(default)]
             pub disable_remote_download: bool,
