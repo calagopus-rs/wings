@@ -120,8 +120,17 @@ impl ServerManager {
                             }
                         }
 
+                        let do_autostart =
+                            match server.configuration.read().await.autostart_behavior {
+                                crate::models::ServerAutostartBehavior::Always => true,
+                                crate::models::ServerAutostartBehavior::UnlessStopped => {
+                                    matches!(state, ServerState::Running | ServerState::Starting)
+                                }
+                                crate::models::ServerAutostartBehavior::Never => false,
+                            };
+
                         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                        if matches!(state, ServerState::Running | ServerState::Starting)
+                        if do_autostart
                             && !matches!(
                                 server.state.get_state(),
                                 ServerState::Running | ServerState::Starting
@@ -136,6 +145,19 @@ impl ServerManager {
                         }
                     }
                 });
+            } else {
+                match server.attach_container().await {
+                    Ok(_) => {
+                        tracing::debug!(server = %server.uuid, "server attached successfully");
+                    }
+                    Err(err) => {
+                        tracing::error!(
+                            server = %server.uuid,
+                            error = %err,
+                            "failed to attach server container"
+                        );
+                    }
+                }
             }
 
             servers.push(server);

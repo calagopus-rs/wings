@@ -30,6 +30,16 @@ impl FromStr for ServerPowerAction {
     }
 }
 
+#[derive(ToSchema, Default, Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+#[schema(rename_all = "lowercase")]
+pub enum ServerAutostartBehavior {
+    Always,
+    #[default]
+    UnlessStopped,
+    Never,
+}
+
 #[derive(ToSchema, Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 #[schema(rename_all = "lowercase")]

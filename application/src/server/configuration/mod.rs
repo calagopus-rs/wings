@@ -123,6 +123,9 @@ nestify::nest! {
             #[serde(default)]
             pub seconds: u64,
         },
+
+        #[serde(default)]
+        pub autostart_behavior: crate::models::ServerAutostartBehavior,
     }
 }
 
